@@ -85,17 +85,17 @@ That's it. Open a PR targeting your base branch and Copilot will drive the appro
 ### Pinning to a release
 
 ```yaml
-uses: steerspec/strspc-pr-review/.github/workflows/pr-auto-approve.yml@pr-auto-approve-v1.0.0
+uses: steerspec/strspc-pr-review/.github/workflows/pr-auto-approve.yml@v1.0.0
 with:
   bot_login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
-  pr_review_ref: pr-auto-approve-v1.0.0   # pin decide.js to the same tag
+  pr_review_ref: v1.0.0   # pin decide.js to the same tag
 secrets:
   BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
 ```
 
 ### Versioning
 
-The `pr-auto-approve` workflow is versioned independently with tags in the format `pr-auto-approve-vX.Y.Z`. Tags are created automatically on every push to `main` that changes the workflow or its decision logic.
+Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`.
 
 ---
 

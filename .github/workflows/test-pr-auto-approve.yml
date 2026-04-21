@@ -1,0 +1,43 @@
+name: Test PR Auto-Approve Decision Logic
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/pr-auto-approve/**'
+      - '.github/workflows/pr-auto-approve.yml'
+      - '.github/workflows/test-pr-auto-approve.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/pr-auto-approve/**'
+      - '.github/workflows/pr-auto-approve.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node --test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run unit tests
+        run: node --test scripts/pr-auto-approve/*.test.js
+
+  lint:
+    name: actionlint + shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml'
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: './e2e'

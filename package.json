@@ -1,0 +1,26 @@
+{
+  "name": "@steerspec/pr-auto-approve",
+  "version": "0.1.0",
+  "description": "Reusable GitHub Actions workflow that auto-approves PRs when GitHub Copilot's review is clean or after 3 review rounds",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test scripts/pr-auto-approve/*.test.js",
+    "lint:workflows": "actionlint .github/workflows/*.yml",
+    "lint:shell": "shellcheck e2e/pr-auto-approve/run.sh",
+    "lint": "npm run lint:workflows && npm run lint:shell",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "husky": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SteerSpec/strspc-pr-review.git"
+  }
+}

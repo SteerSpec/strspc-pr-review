@@ -1,4 +1,16 @@
 {
+  "extraKnownMarketplaces": {
+    "steerspec": {
+      "source": {
+        "source": "github",
+        "repo": "SteerSpec/.claude"
+      },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "strspc-pr-review@steerspec": true
+  },
   "hooks": {
     "PreCompact": [
       {

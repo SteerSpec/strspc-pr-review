@@ -8,41 +8,55 @@ on:
     types: [opened, ready_for_review, synchronize, reopened, review_requested]
   pull_request_review:
     types: [submitted]
-
-permissions:
-  pull-requests: write
-  contents: read
-  checks: read
+  check_run:
+    types: [completed]
 
 jobs:
   auto-approve:
-    # Skip fork PRs: secrets (BOT_GITHUB_TOKEN) are not exposed to fork workflows,
-    # so the approval call would always fail.
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      checks: read
+    # Serialize runs per PR to avoid race conditions.
+    # For check_run events the PR number comes from check_run.pull_requests[0].number.
+    concurrency:
+      group: >-
+        pr-auto-approve-${{ github.repository }}-${{
+          github.event.pull_request.number ||
+          github.event.check_run.pull_requests[0].number ||
+          github.run_id
+        }}
+      cancel-in-progress: true
+    # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs.
+    # Allow check_run events through but exclude this job's own check to prevent
+    # feedback loops — update 'auto-approve' below if you rename this job.
     if: >-
-      github.event.pull_request != null &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      (
+        github.event.pull_request != null &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      ) || (
+        github.event_name == 'check_run' &&
+        github.event.check_run.name != 'auto-approve'
+      )
+    steps:
+      # Pin to a release tag once you've validated the action in your repo.
+      - uses: SteerSpec/strspc-pr-review@v0.1.0
+        with:
+          # Required: GitHub login of the bot account that will approve PRs.
+          # Set this as a repo/org variable (vars.PR_AUTO_APPROVE_BOT_LOGIN) or
+          # replace with a literal string.
+          bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
 
-    # Pin to a release tag once you've validated the workflow in your repo.
-    # Also pass `pr_review_ref: <same tag>` so decide.js is version-locked.
-    uses: steerspec/strspc-pr-review/.github/workflows/pr-auto-approve.yml@develop
-    with:
-      # Required: GitHub login of the bot account that will approve PRs.
-      # Set this as a repo/org variable (vars.PR_AUTO_APPROVE_BOT_LOGIN) or
-      # replace with a literal string.
-      bot_login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
+          # Required: PAT for bot-login with `repo` scope so it can post reviews.
+          bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
 
-      # Optional: base branch PRs must target (default: main).
-      # Uncomment and change if you use a different default branch.
-      # base_branch: develop
+          # Optional: base branch PRs must target (default: main).
+          # Uncomment and change if you use a different default branch.
+          # base-branch: develop
 
-      # Optional: pin decide.js to the same tag as the workflow above.
-      # pr_review_ref: v1.0.0
-    secrets:
-      # Required: PAT for bot_login with `repo` scope so it can post reviews.
-      BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
-
-      # Optional: Slack bot token for approval/skip/error notifications.
-      # Remove this line to disable Slack notifications.
-      # SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          # Optional: Slack bot token for approval/skip/error notifications.
+          # Remove this line to disable Slack notifications.
+          # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

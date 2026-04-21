@@ -1,3 +1,5 @@
+# DEPRECATED: Use the composite action (uses: SteerSpec/strspc-pr-review@vX.Y.Z) instead.
+# This reusable workflow is kept for backward compatibility only.
 name: Reusable PR Auto-Approve (Copilot)
 
 on:

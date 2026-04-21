@@ -47,10 +47,10 @@ on:
       pr_review_ref:
         required: false
         type: string
-        default: 'main'
+        default: 'develop'
         description: >-
           Git ref on steerspec/strspc-pr-review to checkout for decide.js.
-          Defaults to `main`. Callers that pin to a release tag should
+          Defaults to `develop`. Callers that pin to a release tag should
           pass the matching tag name (e.g. `pr-auto-approve-v1.0.0`) so
           decide.js is version-locked.
     secrets:

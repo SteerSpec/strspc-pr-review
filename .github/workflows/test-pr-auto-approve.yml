@@ -7,7 +7,7 @@ on:
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
   push:
-    branches: [main]
+    branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'

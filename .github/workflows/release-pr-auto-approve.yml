@@ -1,0 +1,121 @@
+name: Release PR Auto-Approve Workflow
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pr-auto-approve.yml'
+      - '.github/workflows/release-pr-auto-approve.yml'
+      - 'scripts/pr-auto-approve/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/pr-auto-approve.yml'
+      - 'scripts/pr-auto-approve/**'
+  workflow_dispatch:
+
+# Least privilege: lint + version-compute run read-only on every trigger
+# (including PRs). Tag push / release creation run only on push and
+# workflow_dispatch, with contents: write scoped to that job alone.
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    name: Lint and compute version
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/release-pr-auto-approve.yml'
+
+      - name: Get PR Auto-Approve Version
+        id: version
+        uses: PaulHatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "pr-auto-approve-v"
+          namespace: pr-auto-approve
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+          version_format: "${major}.${minor}.${patch}"
+          change_path: ".github/workflows/pr-auto-approve.yml scripts/pr-auto-approve"
+          bump_each_commit: false
+          search_commit_body: false
+
+  release:
+    name: Tag and release
+    needs: compute
+    # Skip on PR events so tags/releases are never created from non-mainline commits.
+    if: needs.compute.outputs.changed == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Tag
+        env:
+          VERSION: ${{ needs.compute.outputs.version }}
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          TAG_NAME="pr-auto-approve-v${VERSION}"
+
+          # Remote is the source of truth. Delete any stray local tag first,
+          # then decide based on the remote state alone.
+          git tag -d "$TAG_NAME" >/dev/null 2>&1 || true
+
+          if git ls-remote --exit-code --tags origin "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists on remote — skipping create + push"
+          else
+            git tag -a "$TAG_NAME" -m "Release pr-auto-approve workflow v${VERSION}"
+            git push origin "$TAG_NAME"
+          fi
+
+      - name: Check if Release Exists
+        id: check_release
+        env:
+          VERSION: ${{ needs.compute.outputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="pr-auto-approve-v${VERSION}"
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check_release.outputs.release_exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pr-auto-approve-v${{ needs.compute.outputs.version }}
+          name: PR Auto-Approve Workflow v${{ needs.compute.outputs.version }}
+          body: |
+            ## PR Auto-Approve Workflow v${{ needs.compute.outputs.version }}
+
+            This release includes changes to the pr-auto-approve reusable workflow.
+
+            ### Usage
+            ```yaml
+            uses: steerspec/strspc-pr-review/.github/workflows/pr-auto-approve.yml@pr-auto-approve-v${{ needs.compute.outputs.version }}
+            with:
+              bot_login: your-bot-login
+              base_branch: main  # or develop, etc.
+            ```
+          draft: false
+          prerelease: false

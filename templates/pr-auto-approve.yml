@@ -1,0 +1,48 @@
+name: PR Auto-Approve (Copilot)
+
+# Copy this file to .github/workflows/pr-auto-approve.yml in your repository.
+# Then set the required variables/secrets (see comments below).
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize, reopened, review_requested]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+  contents: read
+  checks: read
+
+jobs:
+  auto-approve:
+    # Skip fork PRs: secrets (BOT_GITHUB_TOKEN) are not exposed to fork workflows,
+    # so the approval call would always fail.
+    if: >-
+      github.event.pull_request != null &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    # Pin to a specific tag once you've validated the workflow in your repo.
+    # Also pass `pr_review_ref: <same tag>` so decide.js is version-locked.
+    uses: steerspec/strspc-pr-review/.github/workflows/pr-auto-approve.yml@main
+    with:
+      # Required: GitHub login of the bot account that will approve PRs.
+      # Set this as a repo/org variable (vars.PR_AUTO_APPROVE_BOT_LOGIN) or
+      # replace with a literal string.
+      bot_login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
+
+      # Optional: base branch PRs must target (default: main).
+      # Uncomment and change if you use a different default branch.
+      # base_branch: develop
+
+      # Optional: pin decide.js to the same tag as the workflow above.
+      # pr_review_ref: pr-auto-approve-v1.0.0
+    secrets:
+      # Required: PAT for bot_login with `repo` scope so it can post reviews.
+      BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
+
+      # Optional: Slack bot token for approval/skip/error notifications.
+      # Remove this line to disable Slack notifications.
+      # SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

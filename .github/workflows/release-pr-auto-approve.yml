@@ -8,7 +8,7 @@ on:
       - 'scripts/pr-auto-approve/**'
   push:
     branches:
-      - develop
+      - main
     paths:
       - '.github/workflows/pr-auto-approve.yml'
       - 'scripts/pr-auto-approve/**'

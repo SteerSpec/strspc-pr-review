@@ -26,6 +26,13 @@ on:
           bot-authored PRs are allowed through the self-approval guard.
           Used only by e2e test harnesses in sandbox/test repositories.
           Production repos must not appear here.
+      rounds_threshold:
+        required: false
+        type: number
+        default: 3
+        description: >-
+          Number of Copilot review rounds after which the PR is approved
+          regardless of inline comments (default: 3).
       test_copilot_logins:
         required: false
         type: string
@@ -149,6 +156,7 @@ jobs:
         env:
           AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot_login }}
           AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base_branch }}
+          AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds_threshold }}
           AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox_repos }}
           AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test_copilot_logins }}
         with:

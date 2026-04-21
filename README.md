@@ -69,6 +69,7 @@ That's it. Open a PR targeting your base branch and Copilot will drive the appro
 |---|---|---|---|
 | `bot_login` | **Yes** | — | GitHub login of the bot that posts the approval |
 | `base_branch` | No | `main` | Base branch PRs must target |
+| `rounds_threshold` | No | `3` | Number of Copilot review rounds after which a PR is approved regardless of inline comments |
 | `sandbox_repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e use only) |
 | `test_copilot_logins` | No | `''` | Extra logins treated as Copilot in sandbox repos |
 | `slack_channel` | No | `alert-pr-notifications` | Slack channel for notifications |

@@ -1,0 +1,206 @@
+name: 'PR Auto-Approve (Copilot)'
+description: >-
+  Automatically approves pull requests when GitHub Copilot's review is clean
+  or after a configurable number of review rounds.
+author: 'SteerSpec'
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  bot-login:
+    required: true
+    description: >-
+      GitHub login of the bot account that will post the APPROVE review.
+      The bot-github-token must be a PAT for this account.
+  bot-github-token:
+    required: true
+    description: 'PAT for bot-login with repo scope (posts the approval review).'
+  base-branch:
+    required: false
+    default: 'main'
+    description: >-
+      Base branch that PRs must target to be eligible for auto-approval
+      (default: main).
+  sandbox-repos:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated list of repo full names (owner/repo) where bot-authored
+      PRs are allowed through the self-approval guard. Used only by e2e test
+      harnesses in sandbox/test repositories. Production repos must not appear
+      here.
+  rounds-threshold:
+    required: false
+    default: '3'
+    description: >-
+      Number of Copilot review rounds after which the PR is approved regardless
+      of inline comments (default: 3).
+  test-copilot-logins:
+    required: false
+    default: ''
+    description: >-
+      Test-only: comma-separated GitHub logins to treat as "Copilot" reviewers
+      in addition to the real Copilot bot. Used by the e2e harness in sandbox
+      repos listed in sandbox-repos; production callers MUST NOT set this.
+  slack-channel:
+    required: false
+    default: 'alert-pr-notifications'
+    description: >-
+      Slack channel name or ID for notifications (default:
+      alert-pr-notifications). Used only when slack-bot-token is set.
+  slack-bot-token:
+    required: false
+    default: ''
+    description: >-
+      Slack bot OAuth token (xoxb-...) with chat:write scope. When set, posts
+      approve/skip/error notifications via chat.postMessage.
+
+outputs:
+  decision:
+    description: 'Outcome of the evaluation: approved, skip, or error.'
+    value: ${{ steps.evaluate.outputs.decision }}
+  reason:
+    description: 'Human-readable explanation of the decision.'
+    value: ${{ steps.evaluate.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Request bot review
+      if: >-
+        github.event_name == 'pull_request' &&
+        (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.bot-github-token }}
+        script: |
+          const botLogin = '${{ inputs.bot-login }}';
+          const { owner, repo } = context.repo;
+          const prNumber = context.payload.pull_request.number;
+          const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+          const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
+          if (!alreadyRequested) {
+            await github.rest.pulls.requestReviewers({
+              owner, repo, pull_number: prNumber,
+              reviewers: [botLogin],
+            });
+          }
+
+    - name: Evaluate and approve
+      id: evaluate
+      uses: actions/github-script@v7
+      env:
+        AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot-login }}
+        AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base-branch }}
+        AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
+        AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
+        AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.bot-github-token }}
+        script: |
+          const decide = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+          await decide({ github, context, core });
+
+    - name: Notify Slack (approved)
+      if: steps.evaluate.outputs.decision == 'approved' && inputs.slack-bot-token != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
+        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        REPO: ${{ github.repository }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        REASON: ${{ steps.evaluate.outputs.reason }}
+      run: |
+        payload=$(jq -nc \
+          --arg channel "$SLACK_CHANNEL" \
+          --arg repo "$REPO" \
+          --arg url "$PR_URL" \
+          --arg num "$PR_NUMBER" \
+          --arg title "$PR_TITLE" \
+          --arg author "$PR_AUTHOR" \
+          --arg reason "$REASON" \
+          'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
+           {channel: $channel,
+            attachments: [{
+              color: "#36a64f",
+              text: ("<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\n" + ($reason|s))
+            }]}')
+        curl -sS -X POST \
+          -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+          -H 'Content-type: application/json; charset=utf-8' \
+          --data "$payload" \
+          https://slack.com/api/chat.postMessage
+
+    - name: Notify Slack (skipped)
+      if: steps.evaluate.outputs.decision == 'skip' && inputs.slack-bot-token != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
+        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        REPO: ${{ github.repository }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        REASON: ${{ steps.evaluate.outputs.reason }}
+      run: |
+        payload=$(jq -nc \
+          --arg channel "$SLACK_CHANNEL" \
+          --arg repo "$REPO" \
+          --arg url "$PR_URL" \
+          --arg num "$PR_NUMBER" \
+          --arg title "$PR_TITLE" \
+          --arg author "$PR_AUTHOR" \
+          --arg reason "$REASON" \
+          'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
+           {channel: $channel,
+            attachments: [{
+              color: "#e8912d",
+              text: ("<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\nskipped: " + ($reason|s))
+            }]}')
+        curl -sS -X POST \
+          -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+          -H 'Content-type: application/json; charset=utf-8' \
+          --data "$payload" \
+          https://slack.com/api/chat.postMessage
+
+    - name: Notify Slack (error)
+      if: failure() && inputs.slack-bot-token != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
+        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        REPO: ${{ github.repository }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        payload=$(jq -nc \
+          --arg channel "$SLACK_CHANNEL" \
+          --arg repo "$REPO" \
+          --arg url "$PR_URL" \
+          --arg num "$PR_NUMBER" \
+          --arg title "$PR_TITLE" \
+          --arg author "$PR_AUTHOR" \
+          --arg runUrl "$RUN_URL" \
+          'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
+           {channel: $channel,
+            attachments: [{
+              color: "#ff0000",
+              text: ("<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\nerror — <" + $runUrl + "|run log>")
+            }]}')
+        curl -sS -X POST \
+          -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+          -H 'Content-type: application/json; charset=utf-8' \
+          --data "$payload" \
+          https://slack.com/api/chat.postMessage

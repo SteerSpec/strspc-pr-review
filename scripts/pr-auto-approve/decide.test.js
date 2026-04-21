@@ -11,6 +11,7 @@ const decide = require('./decide.js');
 process.env.AUTO_APPROVE_BOT_LOGIN = 'axeptio-bot';
 process.env.AUTO_APPROVE_SANDBOX_REPOS = 'axeptio/test-only-repo,axeptio/tech-scripts';
 process.env.AUTO_APPROVE_BASE_BRANCH = 'develop';
+process.env.AUTO_APPROVE_ROUNDS_THRESHOLD = '3';
 
 // -- Test helpers ---------------------------------------------------------
 
@@ -543,6 +544,43 @@ test('approve: 3 rounds of Copilot reviews (even with comments)', async () => {
   assert.equal(result.decision, 'approved');
   assert.match(result.reason, /3-rounds \(3 Copilot reviews\)/);
   assert.equal(calls.createReview.length, 1);
+});
+
+test('approve: custom rounds_threshold of 2 approves after 2 reviews', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const original = process.env.AUTO_APPROVE_ROUNDS_THRESHOLD;
+  process.env.AUTO_APPROVE_ROUNDS_THRESHOLD = '2';
+  try {
+    const { github, calls } = makeFakeGithub({
+      reviews: [
+        { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp },
+        { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', user: cp },
+      ],
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'approved');
+    assert.match(result.reason, /2-rounds \(2 Copilot reviews\)/);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    process.env.AUTO_APPROVE_ROUNDS_THRESHOLD = original;
+  }
+});
+
+test('skip: 2 reviews with threshold=3 does not trigger 3-rounds rule', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', user: cp },
+    ],
+    reviewComments: { 2: [{ id: 1, body: 'nit' }] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /1 comments/);
+  assert.equal(calls.createReview.length, 0);
 });
 
 test('DISMISSED copilot reviews do not count toward rounds', async () => {

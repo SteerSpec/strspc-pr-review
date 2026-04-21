@@ -23,6 +23,7 @@ const COPILOT_LOGINS = new Set([
 
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
 function getBaseBranch() { return process.env.AUTO_APPROVE_BASE_BRANCH || 'main'; }
+function getRoundsThreshold() { return Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3); }
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
@@ -286,8 +287,9 @@ async function decideInner({ github, context, core }) {
   }
 
   let reason = '';
-  if (copilotReviews.length >= 3) {
-    reason = `3-rounds (${copilotReviews.length} Copilot reviews)`;
+  const threshold = getRoundsThreshold();
+  if (copilotReviews.length >= threshold) {
+    reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
   } else {
     const comments = await github.paginate(
       github.rest.pulls.listCommentsForReview,

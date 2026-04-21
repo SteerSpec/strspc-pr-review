@@ -7,7 +7,7 @@ on:
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
   push:
-    branches: [main]
+    branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'
@@ -36,7 +36,7 @@ jobs:
         uses: reviewdog/action-actionlint@v1
         with:
           fail_level: error
-          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml'
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@2.0.0
         with:

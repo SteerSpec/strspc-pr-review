@@ -1,3 +1,5 @@
+# DEPRECATED: Use the composite action (uses: SteerSpec/strspc-pr-review@vX.Y.Z) instead.
+# This reusable workflow is kept for backward compatibility only.
 name: Reusable PR Auto-Approve (Copilot)
 
 on:
@@ -26,6 +28,13 @@ on:
           bot-authored PRs are allowed through the self-approval guard.
           Used only by e2e test harnesses in sandbox/test repositories.
           Production repos must not appear here.
+      rounds_threshold:
+        required: false
+        type: number
+        default: 3
+        description: >-
+          Number of Copilot review rounds after which the PR is approved
+          regardless of inline comments (default: 3).
       test_copilot_logins:
         required: false
         type: string
@@ -47,12 +56,12 @@ on:
       pr_review_ref:
         required: false
         type: string
-        default: 'main'
+        default: 'develop'
         description: >-
           Git ref on steerspec/strspc-pr-review to checkout for decide.js.
-          Defaults to `main`. Callers that pin to a release tag should
-          pass the matching tag name (e.g. `pr-auto-approve-v1.0.0`) so
-          decide.js is version-locked.
+          Defaults to `develop`. Callers that pin to a release tag should
+          pass the matching tag name (e.g. `v1.0.0`) so decide.js is
+          version-locked.
     secrets:
       BOT_GITHUB_TOKEN:
         required: true
@@ -149,6 +158,7 @@ jobs:
         env:
           AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot_login }}
           AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base_branch }}
+          AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds_threshold }}
           AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox_repos }}
           AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test_copilot_logins }}
         with:

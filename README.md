@@ -12,13 +12,13 @@
 
 | Workflow | Description |
 |---|---|
-| [`pr-auto-approve`](#pr-auto-approve) | Auto-approves PRs when GitHub Copilot's review is clean or after 3 review rounds |
+| [`pr-auto-approve`](#pr-auto-approve) | Auto-approves PRs when GitHub Copilot's review is clean or after a configurable number of review rounds |
 
 ---
 
 ## pr-auto-approve
 
-Automatically approves pull requests when GitHub Copilot signals the code is ready — either because its latest review has zero inline comments, or because it has reviewed the PR three or more times.
+Automatically approves pull requests when GitHub Copilot signals the code is ready — either because its latest review has zero inline comments, or because it has reviewed the PR enough times (configurable, default: 3).
 
 ### How it works
 

@@ -35,6 +35,14 @@ on:
         description: >-
           Number of Copilot review rounds after which the PR is approved
           regardless of inline comments (default: 3).
+      allow_no_checks:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          When true, skip the "all checks must pass" gate when no external check
+          runs exist for the head SHA (e.g., docs-only PRs that trigger no CI).
+          Defaults to false (safe default: require at least one passing check).
       test_copilot_logins:
         required: false
         type: string
@@ -159,6 +167,7 @@ jobs:
           AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot_login }}
           AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base_branch }}
           AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds_threshold }}
+          AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow_no_checks }}
           AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox_repos }}
           AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test_copilot_logins }}
         with:

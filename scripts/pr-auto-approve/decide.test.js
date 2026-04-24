@@ -179,6 +179,41 @@ test('skip: no check runs on head SHA (CI not started yet)', async () => {
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: no checks and allow-no-checks not set (default strict)', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({ checkRuns: [] });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no checks on head SHA/);
+});
+
+test('approve: no checks but allow-no-checks=true and copilot-clean', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const original = process.env.AUTO_APPROVE_ALLOW_NO_CHECKS;
+  process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = 'true';
+  try {
+    const { github, calls } = makeFakeGithub({
+      checkRuns: [],
+      reviews: [
+        {
+          id: 7,
+          state: 'COMMENTED',
+          submitted_at: '2026-04-15T10:00:00Z',
+          user: cp,
+        },
+      ],
+      reviewComments: { 7: [] },
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.match(result.reason, /copilot-clean/);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = original;
+  }
+});
+
 test('skip: failing check run', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub({

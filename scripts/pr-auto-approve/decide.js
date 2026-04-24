@@ -29,6 +29,7 @@ function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
+function getAllowNoChecks() { return (process.env.AUTO_APPROVE_ALLOW_NO_CHECKS || '').toLowerCase() === 'true'; }
 
 function isCopilot(u) {
   if (!u) return false;
@@ -205,7 +206,10 @@ async function decideInner({ github, context, core }) {
   const checkRuns = [...latestByKey.values()];
 
   if (checkRuns.length === 0) {
-    return setDecision('skip', 'no checks on head SHA yet');
+    if (!getAllowNoChecks()) {
+      return setDecision('skip', 'no checks on head SHA yet');
+    }
+    core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
   }
 
   const badCheck = checkRuns.find(

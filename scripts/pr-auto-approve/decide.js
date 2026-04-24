@@ -19,6 +19,7 @@
 // add it here explicitly after verification.
 const COPILOT_LOGINS = new Set([
   'copilot-pull-request-reviewer[bot]',
+  'github-copilot[bot]',
 ]);
 
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }

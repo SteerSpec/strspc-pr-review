@@ -493,6 +493,25 @@ test('approve: copilot-clean (0 comments, COMMENTED state)', async () => {
   assert.equal(calls.createReview[0].event, 'APPROVE');
 });
 
+test('approve: copilot-clean with github-copilot[bot] identity', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 8,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'github-copilot[bot]', type: 'Bot' },
+      },
+    ],
+    reviewComments: { 8: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('skip: latest Copilot review has comments', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({

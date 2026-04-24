@@ -57,6 +57,11 @@ jobs:
           # Uncomment and change if you use a different default branch.
           # base-branch: develop
 
+          # Optional: set to 'true' if your repo has no CI checks for some PRs
+          # (e.g. docs-only repos or PRs that skip CI via path filters).
+          # When 'false' (default), PRs with no external checks are never approved.
+          # allow-no-checks: 'false'
+
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

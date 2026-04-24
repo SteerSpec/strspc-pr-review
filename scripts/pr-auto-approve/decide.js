@@ -280,6 +280,8 @@ async function decideInner({ github, context, core }) {
       return at - bt;
     });
 
+  core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
+
   if (copilotReviews.length === 0) {
     return setDecision('skip', 'no Copilot review yet');
   }
@@ -287,6 +289,7 @@ async function decideInner({ github, context, core }) {
   // Always honor the latest Copilot signal: if the most recent non-dismissed
   // review is CHANGES_REQUESTED, never approve — even under the 3-rounds rule.
   const latest = copilotReviews[copilotReviews.length - 1];
+  core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
   if (latest.state === 'CHANGES_REQUESTED') {
     return setDecision('skip', 'latest Copilot review requested changes');
   }

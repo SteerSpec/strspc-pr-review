@@ -31,6 +31,7 @@ jobs:
     # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs.
     # Allow check_run events through but exclude this job's own check to prevent
     # feedback loops — update 'auto-approve' below if you rename this job.
+    # NOTE: If you change base-branch below, also update 'main' here to match.
     if: >-
       (
         github.event.pull_request != null &&

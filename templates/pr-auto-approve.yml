@@ -31,6 +31,7 @@ jobs:
     # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs.
     # Allow check_run events through but exclude this job's own check to prevent
     # feedback loops — update 'auto-approve' below if you rename this job.
+    # NOTE: If you change base-branch below, also update 'main' here to match.
     if: >-
       (
         github.event.pull_request != null &&
@@ -39,7 +40,8 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
         github.event_name == 'check_run' &&
-        github.event.check_run.name != 'auto-approve'
+        github.event.check_run.name != 'auto-approve' &&
+        github.event.check_run.pull_requests[0] != null
       )
     steps:
       # Pin to a release tag once you've validated the action in your repo.
@@ -56,6 +58,11 @@ jobs:
           # Optional: base branch PRs must target (default: main).
           # Uncomment and change if you use a different default branch.
           # base-branch: develop
+
+          # Optional: set to 'true' if your repo has no CI checks for some PRs
+          # (e.g. docs-only repos or PRs that skip CI via path filters).
+          # When 'false' (default), PRs with no external checks are never approved.
+          # allow-no-checks: 'false'
 
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.

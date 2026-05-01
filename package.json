@@ -1,7 +1,7 @@
 {
   "name": "@steerspec/pr-auto-approve",
   "version": "0.2.0",
-  "description": "Reusable GitHub Actions workflow that auto-approves PRs when GitHub Copilot's review is clean or after 3 review rounds",
+  "description": "Reusable GitHub Actions workflow that auto-approves PRs when GitHub Copilot's review is clean or after N review rounds (default 3)",
   "license": "Apache-2.0",
   "type": "commonjs",
   "scripts": {

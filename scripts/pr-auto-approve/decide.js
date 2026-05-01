@@ -19,6 +19,7 @@
 // add it here explicitly after verification.
 const COPILOT_LOGINS = new Set([
   'copilot-pull-request-reviewer[bot]',
+  'github-copilot[bot]',
 ]);
 
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
@@ -28,6 +29,7 @@ function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
+function getAllowNoChecks() { return (process.env.AUTO_APPROVE_ALLOW_NO_CHECKS || '').toLowerCase() === 'true'; }
 
 function isCopilot(u) {
   if (!u) return false;
@@ -204,7 +206,10 @@ async function decideInner({ github, context, core }) {
   const checkRuns = [...latestByKey.values()];
 
   if (checkRuns.length === 0) {
-    return setDecision('skip', 'no checks on head SHA yet');
+    if (!getAllowNoChecks()) {
+      return setDecision('skip', 'no checks on head SHA yet');
+    }
+    core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
   }
 
   const badCheck = checkRuns.find(
@@ -275,6 +280,8 @@ async function decideInner({ github, context, core }) {
       return at - bt;
     });
 
+  core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
+
   if (copilotReviews.length === 0) {
     return setDecision('skip', 'no Copilot review yet');
   }
@@ -282,6 +289,7 @@ async function decideInner({ github, context, core }) {
   // Always honor the latest Copilot signal: if the most recent non-dismissed
   // review is CHANGES_REQUESTED, never approve — even under the 3-rounds rule.
   const latest = copilotReviews[copilotReviews.length - 1];
+  core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
   if (latest.state === 'CHANGES_REQUESTED') {
     return setDecision('skip', 'latest Copilot review requested changes');
   }

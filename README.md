@@ -120,6 +120,7 @@ jobs:
 | `bot-github-token` | **Yes** | — | PAT for `bot-login` with `repo` scope |
 | `base-branch` | No | `main` | Base branch PRs must target |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
+| `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
 | `test-copilot-logins` | No | `''` | Extra logins treated as Copilot in sandbox repos (e2e only) |
 | `slack-channel` | No | `alert-pr-notifications` | Slack channel for notifications |
@@ -144,7 +145,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test        # 39 unit tests, no external dependencies
+npm test        # 42 unit tests, no external dependencies
 npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
 ```
 
@@ -154,7 +155,7 @@ npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 39 unit tests (Node native test runner)
+  decide.test.js   # 42 unit tests (Node native test runner)
 .github/workflows/
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck

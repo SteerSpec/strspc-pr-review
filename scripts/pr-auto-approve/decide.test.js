@@ -210,7 +210,11 @@ test('approve: no checks but allow-no-checks=true and copilot-clean', async () =
     assert.match(result.reason, /copilot-clean/);
     assert.equal(calls.createReview.length, 1);
   } finally {
-    process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = original;
+    if (original == null) {
+      delete process.env.AUTO_APPROVE_ALLOW_NO_CHECKS;
+    } else {
+      process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = original;
+    }
   }
 });
 

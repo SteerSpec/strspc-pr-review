@@ -6,3 +6,6 @@ node_modules/
 *.db
 .beads-credential-key
 .beads/issues.jsonl
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/

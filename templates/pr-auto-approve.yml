@@ -5,7 +5,7 @@ name: PR Auto-Approve (Copilot)
 
 on:
   pull_request:
-    types: [opened, ready_for_review, synchronize, reopened, review_requested]
+    types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
   check_run:
@@ -28,13 +28,26 @@ jobs:
           github.run_id
         }}
       cancel-in-progress: true
-    # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs.
+    # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs. Handle both
+    # pull_request and pull_request_review (a Copilot review submission should
+    # re-evaluate the PR), but guard the review path with actor != bot-login so
+    # the bot's own APPROVE review never re-triggers this workflow (loop-guard).
+    # The guard reads vars.PR_AUTO_APPROVE_BOT_LOGIN — keep it pointing at the
+    # SAME login you pass to bot-login below. If you hard-code a literal there,
+    # hard-code the identical value here too, or the loop-guard silently
+    # disables (an unset var makes actor != '' always true).
     # Allow check_run events through but exclude this job's own check to prevent
     # feedback loops — update 'auto-approve' below if you rename this job.
     # NOTE: If you change base-branch below, also update 'main' here to match.
     if: >-
       (
-        github.event.pull_request != null &&
+        (
+          github.event_name == 'pull_request' ||
+          (
+            github.event_name == 'pull_request_review' &&
+            github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN
+          )
+        ) &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository

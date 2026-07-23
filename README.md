@@ -71,7 +71,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 ```yaml
 on:
   pull_request:
-    types: [opened, ready_for_review, synchronize, reopened, review_requested]
+    types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
   check_run:
@@ -94,13 +94,20 @@ jobs:
       cancel-in-progress: true
     if: >-
       (
-        github.event.pull_request != null &&
+        (
+          github.event_name == 'pull_request' ||
+          (
+            github.event_name == 'pull_request_review' &&
+            github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN
+          )
+        ) &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
         github.event_name == 'check_run' &&
-        github.event.check_run.name != 'auto-approve'
+        github.event.check_run.name != 'auto-approve' &&
+        github.event.check_run.pull_requests[0] != null
       )
     steps:
       - uses: SteerSpec/strspc-pr-review@v1.0.0

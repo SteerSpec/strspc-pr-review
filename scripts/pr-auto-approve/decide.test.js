@@ -34,8 +34,10 @@ function makeFakeGithub({
   reviewComments = {},
   createReviewImpl,
   getPrImpl,
+  reviewDecision = null,
+  graphqlImpl,
 } = {}) {
-  const calls = { createReview: [] };
+  const calls = { createReview: [], graphql: [] };
 
   const paginate = async (fn, params, mapper) => {
     const pages = await fn(params);
@@ -45,6 +47,11 @@ function makeFakeGithub({
 
   const github = {
     paginate,
+    graphql: async (query, vars) => {
+      calls.graphql.push({ query, vars });
+      if (graphqlImpl) return graphqlImpl(query, vars);
+      return { repository: { pullRequest: { reviewDecision } } };
+    },
     rest: {
       checks: {
         listForRef: async () => ({ data: { total_count: checkRuns.length, check_runs: checkRuns } }),
@@ -532,6 +539,75 @@ test('idempotency: DISMISSED bot approvals do not block a fresh approval', async
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'approved');
   assert.equal(calls.createReview.length, 1);
+});
+
+test('gate: reviewDecision=APPROVED skips before the REST review checks', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  // A clean Copilot review would normally approve — the GraphQL gate must
+  // short-circuit first because the PR is already APPROVED overall.
+  const { github, calls } = makeFakeGithub({
+    reviewDecision: 'APPROVED',
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /reviewDecision=APPROVED/);
+  assert.equal(calls.graphql.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('gate: reviewDecision=REVIEW_REQUIRED does not gate; still approves when clean', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviewDecision: 'REVIEW_REQUIRED',
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('gate: partial GraphQL response is handled by optional chaining (no gate, no crash)', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    graphqlImpl: () => ({}), // no repository field → reviewDecision resolves to undefined
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
+});
+
+test('gate: GraphQL error falls through to REST checks (best-effort)', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const err = new Error('GraphQL: something went wrong');
+  err.status = 502;
+  const { github, calls } = makeFakeGithub({
+    graphqlImpl: () => {
+      throw err;
+    },
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
 });
 
 test('skip: no Copilot review yet', async () => {

@@ -160,8 +160,9 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test        # 42 unit tests, no external dependencies
-npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
+npm test            # 52 unit tests, no external dependencies
+npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
+npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 ```
 
 ### Project layout

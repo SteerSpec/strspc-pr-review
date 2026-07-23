@@ -228,6 +228,33 @@ async function decideInner({ github, context, core }) {
     return setDecision('skip', `check still running: ${pending.name}`);
   }
 
+  // GraphQL reviewDecision gate: GitHub's authoritative "is this PR already
+  // approved overall?" signal. It reflects branch-protection dismissals — a
+  // stale approval invalidated by a new push reads as REVIEW_REQUIRED, not
+  // APPROVED — so it pairs with the head-SHA REST guard instead of masking a
+  // needed re-approval. Best-effort: a GraphQL-specific failure is logged and
+  // we fall through to the REST review checks, so a GraphQL outage never
+  // disables auto-approval.
+  let reviewDecision;
+  try {
+    const gql = await github.graphql(
+      `query ($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) { reviewDecision }
+        }
+      }`,
+      { owner, repo, number: prNumber },
+    );
+    reviewDecision = gql?.repository?.pullRequest?.reviewDecision;
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: reviewDecision query failed, falling through to REST: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+  }
+  if (reviewDecision === 'APPROVED') {
+    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
+  }
+
   const reviews = await github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,

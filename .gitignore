@@ -9,3 +9,6 @@ node_modules/
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# Claude Code agent worktrees (keep .claude/settings.json tracked)
+.claude/worktrees/

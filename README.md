@@ -133,7 +133,7 @@ must list the same branches**: the `on.pull_request.branches:` filter, the job `
 |---|---|---|---|
 | `bot-login` | **Yes** | — | GitHub login of the bot that posts the approval |
 | `bot-github-token` | **Yes** | — | PAT for `bot-login` with `repo` scope |
-| `base-branch` | No | `main` | Base branch PRs must target |
+| `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |

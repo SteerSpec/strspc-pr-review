@@ -124,10 +124,10 @@ runs:
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
-        PR_URL: ${{ github.event.pull_request.html_url }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number || steps.evaluate.outputs.pr_number }}
+        PR_TITLE: ${{ github.event.pull_request.title || steps.evaluate.outputs.pr_title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login || steps.evaluate.outputs.pr_author }}
         REASON: ${{ steps.evaluate.outputs.reason }}
       run: |
         payload=$(jq -nc \
@@ -141,10 +141,12 @@ runs:
           --arg reason "$REASON" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
            def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def author_part: if $author == "" then "" else "  @" + $author end;
+           def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,
             attachments: [{
               color: "#36a64f",
-              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\n" + ($reason|s))
+              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">" + author_part + title_part + "\n" + ($reason|s))
             }]}')
         curl -sS -X POST \
           -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
@@ -161,10 +163,10 @@ runs:
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
-        PR_URL: ${{ github.event.pull_request.html_url }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number || steps.evaluate.outputs.pr_number }}
+        PR_TITLE: ${{ github.event.pull_request.title || steps.evaluate.outputs.pr_title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login || steps.evaluate.outputs.pr_author }}
         REASON: ${{ steps.evaluate.outputs.reason }}
       run: |
         payload=$(jq -nc \
@@ -178,10 +180,12 @@ runs:
           --arg reason "$REASON" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
            def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def author_part: if $author == "" then "" else "  @" + $author end;
+           def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,
             attachments: [{
               color: "#e8912d",
-              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\nskipped: " + ($reason|s))
+              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">" + author_part + title_part + "\nskipped: " + ($reason|s))
             }]}')
         curl -sS -X POST \
           -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
@@ -198,10 +202,10 @@ runs:
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
-        PR_URL: ${{ github.event.pull_request.html_url }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number || steps.evaluate.outputs.pr_number }}
+        PR_TITLE: ${{ github.event.pull_request.title || steps.evaluate.outputs.pr_title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login || steps.evaluate.outputs.pr_author }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         payload=$(jq -nc \
@@ -215,10 +219,12 @@ runs:
           --arg runUrl "$RUN_URL" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
            def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def author_part: if $author == "" then "" else "  @" + $author end;
+           def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,
             attachments: [{
               color: "#ff0000",
-              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">  @" + $author + " — " + ($title|s) + "\nerror — <" + $runUrl + "|run log>")
+              text: (test_flag + "<" + $url + "|" + ($repo | split("/")[-1]) + "#" + $num + ">" + author_part + title_part + "\nerror — <" + $runUrl + "|run log>")
             }]}')
         curl -sS -X POST \
           -H "Authorization: Bearer $SLACK_BOT_TOKEN" \

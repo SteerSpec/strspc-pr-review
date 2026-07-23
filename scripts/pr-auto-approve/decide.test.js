@@ -1041,6 +1041,37 @@ test('check_run event: extracts PR and approves on 3-rounds', async () => {
   assert.equal(calls.createReview.length, 1);
 });
 
+test('check_run event: outputs pr_url/pr_number/pr_author for the caller Slack fallback', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-20T08:00:00Z', user: cp }],
+    reviewComments: { 1: [] },
+  });
+  const result = await decide({ github, context: makeCheckRunContext({ prNumber: 77 }), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(core.outputs.pr_url, 'https://github.com/axeptio/test-only-repo/pull/77');
+  assert.equal(core.outputs.pr_number, '77');
+  assert.equal(core.outputs.pr_author, 'someone');
+  // The default fixture sets no title, so it must fall back to an empty
+  // string rather than 'undefined' leaking into a Slack message.
+  assert.equal(core.outputs.pr_title, '');
+});
+
+test('no pull_request in event: pr_* outputs stay empty (no PR was ever resolved)', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: { runId: 1, repo: { owner: 'axeptio', repo: 'test-only-repo' }, payload: {} },
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(core.outputs.pr_url, '');
+  assert.equal(core.outputs.pr_number, '');
+  assert.equal(core.outputs.pr_author, '');
+});
+
 test('check_run event: no associated PRs → skip', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub();
@@ -1269,6 +1300,25 @@ test('workflow_run event: PR targets ineligible base branch → skip', async () 
   const result = await decide({ github, context: makeWorkflowRunContext(), core });
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /not in \[/);
+});
+
+test('workflow_run event: fetched PR head repo mismatch (fork) → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    getPrImpl: (pull_number) => ({
+      data: {
+        number: pull_number,
+        draft: false,
+        user: { login: 'someone' },
+        head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } },
+        base: { ref: 'develop' },
+        html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+      },
+    }),
+  });
+  const result = await decide({ github, context: makeWorkflowRunContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /PR head repo does not match/);
 });
 
 test('workflow_run event: draft PR → skip with workflow_run: PR is draft', async () => {

@@ -120,6 +120,16 @@ async function decideInner({ github, context, core }) {
     core.info(`pr-auto-approve decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
+    // check_run/workflow_run-triggered runs carry no github.event.pull_request,
+    // so the caller's Slack notification steps fall back to these outputs for
+    // the PR link/number/title/author instead of emitting an empty/malformed
+    // message. `pr` is whatever this closure's outer scope has resolved by
+    // the time setDecision runs — null for the handful of skip reasons that
+    // fire before a PR is ever resolved (e.g. "no associated PRs").
+    core.setOutput('pr_url', pr ? pr.html_url || '' : '');
+    core.setOutput('pr_number', pr ? String(pr.number) : '');
+    core.setOutput('pr_title', pr ? pr.title || '' : '');
+    core.setOutput('pr_author', pr && pr.user ? pr.user.login : '');
     // Summary write is best-effort: a rare I/O failure here must NOT bubble
     // up to the top-level try/catch and flip a successful approval into an
     // "evaluation failed" skip.
@@ -194,6 +204,9 @@ async function decideInner({ github, context, core }) {
     }
     if (fetchedPr.draft) {
       return setDecision('skip', 'workflow_run: PR is draft');
+    }
+    if (!fetchedPr.head || !fetchedPr.head.repo || fetchedPr.head.repo.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: PR head repo does not match current repo');
     }
     pr = fetchedPr;
   }

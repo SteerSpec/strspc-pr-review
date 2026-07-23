@@ -255,9 +255,17 @@ async function decideInner({ github, context, core }) {
         })
     : [];
   const latestBotReview = botReviews[botReviews.length - 1];
-  const alreadyApproved = latestBotReview && latestBotReview.state === 'APPROVED';
+  // Bind idempotency to the head SHA: only skip if the bot already approved
+  // THIS commit. A stale approval of an earlier commit (e.g. a push has since
+  // moved the head, dismissing it under branch protection) must NOT block a
+  // fresh approval of the new head. If commit_id is somehow absent, the guard
+  // is false and we re-approve — the safe direction.
+  const alreadyApproved =
+    latestBotReview &&
+    latestBotReview.state === 'APPROVED' &&
+    latestBotReview.commit_id === headSha;
   if (alreadyApproved) {
-    return setDecision('skip', 'bot already approved this PR');
+    return setDecision('skip', `bot already approved head ${headSha}`);
   }
 
   const testLogins = parseTestLogins(

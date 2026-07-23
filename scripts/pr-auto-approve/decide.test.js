@@ -436,6 +436,7 @@ test('idempotent: skip when latest bot review is APPROVED', async () => {
         id: 10,
         state: 'APPROVED',
         submitted_at: '2026-04-15T10:00:00Z',
+        commit_id: 'deadbeef', // approved the current head → idempotent skip
         user: { login: 'axeptio-bot' },
       },
     ],
@@ -444,6 +445,35 @@ test('idempotent: skip when latest bot review is APPROVED', async () => {
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /already approved/);
   assert.equal(calls.createReview.length, 0);
+});
+
+test('idempotency: stale APPROVED for an old commit does NOT block re-approval of the new head', async () => {
+  // The bot approved a PRIOR commit; a new push has since moved the head to
+  // 'deadbeef'. The stale approval must NOT short-circuit — under branch
+  // protection the bot has to re-approve the new head SHA.
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 10,
+        state: 'APPROVED',
+        submitted_at: '2026-04-15T09:00:00Z',
+        commit_id: 'oldsha0000', // approved an earlier commit, not the current head
+        user: { login: 'axeptio-bot' },
+      },
+      {
+        id: 11,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: cp,
+      },
+    ],
+    reviewComments: { 11: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
 });
 
 test('idempotency: bot approval superseded by a later COMMENT review is NOT idempotent', async () => {

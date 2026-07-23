@@ -4,7 +4,8 @@
 //
 // Configuration (via environment variables, set by the caller workflow):
 //   AUTO_APPROVE_BOT_LOGIN    — login of the bot that posts approval reviews (required)
-//   AUTO_APPROVE_BASE_BRANCH  — base branch PRs must target (default: main)
+//   AUTO_APPROVE_BASE_BRANCH  — comma-separated set of base branches PRs must
+//                               target to be eligible (default: main)
 //   AUTO_APPROVE_SANDBOX_REPOS — comma-separated repo full names where bot-authored
 //                               PRs are allowed (for e2e testing); production repos
 //                               must not appear here
@@ -23,7 +24,14 @@ const COPILOT_LOGINS = new Set([
 ]);
 
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
-function getBaseBranch() { return process.env.AUTO_APPROVE_BASE_BRANCH || 'main'; }
+// Comma-separated set of base branches a PR must target to be eligible.
+// Whitespace-only/empty falls back to the default so a blank input never makes
+// every PR ineligible. Accepts an env override for direct unit testing.
+function getBaseBranches(env = process.env) {
+  const raw = (env && env.AUTO_APPROVE_BASE_BRANCH) || '';
+  const branches = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return new Set(branches.length ? branches : ['main']);
+}
 function getRoundsThreshold() { return Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3); }
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
@@ -103,7 +111,7 @@ async function decide(args) {
 
 async function decideInner({ github, context, core }) {
   const BOT_LOGIN = getBotLogin();
-  const BASE_BRANCH = getBaseBranch();
+  const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
 
   let pr = context.payload.pull_request;
@@ -140,8 +148,11 @@ async function decideInner({ github, context, core }) {
     const { data: fetchedPr } = await github.rest.pulls.get({
       owner: o, repo: r, pull_number: associatedPrNumber,
     });
-    if (!fetchedPr.base || fetchedPr.base.ref !== BASE_BRANCH) {
-      return setDecision('skip', `check_run: PR base ref is not ${BASE_BRANCH}`);
+    if (!fetchedPr.base || !BASE_BRANCHES.has(fetchedPr.base.ref)) {
+      return setDecision(
+        'skip',
+        `check_run: PR base ref '${fetchedPr.base ? fetchedPr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      );
     }
     if (fetchedPr.draft) {
       return setDecision('skip', 'check_run: PR is draft');
@@ -368,3 +379,4 @@ module.exports = decide;
 module.exports.isCopilot = isCopilot;
 module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
+module.exports.getBaseBranches = getBaseBranches;

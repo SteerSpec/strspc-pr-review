@@ -71,6 +71,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 ```yaml
 on:
   pull_request:
+    branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
@@ -117,6 +118,13 @@ jobs:
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
 
+**Base branches.** `base-branch` accepts a single branch or a comma-separated set
+(e.g. `develop,main`; whitespace-only falls back to `main`). It gates **3 points that
+must list the same branches**: the `on.pull_request.branches:` filter, the job `if:`
+`base.ref` check, and the `base-branch` input. For multiple branches, set
+`branches: [main, develop]` and change the `base.ref` line to
+`contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
+
 ---
 
 ## Inputs
@@ -125,7 +133,7 @@ jobs:
 |---|---|---|---|
 | `bot-login` | **Yes** | — | GitHub login of the bot that posts the approval |
 | `bot-github-token` | **Yes** | — | PAT for `bot-login` with `repo` scope |
-| `base-branch` | No | `main` | Base branch PRs must target |
+| `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |

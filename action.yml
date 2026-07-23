@@ -20,8 +20,11 @@ inputs:
     required: false
     default: 'main'
     description: >-
-      Base branch that PRs must target to be eligible for auto-approval
-      (default: main).
+      Base branch(es) that PRs must target to be eligible for auto-approval.
+      Accepts a single branch or a comma-separated set (e.g. 'develop,main');
+      whitespace-only falls back to the default. Default: main. When you change
+      this, also update on.pull_request.branches and the job if: base.ref check
+      in your caller workflow so all three stay aligned.
   sandbox-repos:
     required: false
     default: ''

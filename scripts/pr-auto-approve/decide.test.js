@@ -989,6 +989,27 @@ test('isCopilot helper: strict allowlist (no substring fallback)', () => {
   assert.equal(decide.isCopilot(null), false);
 });
 
+test('getBaseBranches: comma-separated value parses to a trimmed Set', () => {
+  assert.deepEqual(
+    [...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: 'develop, staging ,main' })],
+    ['develop', 'staging', 'main'],
+  );
+});
+
+test('getBaseBranches: single value parses to a one-element Set', () => {
+  assert.deepEqual(
+    [...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: 'main' })],
+    ['main'],
+  );
+});
+
+test('getBaseBranches: whitespace-only / empty / unset falls back to {main}', () => {
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: '   ' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: '' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: ' , , ' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({})], ['main']);
+});
+
 // -- check_run event tests ---------------------------------------------------
 
 // Returns a context shaped like a check_run:completed event (no pull_request).
@@ -1061,7 +1082,7 @@ test('check_run event: PR targets non-develop branch → skip', async () => {
   });
   const result = await decide({ github, context: makeCheckRunContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /base ref is not/);
+  assert.match(result.reason, /not in \[/);
 });
 
 test('check_run event: draft PR → skip with check_run: PR is draft', async () => {
@@ -1081,4 +1102,61 @@ test('check_run event: draft PR → skip with check_run: PR is draft', async () 
   const result = await decide({ github, context: makeCheckRunContext(), core });
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /PR is draft/);
+});
+
+test('check_run event: PR base in the configured multi-branch set is eligible', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop,staging';
+  try {
+    const { github, calls } = makeFakeGithub({
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'staging' }, // in the set → eligible
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+      reviews: [
+        { id: 1, state: 'COMMENTED', submitted_at: '2026-04-20T08:00:00Z', user: cp },
+      ],
+      reviewComments: { 1: [] },
+    });
+    const result = await decide({ github, context: makeCheckRunContext(), core });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
+});
+
+test('check_run event: PR base outside the configured multi-branch set → skip', async () => {
+  const core = makeCore();
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop,staging';
+  try {
+    const { github } = makeFakeGithub({
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'main' }, // not in {develop, staging}
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+    });
+    const result = await decide({ github, context: makeCheckRunContext(), core });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /not in \[/);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
 });

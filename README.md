@@ -111,7 +111,7 @@ jobs:
         github.event.check_run.pull_requests[0] != null
       )
     steps:
-      - uses: SteerSpec/strspc-pr-review@v1.0.0
+      - uses: SteerSpec/strspc-pr-review@v1
         with:
           bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
@@ -152,7 +152,7 @@ must list the same branches**: the `on.pull_request.branches:` filter, the job `
 
 ## Versioning
 
-Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`.
+Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`. The moving `@v1` tag always points at the latest `v1.x` release, so pinning `@v1` (as the snippet above does) receives patches and backward-compatible features automatically. Pin an exact `@vX.Y.Z` if you prefer to upgrade manually.
 
 ---
 

@@ -160,8 +160,9 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test        # 42 unit tests, no external dependencies
-npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
+npm test            # 52 unit tests, no external dependencies
+npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
+npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 ```
 
 ### Project layout
@@ -170,7 +171,7 @@ npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 42 unit tests (Node native test runner)
+  decide.test.js   # 52 unit tests (Node native test runner)
 .github/workflows/
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck

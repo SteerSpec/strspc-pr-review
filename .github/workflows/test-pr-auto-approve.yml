@@ -6,11 +6,17 @@ on:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
+      # CI runs `npm run test:coverage`, so the gate itself lives in package.json.
+      - 'package.json'
+      - 'package-lock.json'
   push:
     branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'
+      - '.github/workflows/test-pr-auto-approve.yml'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: read
@@ -24,8 +30,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run unit tests
-        run: node --test scripts/pr-auto-approve/*.test.js
+      - name: Run unit tests (with coverage gate)
+        run: npm run test:coverage
 
   lint:
     name: actionlint + shellcheck

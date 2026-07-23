@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "test": "node --test scripts/pr-auto-approve/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/*.test.js\" --test-coverage-lines=80 --test-coverage-branches=70 scripts/pr-auto-approve/*.test.js",
     "lint:workflows": "actionlint .github/workflows/*.yml",
     "lint:shell": "shellcheck e2e/pr-auto-approve/run.sh",
     "lint": "npm run lint:workflows && npm run lint:shell",

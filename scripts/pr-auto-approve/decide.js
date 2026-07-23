@@ -163,6 +163,41 @@ async function decideInner({ github, context, core }) {
     pr = fetchedPr;
   }
 
+  // workflow_run events (for callers whose gating CI reports completion via a
+  // separate workflow rather than check_run) don't carry pull_request either;
+  // extract from the associated PRs, same shape as the check_run path above.
+  if (!pr && context.payload.workflow_run) {
+    const wr = context.payload.workflow_run;
+    if (wr.conclusion !== 'success') {
+      return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
+    }
+    const prs = wr.pull_requests || [];
+    if (prs.length === 0) {
+      return setDecision('skip', 'workflow_run: no associated PRs');
+    }
+    const associatedPrNumber = prs[0] && prs[0].number;
+    if (!Number.isInteger(associatedPrNumber) || associatedPrNumber <= 0) {
+      return setDecision('skip', 'workflow_run: associated PR missing valid number');
+    }
+    const { owner: o, repo: r } = context.repo;
+    if (!wr.head_repository || wr.head_repository.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: head repo does not match current repo');
+    }
+    const { data: fetchedPr } = await github.rest.pulls.get({
+      owner: o, repo: r, pull_number: associatedPrNumber,
+    });
+    if (!fetchedPr.base || !BASE_BRANCHES.has(fetchedPr.base.ref)) {
+      return setDecision(
+        'skip',
+        `workflow_run: PR base ref '${fetchedPr.base ? fetchedPr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      );
+    }
+    if (fetchedPr.draft) {
+      return setDecision('skip', 'workflow_run: PR is draft');
+    }
+    pr = fetchedPr;
+  }
+
   if (!pr) return setDecision('skip', 'no pull_request in event');
 
   const { owner, repo } = context.repo;

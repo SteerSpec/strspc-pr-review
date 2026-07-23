@@ -125,6 +125,13 @@ must list the same branches**: the `on.pull_request.branches:` filter, the job `
 `branches: [main, develop]` and change the `base.ref` line to
 `contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
 
+**`workflow_run` support.** If your gating CI reports completion via a separate
+workflow rather than `check_run`, the action can re-evaluate on `workflow_run`
+too. This is opt-in — uncomment the `workflow_run:` trigger and the matching
+`if:` branch shown in [`templates/pr-auto-approve.yml`](templates/pr-auto-approve.yml),
+and add `github.event.workflow_run.pull_requests[0].number ||` to the
+concurrency group expression. Most callers only need `check_run`.
+
 ---
 
 ## Inputs

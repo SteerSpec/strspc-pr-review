@@ -130,7 +130,11 @@ workflow rather than `check_run`, the action can re-evaluate on `workflow_run`
 too. This is opt-in — uncomment the `workflow_run:` trigger and the matching
 `if:` branch shown in [`templates/pr-auto-approve.yml`](templates/pr-auto-approve.yml),
 and add `github.event.workflow_run.pull_requests[0].number ||` to the
-concurrency group expression. Most callers only need `check_run`.
+concurrency group expression. Most callers only need `check_run`. The `if:`
+branch's `pull_requests[0] != null` check matters: `workflow_run` fires for
+every completed run of the named workflow, including non-PR runs (e.g. a push
+to main), which have an empty `pull_requests` array — without the guard those
+trigger a wasted job run and a noisy "skipped" Slack notification.
 
 ---
 

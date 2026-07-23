@@ -140,7 +140,7 @@ runs:
           --arg author "$PR_AUTHOR" \
           --arg reason "$REASON" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
-           def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def test_flag: if ($sandbox | split(",") | map(gsub("^\\s+|\\s+$";"")) | index($repo)) then "[TEST] " else "" end;
            def author_part: if $author == "" then "" else "  @" + $author end;
            def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,
@@ -179,7 +179,7 @@ runs:
           --arg author "$PR_AUTHOR" \
           --arg reason "$REASON" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
-           def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def test_flag: if ($sandbox | split(",") | map(gsub("^\\s+|\\s+$";"")) | index($repo)) then "[TEST] " else "" end;
            def author_part: if $author == "" then "" else "  @" + $author end;
            def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,
@@ -218,7 +218,7 @@ runs:
           --arg author "$PR_AUTHOR" \
           --arg runUrl "$RUN_URL" \
           'def s: gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;")|gsub("\\|";"｜");
-           def test_flag: if ($sandbox | split(",") | index($repo)) then "[TEST] " else "" end;
+           def test_flag: if ($sandbox | split(",") | map(gsub("^\\s+|\\s+$";"")) | index($repo)) then "[TEST] " else "" end;
            def author_part: if $author == "" then "" else "  @" + $author end;
            def title_part: if ($title|s) == "" then "" else " — " + ($title|s) end;
            {channel: $channel,

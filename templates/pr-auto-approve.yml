@@ -53,11 +53,17 @@ jobs:
     # the base.ref line below to:
     #   contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)
     # OPTIONAL workflow_run support (see the `on:` section above): OR this into
-    # the if: expression below if you enabled the workflow_run trigger:
+    # the if: expression below if you enabled the workflow_run trigger. The
+    # pull_requests[0] != null guard matters here: workflow_run fires for
+    # EVERY completed run of the named workflow, including non-PR runs (e.g.
+    # a push to main), which have an empty pull_requests array -- without the
+    # guard those trigger a wasted job run and a noisy "skipped: workflow_run:
+    # no associated PRs" Slack notification.
     #   || (
     #     github.event_name == 'workflow_run' &&
     #     github.event.workflow_run.conclusion == 'success' &&
-    #     github.event.workflow_run.head_repository.full_name == github.repository
+    #     github.event.workflow_run.head_repository.full_name == github.repository &&
+    #     github.event.workflow_run.pull_requests[0] != null
     #   )
     if: >-
       (

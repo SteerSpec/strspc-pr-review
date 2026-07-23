@@ -6,11 +6,17 @@ on:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
+      # CI runs `npm run test:coverage`, so the gate itself lives in package.json.
+      - 'package.json'
+      - 'package-lock.json'
   push:
     branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
       - '.github/workflows/pr-auto-approve.yml'
+      - '.github/workflows/test-pr-auto-approve.yml'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: read

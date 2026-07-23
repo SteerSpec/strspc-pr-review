@@ -171,7 +171,7 @@ npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 42 unit tests (Node native test runner)
+  decide.test.js   # 52 unit tests (Node native test runner)
 .github/workflows/
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck

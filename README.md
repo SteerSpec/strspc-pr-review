@@ -71,6 +71,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 ```yaml
 on:
   pull_request:
+    branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
@@ -116,6 +117,13 @@ jobs:
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
+
+**Base branches.** `base-branch` accepts a single branch or a comma-separated set
+(e.g. `develop,main`; whitespace-only falls back to `main`). It gates **3 points that
+must list the same branches**: the `on.pull_request.branches:` filter, the job `if:`
+`base.ref` check, and the `base-branch` input. For multiple branches, set
+`branches: [main, develop]` and change the `base.ref` line to
+`contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
 
 ---
 

@@ -5,6 +5,7 @@ name: PR Auto-Approve (Copilot)
 
 on:
   pull_request:
+    branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
@@ -38,7 +39,12 @@ jobs:
     # disables (an unset var makes actor != '' always true).
     # Allow check_run events through but exclude this job's own check to prevent
     # feedback loops — update 'auto-approve' below if you rename this job.
-    # NOTE: If you change base-branch below, also update 'main' here to match.
+    # BASE-BRANCH SYNC — 3 points must list the same branch(es):
+    #   1. on.pull_request.branches (above)   2. the base.ref check (below)
+    #   3. the base-branch input (at the bottom).
+    # For multiple base branches, set branches: [main, develop] above and change
+    # the base.ref line below to:
+    #   contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)
     if: >-
       (
         (
@@ -68,8 +74,9 @@ jobs:
           # Required: PAT for bot-login with `repo` scope so it can post reviews.
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
 
-          # Optional: base branch PRs must target (default: main).
-          # Uncomment and change if you use a different default branch.
+          # Optional: base branch(es) PRs must target (default: main). Accepts a
+          # comma-separated set, e.g. 'develop,main'. Keep in sync with the
+          # branches: filter and base.ref check above (see BASE-BRANCH SYNC).
           # base-branch: develop
 
           # Optional: set to 'true' if your repo has no CI checks for some PRs

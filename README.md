@@ -106,7 +106,8 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
         github.event_name == 'check_run' &&
-        github.event.check_run.name != 'auto-approve'
+        github.event.check_run.name != 'auto-approve' &&
+        github.event.check_run.pull_requests[0] != null
       )
     steps:
       - uses: SteerSpec/strspc-pr-review@v1.0.0

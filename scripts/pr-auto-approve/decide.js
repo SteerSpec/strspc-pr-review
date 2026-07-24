@@ -120,6 +120,16 @@ async function decideInner({ github, context, core }) {
     core.info(`pr-auto-approve decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
+    // check_run/workflow_run-triggered runs carry no github.event.pull_request,
+    // so the caller's Slack notification steps fall back to these outputs for
+    // the PR link/number/title/author instead of emitting an empty/malformed
+    // message. `pr` is whatever this closure's outer scope has resolved by
+    // the time setDecision runs — null for the handful of skip reasons that
+    // fire before a PR is ever resolved (e.g. "no associated PRs").
+    core.setOutput('pr_url', pr ? pr.html_url || '' : '');
+    core.setOutput('pr_number', pr ? String(pr.number) : '');
+    core.setOutput('pr_title', pr ? pr.title || '' : '');
+    core.setOutput('pr_author', pr && pr.user ? pr.user.login : '');
     // Summary write is best-effort: a rare I/O failure here must NOT bubble
     // up to the top-level try/catch and flip a successful approval into an
     // "evaluation failed" skip.
@@ -159,6 +169,44 @@ async function decideInner({ github, context, core }) {
     }
     if (!fetchedPr.head || !fetchedPr.head.repo || fetchedPr.head.repo.full_name !== `${o}/${r}`) {
       return setDecision('skip', 'check_run: PR head repo does not match current repo');
+    }
+    pr = fetchedPr;
+  }
+
+  // workflow_run events (for callers whose gating CI reports completion via a
+  // separate workflow rather than check_run) don't carry pull_request either;
+  // extract from the associated PRs, same shape as the check_run path above.
+  if (!pr && context.payload.workflow_run) {
+    const wr = context.payload.workflow_run;
+    if (wr.conclusion !== 'success') {
+      return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
+    }
+    const prs = wr.pull_requests || [];
+    if (prs.length === 0) {
+      return setDecision('skip', 'workflow_run: no associated PRs');
+    }
+    const associatedPrNumber = prs[0] && prs[0].number;
+    if (!Number.isInteger(associatedPrNumber) || associatedPrNumber <= 0) {
+      return setDecision('skip', 'workflow_run: associated PR missing valid number');
+    }
+    const { owner: o, repo: r } = context.repo;
+    if (!wr.head_repository || wr.head_repository.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: head repo does not match current repo');
+    }
+    const { data: fetchedPr } = await github.rest.pulls.get({
+      owner: o, repo: r, pull_number: associatedPrNumber,
+    });
+    if (!fetchedPr.base || !BASE_BRANCHES.has(fetchedPr.base.ref)) {
+      return setDecision(
+        'skip',
+        `workflow_run: PR base ref '${fetchedPr.base ? fetchedPr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      );
+    }
+    if (fetchedPr.draft) {
+      return setDecision('skip', 'workflow_run: PR is draft');
+    }
+    if (!fetchedPr.head || !fetchedPr.head.repo || fetchedPr.head.repo.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: PR head repo does not match current repo');
     }
     pr = fetchedPr;
   }

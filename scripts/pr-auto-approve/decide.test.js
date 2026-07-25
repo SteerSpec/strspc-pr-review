@@ -824,7 +824,9 @@ test('skip: latest Copilot review has no commit_id (cannot prove freshness)', as
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /older commit/);
+  // Distinct from the stale-SHA wording: no SHA is reported, because there is none.
+  assert.match(result.reason, /has no commit_id/);
+  assert.doesNotMatch(result.reason, /older commit/);
   assert.equal(calls.createReview.length, 0);
 });
 

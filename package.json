@@ -1,11 +1,12 @@
 {
   "name": "@steerspec/pr-auto-approve",
-  "version": "0.2.0",
-  "description": "Reusable GitHub Actions workflow that auto-approves PRs when GitHub Copilot's review is clean or after 3 review rounds",
+  "version": "1.0.0",
+  "description": "Reusable GitHub Actions workflow that auto-approves PRs when GitHub Copilot's review is clean or after N review rounds (default 3)",
   "license": "Apache-2.0",
   "type": "commonjs",
   "scripts": {
     "test": "node --test scripts/pr-auto-approve/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/*.test.js\" --test-coverage-lines=80 --test-coverage-branches=70 scripts/pr-auto-approve/*.test.js",
     "lint:workflows": "actionlint .github/workflows/*.yml",
     "lint:shell": "shellcheck e2e/pr-auto-approve/run.sh",
     "lint": "npm run lint:workflows && npm run lint:shell",

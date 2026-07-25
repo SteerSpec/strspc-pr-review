@@ -34,8 +34,10 @@ function makeFakeGithub({
   reviewComments = {},
   createReviewImpl,
   getPrImpl,
+  reviewDecision = null,
+  graphqlImpl,
 } = {}) {
-  const calls = { createReview: [] };
+  const calls = { createReview: [], graphql: [] };
 
   const paginate = async (fn, params, mapper) => {
     const pages = await fn(params);
@@ -45,6 +47,11 @@ function makeFakeGithub({
 
   const github = {
     paginate,
+    graphql: async (query, vars) => {
+      calls.graphql.push({ query, vars });
+      if (graphqlImpl) return graphqlImpl(query, vars);
+      return { repository: { pullRequest: { reviewDecision } } };
+    },
     rest: {
       checks: {
         listForRef: async () => ({ data: { total_count: checkRuns.length, check_runs: checkRuns } }),
@@ -177,6 +184,45 @@ test('skip: no check runs on head SHA (CI not started yet)', async () => {
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /no checks on head SHA/);
   assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: no checks and allow-no-checks not set (default strict)', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({ checkRuns: [] });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no checks on head SHA/);
+});
+
+test('approve: no checks but allow-no-checks=true and copilot-clean', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const original = process.env.AUTO_APPROVE_ALLOW_NO_CHECKS;
+  process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = 'true';
+  try {
+    const { github, calls } = makeFakeGithub({
+      checkRuns: [],
+      reviews: [
+        {
+          id: 7,
+          state: 'COMMENTED',
+          submitted_at: '2026-04-15T10:00:00Z',
+          user: cp,
+        },
+      ],
+      reviewComments: { 7: [] },
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.match(result.reason, /copilot-clean/);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    if (original == null) {
+      delete process.env.AUTO_APPROVE_ALLOW_NO_CHECKS;
+    } else {
+      process.env.AUTO_APPROVE_ALLOW_NO_CHECKS = original;
+    }
+  }
 });
 
 test('skip: failing check run', async () => {
@@ -397,6 +443,7 @@ test('idempotent: skip when latest bot review is APPROVED', async () => {
         id: 10,
         state: 'APPROVED',
         submitted_at: '2026-04-15T10:00:00Z',
+        commit_id: 'deadbeef', // approved the current head → idempotent skip
         user: { login: 'axeptio-bot' },
       },
     ],
@@ -405,6 +452,35 @@ test('idempotent: skip when latest bot review is APPROVED', async () => {
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /already approved/);
   assert.equal(calls.createReview.length, 0);
+});
+
+test('idempotency: stale APPROVED for an old commit does NOT block re-approval of the new head', async () => {
+  // The bot approved a PRIOR commit; a new push has since moved the head to
+  // 'deadbeef'. The stale approval must NOT short-circuit — under branch
+  // protection the bot has to re-approve the new head SHA.
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 10,
+        state: 'APPROVED',
+        submitted_at: '2026-04-15T09:00:00Z',
+        commit_id: 'oldsha0000', // approved an earlier commit, not the current head
+        user: { login: 'axeptio-bot' },
+      },
+      {
+        id: 11,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: cp,
+      },
+    ],
+    reviewComments: { 11: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
 });
 
 test('idempotency: bot approval superseded by a later COMMENT review is NOT idempotent', async () => {
@@ -465,6 +541,75 @@ test('idempotency: DISMISSED bot approvals do not block a fresh approval', async
   assert.equal(calls.createReview.length, 1);
 });
 
+test('gate: reviewDecision=APPROVED skips before the REST review checks', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  // A clean Copilot review would normally approve — the GraphQL gate must
+  // short-circuit first because the PR is already APPROVED overall.
+  const { github, calls } = makeFakeGithub({
+    reviewDecision: 'APPROVED',
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /reviewDecision=APPROVED/);
+  assert.equal(calls.graphql.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('gate: reviewDecision=REVIEW_REQUIRED does not gate; still approves when clean', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviewDecision: 'REVIEW_REQUIRED',
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('gate: partial GraphQL response is handled by optional chaining (no gate, no crash)', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    graphqlImpl: () => ({}), // no repository field → reviewDecision resolves to undefined
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
+});
+
+test('gate: GraphQL error falls through to REST checks (best-effort)', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const err = new Error('GraphQL: something went wrong');
+  err.status = 502;
+  const { github, calls } = makeFakeGithub({
+    graphqlImpl: () => {
+      throw err;
+    },
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.graphql.length, 1);
+});
+
 test('skip: no Copilot review yet', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub({ reviews: [] });
@@ -491,6 +636,25 @@ test('approve: copilot-clean (0 comments, COMMENTED state)', async () => {
   assert.match(result.reason, /copilot-clean/);
   assert.equal(calls.createReview.length, 1);
   assert.equal(calls.createReview[0].event, 'APPROVE');
+});
+
+test('approve: copilot-clean with github-copilot[bot] identity', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 8,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'github-copilot[bot]', type: 'Bot' },
+      },
+    ],
+    reviewComments: { 8: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
 });
 
 test('skip: latest Copilot review has comments', async () => {
@@ -825,6 +989,27 @@ test('isCopilot helper: strict allowlist (no substring fallback)', () => {
   assert.equal(decide.isCopilot(null), false);
 });
 
+test('getBaseBranches: comma-separated value parses to a trimmed Set', () => {
+  assert.deepEqual(
+    [...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: 'develop, staging ,main' })],
+    ['develop', 'staging', 'main'],
+  );
+});
+
+test('getBaseBranches: single value parses to a one-element Set', () => {
+  assert.deepEqual(
+    [...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: 'main' })],
+    ['main'],
+  );
+});
+
+test('getBaseBranches: whitespace-only / empty / unset falls back to {main}', () => {
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: '   ' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: '' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({ AUTO_APPROVE_BASE_BRANCH: ' , , ' })], ['main']);
+  assert.deepEqual([...decide.getBaseBranches({})], ['main']);
+});
+
 // -- check_run event tests ---------------------------------------------------
 
 // Returns a context shaped like a check_run:completed event (no pull_request).
@@ -854,6 +1039,37 @@ test('check_run event: extracts PR and approves on 3-rounds', async () => {
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
   assert.match(result.reason, /3-rounds/);
   assert.equal(calls.createReview.length, 1);
+});
+
+test('check_run event: outputs pr_url/pr_number/pr_author for the caller Slack fallback', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-20T08:00:00Z', user: cp }],
+    reviewComments: { 1: [] },
+  });
+  const result = await decide({ github, context: makeCheckRunContext({ prNumber: 77 }), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(core.outputs.pr_url, 'https://github.com/axeptio/test-only-repo/pull/77');
+  assert.equal(core.outputs.pr_number, '77');
+  assert.equal(core.outputs.pr_author, 'someone');
+  // The default fixture sets no title, so it must fall back to an empty
+  // string rather than 'undefined' leaking into a Slack message.
+  assert.equal(core.outputs.pr_title, '');
+});
+
+test('no pull_request in event: pr_* outputs stay empty (no PR was ever resolved)', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: { runId: 1, repo: { owner: 'axeptio', repo: 'test-only-repo' }, payload: {} },
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(core.outputs.pr_url, '');
+  assert.equal(core.outputs.pr_number, '');
+  assert.equal(core.outputs.pr_author, '');
 });
 
 test('check_run event: no associated PRs → skip', async () => {
@@ -897,7 +1113,7 @@ test('check_run event: PR targets non-develop branch → skip', async () => {
   });
   const result = await decide({ github, context: makeCheckRunContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /base ref is not/);
+  assert.match(result.reason, /not in \[/);
 });
 
 test('check_run event: draft PR → skip with check_run: PR is draft', async () => {
@@ -915,6 +1131,211 @@ test('check_run event: draft PR → skip with check_run: PR is draft', async () 
     }),
   });
   const result = await decide({ github, context: makeCheckRunContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /PR is draft/);
+});
+
+test('check_run event: PR base in the configured multi-branch set is eligible', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop,staging';
+  try {
+    const { github, calls } = makeFakeGithub({
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'staging' }, // in the set → eligible
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+      reviews: [
+        { id: 1, state: 'COMMENTED', submitted_at: '2026-04-20T08:00:00Z', user: cp },
+      ],
+      reviewComments: { 1: [] },
+    });
+    const result = await decide({ github, context: makeCheckRunContext(), core });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
+});
+
+test('check_run event: PR base outside the configured multi-branch set → skip', async () => {
+  const core = makeCore();
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop,staging';
+  try {
+    const { github } = makeFakeGithub({
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'main' }, // not in {develop, staging}
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+    });
+    const result = await decide({ github, context: makeCheckRunContext(), core });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /not in \[/);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
+});
+
+// -- workflow_run event tests -------------------------------------------------
+
+// Returns a context shaped like a workflow_run:completed event (no pull_request).
+function makeWorkflowRunContext({
+  prNumber = 42,
+  conclusion = 'success',
+  headRepoFullName = 'axeptio/test-only-repo',
+} = {}) {
+  return {
+    runId: 111,
+    repo: { owner: 'axeptio', repo: 'test-only-repo' },
+    payload: {
+      workflow_run: {
+        conclusion,
+        pull_requests: prNumber != null ? [{ number: prNumber }] : [],
+        head_repository: headRepoFullName != null ? { full_name: headRepoFullName } : null,
+      },
+    },
+  };
+}
+
+test('workflow_run event: extracts PR and approves on 3-rounds', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const threeReviews = [
+    { id: 1, state: 'COMMENTED', submitted_at: '2026-04-20T07:35:00Z', user: cp },
+    { id: 2, state: 'COMMENTED', submitted_at: '2026-04-20T07:49:00Z', user: cp },
+    { id: 3, state: 'COMMENTED', submitted_at: '2026-04-20T08:05:00Z', user: cp },
+  ];
+  const { github, calls } = makeFakeGithub({ reviews: threeReviews });
+  const result = await decide({ github, context: makeWorkflowRunContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /3-rounds/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('workflow_run event: non-success conclusion → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ conclusion: 'failure' }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /conclusion is failure/);
+});
+
+test('workflow_run event: no associated PRs → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ prNumber: null }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no associated PRs/);
+});
+
+test('workflow_run event: invalid PR number → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const ctx = {
+    runId: 111,
+    repo: { owner: 'axeptio', repo: 'test-only-repo' },
+    payload: {
+      workflow_run: {
+        conclusion: 'success',
+        pull_requests: [{ number: 'bad' }],
+        head_repository: { full_name: 'axeptio/test-only-repo' },
+      },
+    },
+  };
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /missing valid number/);
+});
+
+test('workflow_run event: head repo mismatch → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ headRepoFullName: 'someone-else/fork' }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /head repo does not match/);
+});
+
+test('workflow_run event: PR targets ineligible base branch → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    getPrImpl: (pull_number) => ({
+      data: {
+        number: pull_number,
+        draft: false,
+        user: { login: 'someone' },
+        head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+        base: { ref: 'main' },
+        html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+      },
+    }),
+  });
+  const result = await decide({ github, context: makeWorkflowRunContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /not in \[/);
+});
+
+test('workflow_run event: fetched PR head repo mismatch (fork) → skip', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    getPrImpl: (pull_number) => ({
+      data: {
+        number: pull_number,
+        draft: false,
+        user: { login: 'someone' },
+        head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } },
+        base: { ref: 'develop' },
+        html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+      },
+    }),
+  });
+  const result = await decide({ github, context: makeWorkflowRunContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /PR head repo does not match/);
+});
+
+test('workflow_run event: draft PR → skip with workflow_run: PR is draft', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    getPrImpl: (pull_number) => ({
+      data: {
+        number: pull_number,
+        draft: true,
+        user: { login: 'someone' },
+        head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+        base: { ref: 'develop' },
+        html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+      },
+    }),
+  });
+  const result = await decide({ github, context: makeWorkflowRunContext(), core });
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /PR is draft/);
 });

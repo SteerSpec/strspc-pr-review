@@ -4,7 +4,8 @@
 //
 // Configuration (via environment variables, set by the caller workflow):
 //   AUTO_APPROVE_BOT_LOGIN    — login of the bot that posts approval reviews (required)
-//   AUTO_APPROVE_BASE_BRANCH  — base branch PRs must target (default: main)
+//   AUTO_APPROVE_BASE_BRANCH  — comma-separated set of base branches PRs must
+//                               target to be eligible (default: main)
 //   AUTO_APPROVE_SANDBOX_REPOS — comma-separated repo full names where bot-authored
 //                               PRs are allowed (for e2e testing); production repos
 //                               must not appear here
@@ -19,15 +20,24 @@
 // add it here explicitly after verification.
 const COPILOT_LOGINS = new Set([
   'copilot-pull-request-reviewer[bot]',
+  'github-copilot[bot]',
 ]);
 
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
-function getBaseBranch() { return process.env.AUTO_APPROVE_BASE_BRANCH || 'main'; }
+// Comma-separated set of base branches a PR must target to be eligible.
+// Whitespace-only/empty falls back to the default so a blank input never makes
+// every PR ineligible. Accepts an env override for direct unit testing.
+function getBaseBranches(env = process.env) {
+  const raw = (env && env.AUTO_APPROVE_BASE_BRANCH) || '';
+  const branches = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return new Set(branches.length ? branches : ['main']);
+}
 function getRoundsThreshold() { return Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3); }
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
+function getAllowNoChecks() { return (process.env.AUTO_APPROVE_ALLOW_NO_CHECKS || '').toLowerCase() === 'true'; }
 
 function isCopilot(u) {
   if (!u) return false;
@@ -101,7 +111,7 @@ async function decide(args) {
 
 async function decideInner({ github, context, core }) {
   const BOT_LOGIN = getBotLogin();
-  const BASE_BRANCH = getBaseBranch();
+  const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
 
   let pr = context.payload.pull_request;
@@ -110,6 +120,16 @@ async function decideInner({ github, context, core }) {
     core.info(`pr-auto-approve decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
+    // check_run/workflow_run-triggered runs carry no github.event.pull_request,
+    // so the caller's Slack notification steps fall back to these outputs for
+    // the PR link/number/title/author instead of emitting an empty/malformed
+    // message. `pr` is whatever this closure's outer scope has resolved by
+    // the time setDecision runs — null for the handful of skip reasons that
+    // fire before a PR is ever resolved (e.g. "no associated PRs").
+    core.setOutput('pr_url', pr ? pr.html_url || '' : '');
+    core.setOutput('pr_number', pr ? String(pr.number) : '');
+    core.setOutput('pr_title', pr ? pr.title || '' : '');
+    core.setOutput('pr_author', pr && pr.user ? pr.user.login : '');
     // Summary write is best-effort: a rare I/O failure here must NOT bubble
     // up to the top-level try/catch and flip a successful approval into an
     // "evaluation failed" skip.
@@ -138,14 +158,55 @@ async function decideInner({ github, context, core }) {
     const { data: fetchedPr } = await github.rest.pulls.get({
       owner: o, repo: r, pull_number: associatedPrNumber,
     });
-    if (!fetchedPr.base || fetchedPr.base.ref !== BASE_BRANCH) {
-      return setDecision('skip', `check_run: PR base ref is not ${BASE_BRANCH}`);
+    if (!fetchedPr.base || !BASE_BRANCHES.has(fetchedPr.base.ref)) {
+      return setDecision(
+        'skip',
+        `check_run: PR base ref '${fetchedPr.base ? fetchedPr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      );
     }
     if (fetchedPr.draft) {
       return setDecision('skip', 'check_run: PR is draft');
     }
     if (!fetchedPr.head || !fetchedPr.head.repo || fetchedPr.head.repo.full_name !== `${o}/${r}`) {
       return setDecision('skip', 'check_run: PR head repo does not match current repo');
+    }
+    pr = fetchedPr;
+  }
+
+  // workflow_run events (for callers whose gating CI reports completion via a
+  // separate workflow rather than check_run) don't carry pull_request either;
+  // extract from the associated PRs, same shape as the check_run path above.
+  if (!pr && context.payload.workflow_run) {
+    const wr = context.payload.workflow_run;
+    if (wr.conclusion !== 'success') {
+      return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
+    }
+    const prs = wr.pull_requests || [];
+    if (prs.length === 0) {
+      return setDecision('skip', 'workflow_run: no associated PRs');
+    }
+    const associatedPrNumber = prs[0] && prs[0].number;
+    if (!Number.isInteger(associatedPrNumber) || associatedPrNumber <= 0) {
+      return setDecision('skip', 'workflow_run: associated PR missing valid number');
+    }
+    const { owner: o, repo: r } = context.repo;
+    if (!wr.head_repository || wr.head_repository.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: head repo does not match current repo');
+    }
+    const { data: fetchedPr } = await github.rest.pulls.get({
+      owner: o, repo: r, pull_number: associatedPrNumber,
+    });
+    if (!fetchedPr.base || !BASE_BRANCHES.has(fetchedPr.base.ref)) {
+      return setDecision(
+        'skip',
+        `workflow_run: PR base ref '${fetchedPr.base ? fetchedPr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      );
+    }
+    if (fetchedPr.draft) {
+      return setDecision('skip', 'workflow_run: PR is draft');
+    }
+    if (!fetchedPr.head || !fetchedPr.head.repo || fetchedPr.head.repo.full_name !== `${o}/${r}`) {
+      return setDecision('skip', 'workflow_run: PR head repo does not match current repo');
     }
     pr = fetchedPr;
   }
@@ -204,7 +265,10 @@ async function decideInner({ github, context, core }) {
   const checkRuns = [...latestByKey.values()];
 
   if (checkRuns.length === 0) {
-    return setDecision('skip', 'no checks on head SHA yet');
+    if (!getAllowNoChecks()) {
+      return setDecision('skip', 'no checks on head SHA yet');
+    }
+    core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
   }
 
   const badCheck = checkRuns.find(
@@ -221,6 +285,33 @@ async function decideInner({ github, context, core }) {
   const pending = checkRuns.find((cr) => cr.status !== 'completed');
   if (pending) {
     return setDecision('skip', `check still running: ${pending.name}`);
+  }
+
+  // GraphQL reviewDecision gate: GitHub's authoritative "is this PR already
+  // approved overall?" signal. It reflects branch-protection dismissals — a
+  // stale approval invalidated by a new push reads as REVIEW_REQUIRED, not
+  // APPROVED — so it pairs with the head-SHA REST guard instead of masking a
+  // needed re-approval. Best-effort: a GraphQL-specific failure is logged and
+  // we fall through to the REST review checks, so a GraphQL outage never
+  // disables auto-approval.
+  let reviewDecision;
+  try {
+    const gql = await github.graphql(
+      `query ($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) { reviewDecision }
+        }
+      }`,
+      { owner, repo, number: prNumber },
+    );
+    reviewDecision = gql?.repository?.pullRequest?.reviewDecision;
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: reviewDecision query failed, falling through to REST: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+  }
+  if (reviewDecision === 'APPROVED') {
+    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
   }
 
   const reviews = await github.paginate(github.rest.pulls.listReviews, {
@@ -250,9 +341,17 @@ async function decideInner({ github, context, core }) {
         })
     : [];
   const latestBotReview = botReviews[botReviews.length - 1];
-  const alreadyApproved = latestBotReview && latestBotReview.state === 'APPROVED';
+  // Bind idempotency to the head SHA: only skip if the bot already approved
+  // THIS commit. A stale approval of an earlier commit (e.g. a push has since
+  // moved the head, dismissing it under branch protection) must NOT block a
+  // fresh approval of the new head. If commit_id is somehow absent, the guard
+  // is false and we re-approve — the safe direction.
+  const alreadyApproved =
+    latestBotReview &&
+    latestBotReview.state === 'APPROVED' &&
+    latestBotReview.commit_id === headSha;
   if (alreadyApproved) {
-    return setDecision('skip', 'bot already approved this PR');
+    return setDecision('skip', `bot already approved head ${headSha}`);
   }
 
   const testLogins = parseTestLogins(
@@ -275,6 +374,8 @@ async function decideInner({ github, context, core }) {
       return at - bt;
     });
 
+  core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
+
   if (copilotReviews.length === 0) {
     return setDecision('skip', 'no Copilot review yet');
   }
@@ -282,6 +383,7 @@ async function decideInner({ github, context, core }) {
   // Always honor the latest Copilot signal: if the most recent non-dismissed
   // review is CHANGES_REQUESTED, never approve — even under the 3-rounds rule.
   const latest = copilotReviews[copilotReviews.length - 1];
+  core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
   if (latest.state === 'CHANGES_REQUESTED') {
     return setDecision('skip', 'latest Copilot review requested changes');
   }
@@ -325,3 +427,4 @@ module.exports = decide;
 module.exports.isCopilot = isCopilot;
 module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
+module.exports.getBaseBranches = getBaseBranches;

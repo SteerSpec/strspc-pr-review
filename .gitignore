@@ -6,3 +6,9 @@ node_modules/
 *.db
 .beads-credential-key
 .beads/issues.jsonl
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
+
+# Claude Code agent worktrees (keep .claude/settings.json tracked)
+.claude/worktrees/

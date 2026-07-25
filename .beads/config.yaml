@@ -54,3 +54,5 @@
 # - github.repo
 
 sync.remote: "git+https://github.com/SteerSpec/strspc-pr-review.git"
+dolt:
+    auto-commit: "on"

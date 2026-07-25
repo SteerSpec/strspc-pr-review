@@ -71,7 +71,8 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 ```yaml
 on:
   pull_request:
-    types: [opened, ready_for_review, synchronize, reopened, review_requested]
+    branches: [main]
+    types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
   check_run:
@@ -94,21 +95,46 @@ jobs:
       cancel-in-progress: true
     if: >-
       (
-        github.event.pull_request != null &&
+        (
+          github.event_name == 'pull_request' ||
+          (
+            github.event_name == 'pull_request_review' &&
+            github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN
+          )
+        ) &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
         github.event_name == 'check_run' &&
-        github.event.check_run.name != 'auto-approve'
+        github.event.check_run.name != 'auto-approve' &&
+        github.event.check_run.pull_requests[0] != null
       )
     steps:
-      - uses: SteerSpec/strspc-pr-review@v1.0.0
+      - uses: SteerSpec/strspc-pr-review@v1
         with:
           bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
+
+**Base branches.** `base-branch` accepts a single branch or a comma-separated set
+(e.g. `develop,main`; whitespace-only falls back to `main`). It gates **3 points that
+must list the same branches**: the `on.pull_request.branches:` filter, the job `if:`
+`base.ref` check, and the `base-branch` input. For multiple branches, set
+`branches: [main, develop]` and change the `base.ref` line to
+`contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
+
+**`workflow_run` support.** If your gating CI reports completion via a separate
+workflow rather than `check_run`, the action can re-evaluate on `workflow_run`
+too. This is opt-in — uncomment the `workflow_run:` trigger and the matching
+`if:` branch shown in [`templates/pr-auto-approve.yml`](templates/pr-auto-approve.yml),
+and add `github.event.workflow_run.pull_requests[0].number ||` to the
+concurrency group expression. Most callers only need `check_run`. The `if:`
+branch's `pull_requests[0] != null` check matters: `workflow_run` fires for
+every completed run of the named workflow, including non-PR runs (e.g. a push
+to main), which have an empty `pull_requests` array — without the guard those
+trigger a wasted job run and a noisy "skipped" Slack notification.
 
 ---
 
@@ -118,8 +144,9 @@ jobs:
 |---|---|---|---|
 | `bot-login` | **Yes** | — | GitHub login of the bot that posts the approval |
 | `bot-github-token` | **Yes** | — | PAT for `bot-login` with `repo` scope |
-| `base-branch` | No | `main` | Base branch PRs must target |
+| `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
+| `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
 | `test-copilot-logins` | No | `''` | Extra logins treated as Copilot in sandbox repos (e2e only) |
 | `slack-channel` | No | `alert-pr-notifications` | Slack channel for notifications |
@@ -136,7 +163,7 @@ jobs:
 
 ## Versioning
 
-Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`.
+Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`. The moving `@v1` tag always points at the latest `v1.x` release, so pinning `@v1` (as the snippet above does) receives patches and backward-compatible features automatically. Pin an exact `@vX.Y.Z` if you prefer to upgrade manually.
 
 ---
 
@@ -144,8 +171,9 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test        # 39 unit tests, no external dependencies
-npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
+npm test            # 52 unit tests, no external dependencies
+npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
+npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 ```
 
 ### Project layout
@@ -154,7 +182,7 @@ npm run lint    # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 39 unit tests (Node native test runner)
+  decide.test.js   # 52 unit tests (Node native test runner)
 .github/workflows/
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck

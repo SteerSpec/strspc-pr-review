@@ -18,6 +18,10 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # Release from main. Without this, target-branch defaults to the repo
+          # default branch (develop), so release-please would process develop
+          # (and fail trying to tag it under develop's ruleset) instead of main.
+          target-branch: main
 
       # Keep the moving major tag (e.g. v1) pointing at the latest release so
       # Marketplace consumers can pin `@v1` and receive patches/features.

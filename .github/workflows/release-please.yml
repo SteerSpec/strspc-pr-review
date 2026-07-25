@@ -25,17 +25,21 @@ jobs:
 
       # Keep the moving major tag (e.g. v1) pointing at the latest release so
       # Marketplace consumers can pin `@v1` and receive patches/features.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: ${{ steps.release.outputs.release_created }}
-        with:
-          fetch-depth: 0
+      # Update the tag via the git refs API (not `git push`): the default
+      # GITHUB_TOKEN cannot push a ref whose commit touches .github/workflows/**
+      # without the (un-grantable) `workflows` permission, but the refs API can
+      # point a tag at an existing commit — which is how release-please itself
+      # tags releases.
       - name: Update moving major tag
         if: ${{ steps.release.outputs.release_created }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           MAJOR: v${{ steps.release.outputs.major }}
           SHA: ${{ steps.release.outputs.sha }}
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "$MAJOR" "$SHA"
-          git push origin "$MAJOR" --force
+          if gh api "repos/$REPO/git/refs/tags/$MAJOR" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/tags/$MAJOR" -f sha="$SHA" -F force=true
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/$MAJOR" -f sha="$SHA"
+          fi

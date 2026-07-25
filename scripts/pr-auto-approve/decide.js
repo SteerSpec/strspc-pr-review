@@ -23,6 +23,25 @@ const COPILOT_LOGINS = new Set([
   'github-copilot[bot]',
 ]);
 
+// Copilot reports low-confidence findings in a collapsed block inside the review
+// BODY instead of as inline review comments, while its summary line still reads
+// "generated no new comments". Those comments are absent from
+// pulls.listCommentsForReview (verified 0 against real reviews), so scanning the
+// body is the only way to see them. Observed markup, stable across production
+// reviews: "<summary>Comments suppressed due to low confidence (N)</summary>".
+// The parenthesised count and the plural "s" are optional so a wording tweak on
+// GitHub's side degrades to "suppressed comments present" rather than to silence.
+const SUPPRESSED_RE = /Comments? suppressed due to low confidence(?:\s*\((\d+)\))?/i;
+
+// Number of suppressed comments in a review body; 0 when there is no such block.
+// A matched block with an unparseable count still returns 1 — presence is what
+// gates the approval, the number is only for the human-readable reason string.
+function countSuppressedComments(body) {
+  const m = SUPPRESSED_RE.exec(body || '');
+  if (!m) return 0;
+  return parseInt(m[1], 10) || 1;
+}
+
 function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
 // Comma-separated set of base branches a PR must target to be eligible.
 // Whitespace-only/empty falls back to the default so a blank input never makes
@@ -403,6 +422,18 @@ async function decideInner({ github, context, core }) {
         `latest Copilot review has ${comments.length} comments`,
       );
     }
+    // "generated no new comments" + a suppressed low-confidence block means
+    // Copilot DID produce feedback, just below its own confidence bar. Treat it
+    // exactly like inline comments and leave the PR for a human. Note this gate
+    // is deliberately absent from the rounds-threshold branch above: that branch
+    // is the escape hatch, so a block that never clears can't wedge the PR.
+    const suppressed = countSuppressedComments(latest.body);
+    if (suppressed !== 0) {
+      return setDecision(
+        'skip',
+        `latest Copilot review has ${suppressed} suppressed low-confidence comment(s)`,
+      );
+    }
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
@@ -427,4 +458,5 @@ module.exports = decide;
 module.exports.isCopilot = isCopilot;
 module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
+module.exports.countSuppressedComments = countSuppressedComments;
 module.exports.getBaseBranches = getBaseBranches;

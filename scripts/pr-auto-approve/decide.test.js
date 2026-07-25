@@ -676,6 +676,107 @@ test('skip: latest Copilot review has comments', async () => {
   assert.equal(calls.createReview.length, 0);
 });
 
+// Real production body shape, copied from axeptio/caas-styleguide#3502 review
+// 4774139942: Copilot claims "no new comments" in the summary line while the
+// actual finding sits in a collapsed block. listCommentsForReview returns 0 for
+// these, so `reviewComments` is deliberately empty in the tests below.
+function suppressedBody(count, summaryLine = 'generated no new comments') {
+  return [
+    '## Pull request overview',
+    '',
+    `Copilot reviewed 3 out of 3 changed files in this pull request and ${summaryLine}.`,
+    '',
+    '<details>',
+    `<summary>Comments suppressed due to low confidence (${count})</summary>`,
+    '',
+    '**lib/thing.js:302**',
+    '* this would throw a 500 on repeated query params',
+    '</details>',
+  ].join('\n');
+}
+
+test('skip: latest Copilot review suppressed low-confidence comments', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body: suppressedBody(1),
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /1 suppressed low-confidence comment/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: suppressed count is reported (plural)', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body: suppressedBody(2),
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /2 suppressed low-confidence comment/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: absent review body does not block a clean approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body: null,
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('approve: clean body without a suppressed block is still copilot-clean', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body:
+          '## Pull request overview\n\nCopilot reviewed 3 out of 3 changed files in '
+          + 'this pull request and generated no new comments.',
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('skip: latest Copilot review requested changes', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub({
@@ -824,6 +925,31 @@ test('3-rounds rule does NOT approve when latest review is CHANGES_REQUESTED', a
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /requested changes/);
   assert.equal(calls.createReview.length, 0);
+});
+
+// The suppressed-comments gate lives on the copilot-clean path only. The
+// rounds threshold stays an unconditional escape hatch — gating it too would
+// leave a PR whose suppressed block never clears permanently unapprovable.
+test('3-rounds rule still approves despite a suppressed-comments block', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', user: cp },
+      {
+        id: 3,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: cp,
+        body: suppressedBody(1),
+      },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /3-rounds \(3 Copilot reviews\)/);
+  assert.equal(calls.createReview.length, 1);
 });
 
 test('top-level try/catch: checks.listForRef throws → clean skip', async () => {
@@ -987,6 +1113,36 @@ test('isCopilot helper: strict allowlist (no substring fallback)', () => {
   );
   assert.equal(decide.isCopilot({ login: 'alice', type: 'User' }), false);
   assert.equal(decide.isCopilot(null), false);
+});
+
+test('countSuppressedComments: parses the real Copilot markup', () => {
+  // Exact strings observed in production (axeptio/caas-api#2280,
+  // axeptio/caas-styleguide#3502/#3501/#3496/#3493).
+  assert.equal(
+    decide.countSuppressedComments(
+      '<summary>Comments suppressed due to low confidence (1)</summary>',
+    ),
+    1,
+  );
+  assert.equal(
+    decide.countSuppressedComments(
+      '<summary>Comments suppressed due to low confidence (2)</summary>',
+    ),
+    2,
+  );
+  // Wording drift tolerance: singular noun, no parenthesised count, odd casing.
+  assert.equal(decide.countSuppressedComments('Comment suppressed due to low confidence'), 1);
+  assert.equal(decide.countSuppressedComments('COMMENTS SUPPRESSED DUE TO LOW CONFIDENCE (3)'), 3);
+  // Clean bodies and missing bodies must read as zero.
+  assert.equal(
+    decide.countSuppressedComments(
+      'Copilot reviewed 3 out of 3 changed files and generated no new comments.',
+    ),
+    0,
+  );
+  assert.equal(decide.countSuppressedComments(''), 0);
+  assert.equal(decide.countSuppressedComments(null), 0);
+  assert.equal(decide.countSuppressedComments(undefined), 0);
 });
 
 test('getBaseBranches: comma-separated value parses to a trimmed Set', () => {

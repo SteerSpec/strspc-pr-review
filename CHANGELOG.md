@@ -5,8 +5,6 @@
 
 ### Bug Fixes
 
-* **pr-auto-approve:** address Copilot review on [#27](https://github.com/SteerSpec/strspc-pr-review/issues/27) ([3a7ee92](https://github.com/SteerSpec/strspc-pr-review/commit/3a7ee92bf6d7df9d307b118bd2405f53ba0190ce))
-* **pr-auto-approve:** require the Copilot review to match the head SHA ([5ff2db3](https://github.com/SteerSpec/strspc-pr-review/commit/5ff2db328a127556dc2524015a49d511965bf1b4))
 * **pr-auto-approve:** require the Copilot review to match the head SHA ([3e3e0a0](https://github.com/SteerSpec/strspc-pr-review/commit/3e3e0a0a241f760901974cfaa378cd7c0a22b0ae))
 
 ## [1.1.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.0...v1.1.1) (2026-07-25)

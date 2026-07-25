@@ -412,6 +412,26 @@ async function decideInner({ github, context, core }) {
   if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
   } else {
+    // A COMMENTED review is NOT dismissed when a push invalidates approvals, so
+    // once `dismiss_stale_reviews_on_push` fires, Copilot's review of the PREVIOUS
+    // commit is still the latest one here. Approving on it would clear the gate
+    // for code Copilot never read. Require the review to name the current head.
+    // An absent commit_id can't prove freshness either, so it skips too — the safe
+    // direction, and the rounds threshold above still rescues a PR that somehow
+    // never matches.
+    if (latest.commit_id !== headSha) {
+      // Distinguish the two failure modes: a review of a different commit is
+      // routine (you pushed), whereas a review with no commit at all is
+      // anomalous. Reporting both as "older commit (unknown)" would send
+      // someone hunting for a SHA that was never there.
+      const detail = latest.commit_id
+        ? `is for an older commit (${String(latest.commit_id).slice(0, 8)})`
+        : 'has no commit_id, so its freshness cannot be verified';
+      return setDecision(
+        'skip',
+        `latest Copilot review ${detail}, waiting for re-review`,
+      );
+    }
     const comments = await github.paginate(
       github.rest.pulls.listCommentsForReview,
       { owner, repo, pull_number: prNumber, review_id: latest.id, per_page: 100 },

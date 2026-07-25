@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.0...v1.1.1) (2026-07-25)
+
+
+### Bug Fixes
+
+* **pr-auto-approve:** don't approve when Copilot suppressed low-confidence comments ([2fbc788](https://github.com/SteerSpec/strspc-pr-review/commit/2fbc788122205be3c849e1dbb3b6f9c82d27f8a9))
+
 ## [1.1.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.0.0...v1.1.0) (2026-07-25)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.1...v1.1.2) (2026-07-25)
+
+
+### Bug Fixes
+
+* **pr-auto-approve:** require the Copilot review to match the head SHA ([3e3e0a0](https://github.com/SteerSpec/strspc-pr-review/commit/3e3e0a0a241f760901974cfaa378cd7c0a22b0ae))
+
 ## [1.1.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.0...v1.1.1) (2026-07-25)
 
 

@@ -1,14 +1,12 @@
 name: Test PR Auto-Approve Decision Logic
 
 on:
+  # No paths filter on pull_request: the auto-approve gate requires at least one
+  # COMPLETED check run on the head SHA, and a docs-only PR previously produced
+  # none at all (e.g. #22), so it could never be approved. The suite runs in ~5s,
+  # so gating every PR is cheaper than setting allow-no-checks and weakening the
+  # gate. The push: filter below is left in place — it only affects branch CI.
   pull_request:
-    paths:
-      - 'scripts/pr-auto-approve/**'
-      - '.github/workflows/pr-auto-approve.yml'
-      - '.github/workflows/test-pr-auto-approve.yml'
-      # CI runs `npm run test:coverage`, so the gate itself lives in package.json.
-      - 'package.json'
-      - 'package-lock.json'
   push:
     branches: [develop]
     paths:
@@ -42,7 +40,7 @@ jobs:
         uses: reviewdog/action-actionlint@50842263c20a7c46bd0065b9e624d3c569db061e # v1
         with:
           fail_level: error
-          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml'
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:

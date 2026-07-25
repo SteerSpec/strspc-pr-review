@@ -16,10 +16,12 @@ on:
     types: [completed]
 
 jobs:
-  # The job key is load-bearing: it becomes the check-run name, and the
-  # check_run branch of the if: below excludes it by that exact string to break
-  # the feedback loop (this job completing would otherwise re-trigger the
-  # workflow). Renaming the job without updating that string re-arms the loop.
+  # The check-run name is load-bearing. It comes from `name:` below (GitHub
+  # falls back to the job key only when `name:` is omitted), and the check_run
+  # branch of the if: excludes it by that exact string to break the feedback
+  # loop — this job completing would otherwise re-trigger the workflow.
+  # Changing `name:` without updating that string re-arms the loop; the job key
+  # is kept identical purely so the two can't drift unnoticed.
   auto-approve:
     name: auto-approve
     runs-on: ubuntu-latest
@@ -39,6 +41,12 @@ jobs:
     # the base.ref check here, and the base-branch input below. All three say
     # 'develop' because the pr-copilot ruleset targets the default branch only,
     # so PRs to main never receive a Copilot review and could never be approved.
+    #
+    # Note the base.ref / draft / fork conditions below apply ONLY to the
+    # pull_request and pull_request_review branch of this expression. A
+    # check_run event carries no pull_request payload, so for that branch the
+    # same three gates are re-applied inside the action instead, after it
+    # resolves the associated PR — they are not skipped, just enforced later.
     #
     # 'cnslr-bt' is hard-coded rather than read from a repo variable: an unset
     # variable makes this comparison `github.actor != ''`, which is always true

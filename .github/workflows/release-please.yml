@@ -38,7 +38,7 @@ jobs:
           MAJOR: v${{ steps.release.outputs.major }}
           SHA: ${{ steps.release.outputs.sha }}
         run: |
-          if gh api "repos/$REPO/git/refs/tags/$MAJOR" >/dev/null 2>&1; then
+          if gh api "repos/$REPO/git/ref/tags/$MAJOR" >/dev/null 2>&1; then
             gh api -X PATCH "repos/$REPO/git/refs/tags/$MAJOR" -f sha="$SHA" -F force=true
           else
             gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/$MAJOR" -f sha="$SHA"

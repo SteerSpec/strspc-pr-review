@@ -13,7 +13,7 @@ A GitHub Action that automatically approves pull requests once GitHub Copilot si
 
 ## How it works
 
-When a PR is opened or updated, the action checks two things:
+When a PR opens, the action requests `bot-login` as a reviewer and lets GitHub Copilot's automatic review run. On every relevant event afterward — new commits, a submitted Copilot review, or a completed CI check — it re-evaluates:
 
 ```
 All CI checks passed?  ──No──▶  skip
@@ -23,13 +23,31 @@ All CI checks passed?  ──No──▶  skip
 Copilot reviewed?  ──No──▶  skip
         │
        Yes
-        ├── Latest review has 0 comments?  ──Yes──▶  approve ✓
+        ├── Latest review clean?  ──Yes──▶  approve ✓
+        │   (0 inline comments AND
+        │    no suppressed comments)
         │
         └── ≥ N rounds of Copilot review?  ──Yes──▶  approve ✓
                                                       (default N = 3)
 ```
 
-`CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent — if the bot already holds an active `APPROVED` review, the action exits cleanly.
+A review is only "clean" when Copilot left no inline comments **and** its body carries no `Comments suppressed due to low confidence` block. Copilot writes "generated no new comments" in its summary even when it has tucked findings into that collapsed block, and those comments are absent from the review-comments API — so a body scan is the only way to see them. The rounds threshold is unaffected: it remains an unconditional escape hatch, so a suppressed block that never clears can't wedge a PR forever.
+
+Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The base-branch, draft, and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
+
+Every run records a one-line `reason` (also exposed as the [`reason` output](#outputs)) explaining what it did — see [Troubleshooting](#troubleshooting).
+
+---
+
+## Prerequisites
+
+Before the action can approve anything, three things must be in place:
+
+- **GitHub Copilot code review, set to review PRs automatically** for the repo (or org). The action reads Copilot's verdict — it does *not* trigger Copilot itself, so if Copilot never reviews, every run simply skips with `no Copilot review yet`. Enable it under **Settings → Code review → Copilot** (or an org/repo ruleset that requests Copilot on PRs).
+- **A dedicated bot GitHub account** — *not* your own. GitHub blocks self-approval, so the account that posts the approval must differ from PR authors. Add it to the repo as a **collaborator with write access**. Its login is what you pass as `bot-login`.
+- **A Personal Access Token for that bot account** with `repo` scope, stored as the `BOT_GITHUB_TOKEN` secret. The same token requests the review *and* posts the approval, so it must belong to `bot-login`.
+
+You don't install anything on your side — the action runs on `github-script` (Node) inside the Action itself.
 
 ---
 
@@ -161,6 +179,30 @@ trigger a wasted job run and a noisy "skipped" Slack notification.
 
 ---
 
+## Troubleshooting
+
+Not approving? Every run logs a `reason` (also the `reason` output). The common ones:
+
+| `reason` | Cause / fix |
+|---|---|
+| `no Copilot review yet` | Copilot hasn't reviewed the PR. Enable **automatic Copilot code review** (see [Prerequisites](#prerequisites)). |
+| `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED` — this always blocks. Address the feedback and push. |
+| `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue. |
+| `latest Copilot review has N suppressed low-confidence comment(s)` | Copilot said "generated no new comments" but hid findings in a `Comments suppressed due to low confidence` block in the review body. Open the review, read the collapsed section, and act on it (or let more rounds accrue). |
+| `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |
+| `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI; approval requires all checks green. |
+| `PR author is the bot itself` | The bot can't approve its own PR (except in `sandbox-repos`). Expected. |
+| `check_run: PR base ref '...' not in [...]` | The PR targets a branch outside `base-branch`. Align the [3 base-branch sync points](#usage). |
+| Nothing runs at all | Confirm `BOT_GITHUB_TOKEN` belongs to `bot-login` (with write access), and that `vars.PR_AUTO_APPROVE_BOT_LOGIN` is set so the review-loop guard works. |
+
+---
+
+## Responsible use
+
+This action rubber-stamps **Copilot's** verdict — it is not a substitute for human judgment where that matters. Keep required human reviewers (branch protection, `CODEOWNERS`) on sensitive paths; the bot's approval fills a review slot but shouldn't be your only gate. Treat `BOT_GITHUB_TOKEN` like any write-scoped credential: keep it in secrets, scope it to `repo`, and rotate it periodically.
+
+---
+
 ## Versioning
 
 Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [release-please](https://github.com/googleapis/release-please) on every merge to `main`. The moving `@v1` tag always points at the latest `v1.x` release, so pinning `@v1` (as the snippet above does) receives patches and backward-compatible features automatically. Pin an exact `@vX.Y.Z` if you prefer to upgrade manually.
@@ -171,7 +213,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 52 unit tests, no external dependencies
+npm test            # 62 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 ```
@@ -182,7 +224,7 @@ npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 52 unit tests (Node native test runner)
+  decide.test.js   # 62 unit tests (Node native test runner)
 .github/workflows/
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck

@@ -71,6 +71,7 @@ E2E_APPROVER_LOGIN=your-bot-login \
 |---|---|
 | `copilot-clean` | Approved (0-comment Copilot review) |
 | `copilot-with-comments` | Skip (latest review has line comments) |
+| `suppressed-comments` | Skip (0 line comments, but the review body carries a low-confidence suppressed block) |
 | `three-rounds` | Approved (3+ Copilot reviews regardless of comments) |
 | `changes-requested` | Skip (latest review is CHANGES_REQUESTED, even with 3 rounds) |
 | `draft` | Skip (workflow is skipped by `if:` guard on draft PRs) |

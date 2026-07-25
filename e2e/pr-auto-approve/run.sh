@@ -223,6 +223,34 @@ scenario_copilot_with_comments() {
   close_pr "$pr_num" "$branch"
 }
 
+scenario_suppressed_comments() {
+  log "scenario: suppressed-comments (expect skip)"
+  local branch pr pr_num body
+  branch=$(new_branch "suppressed")
+  pr=$(create_pr "$branch" "e2e: suppressed-comments")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  # Zero inline comments, but the body carries Copilot's real collapsed block —
+  # the shape that reads as "generated no new comments" via the comments API.
+  body='Reviewed 1 out of 1 changed files and generated no new comments.
+
+<details>
+<summary>Comments suppressed due to low confidence (1)</summary>
+
+**e2e-marker.txt:1**
+* e2e synthetic low-confidence finding
+</details>'
+  log "PR #$pr_num — CI done, posting clean review with a suppressed-comments block"
+  post_review "$pr" COMMENT "$body"
+  if wait_not_approved "$pr_num"; then
+    ok "suppressed-comments → not approved"
+  else
+    close_pr "$pr_num" "$branch"
+    fail "suppressed-comments: unexpectedly approved"
+  fi
+  close_pr "$pr_num" "$branch"
+}
+
 scenario_three_rounds() {
   log "scenario: three-rounds (expect approved after 3rd review)"
   local branch pr pr_num
@@ -293,12 +321,13 @@ require_gh
 declare -A SCENARIOS=(
   [copilot-clean]=scenario_copilot_clean
   [copilot-with-comments]=scenario_copilot_with_comments
+  [suppressed-comments]=scenario_suppressed_comments
   [three-rounds]=scenario_three_rounds
   [changes-requested]=scenario_changes_requested
   [draft]=scenario_draft
 )
 
-SELECTED=("${@:-copilot-clean copilot-with-comments three-rounds changes-requested draft}")
+SELECTED=("${@:-copilot-clean copilot-with-comments suppressed-comments three-rounds changes-requested draft}")
 if [[ ${#SELECTED[@]} -eq 1 ]] && [[ ${SELECTED[0]} =~ \  ]]; then
   read -r -a SELECTED <<< "${SELECTED[0]}"
 fi

@@ -153,17 +153,25 @@ jobs:
         with:
           github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           script: |
+            // Best-effort — see the matching comment in action.yml. Kept in sync
+            // so the deprecated reusable workflow behaves like the action.
             const botLogin = '${{ inputs.bot_login }}';
-            const { owner, repo } = context.repo;
-            const prNumber = context.payload.pull_request.number;
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-            if (pr.user.login === botLogin) return; // can't request review from the PR's own author
-            const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
-            if (!alreadyRequested) {
-              await github.rest.pulls.requestReviewers({
-                owner, repo, pull_number: prNumber,
-                reviewers: [botLogin],
-              });
+            try {
+              const { owner, repo } = context.repo;
+              const prNumber = context.payload.pull_request.number;
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+              if (pr.user.login === botLogin) return; // can't request review from the PR's own author
+              const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
+              if (!alreadyRequested) {
+                await github.rest.pulls.requestReviewers({
+                  owner, repo, pull_number: prNumber,
+                  reviewers: [botLogin],
+                });
+              }
+            } catch (err) {
+              core.warning(
+                `pr-auto-approve: could not request a review from ${botLogin}: ${err.status || ''} ${err.message || err}`.trim(),
+              );
             }
 
       - name: Evaluate and approve

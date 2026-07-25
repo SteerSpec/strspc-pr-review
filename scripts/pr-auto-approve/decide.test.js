@@ -70,7 +70,18 @@ function makeFakeGithub({
             },
           };
         },
-        listReviews: async () => ({ data: reviews }),
+        // Reviews default to naming the head SHA — in production Copilot's latest
+        // review normally IS of the current commit, so "fresh" is the right default
+        // for the many fixtures that aren't about freshness. Tests that exercise the
+        // staleness guard set commit_id explicitly (including `commit_id: undefined`
+        // to represent a review that carries no commit at all).
+        listReviews: async () => ({
+          data: reviews.map((r) =>
+            r && typeof r === 'object' && !('commit_id' in r)
+              ? { ...r, commit_id: 'deadbeef' }
+              : r,
+          ),
+        }),
         listCommentsForReview: async ({ review_id }) => ({
           data: reviewComments[review_id] || [],
         }),
@@ -774,6 +785,86 @@ test('approve: clean body without a suppressed block is still copilot-clean', as
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
   assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('skip: latest Copilot review is for an older commit', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        commit_id: 'cafebabe', // makeContext() head.sha is 'deadbeef'
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /older commit \(cafebabe\)/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: latest Copilot review has no commit_id (cannot prove freshness)', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        commit_id: undefined, // present-but-empty: opts out of the helper's fresh default
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  // Distinct from the stale-SHA wording: no SHA is reported, because there is none.
+  assert.match(result.reason, /has no commit_id/);
+  assert.doesNotMatch(result.reason, /older commit/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: Copilot review matching the head SHA is fresh', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        commit_id: 'deadbeef',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+// Mirrors the CHANGES_REQUESTED and suppressed-comments scoping: the rounds
+// threshold is the one path that must never be able to deadlock a PR.
+test('3-rounds rule still approves on a stale Copilot review', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', commit_id: 'cafebabe', user: cp },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', commit_id: 'cafebabe', user: cp },
+      { id: 3, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', commit_id: 'cafebabe', user: cp },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /3-rounds \(3 Copilot reviews\)/);
   assert.equal(calls.createReview.length, 1);
 });
 

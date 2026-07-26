@@ -12,7 +12,20 @@ on:
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
+  # check_run is kept for checks posted by third-party apps, but it does NOT
+  # fire for this repo's own CI: GitHub Actions creates those check runs with
+  # GITHUB_TOKEN, and GITHUB_TOKEN-generated events never start a new workflow
+  # run (the recursion guard). Across PRs #31, #32 and #35 not one auto-approve
+  # run was ever triggered by check_run.
   check_run:
+    types: [completed]
+  # ...so workflow_run is the re-entry point that actually works here. It fires
+  # when the CI workflow finishes, which is the "checks are green now" signal
+  # the approval gate needs. Without it, a PR whose Copilot review lands BEFORE
+  # CI completes is never re-evaluated: the review-triggered run skips with
+  # "check still running" and nothing follows. Observed on #35.
+  workflow_run:
+    workflows: ['Test PR Auto-Approve Decision Logic']
     types: [completed]
 
 jobs:
@@ -34,6 +47,7 @@ jobs:
         pr-auto-approve-${{ github.repository }}-${{
           github.event.pull_request.number ||
           github.event.check_run.pull_requests[0].number ||
+          github.event.workflow_run.pull_requests[0].number ||
           github.run_id
         }}
       cancel-in-progress: true
@@ -43,10 +57,10 @@ jobs:
     # so PRs to main never receive a Copilot review and could never be approved.
     #
     # Note the base.ref / draft / fork conditions below apply ONLY to the
-    # pull_request and pull_request_review branch of this expression. A
-    # check_run event carries no pull_request payload, so for that branch the
-    # same three gates are re-applied inside the action instead, after it
-    # resolves the associated PR — they are not skipped, just enforced later.
+    # pull_request and pull_request_review branch of this expression. check_run
+    # and workflow_run events carry no pull_request payload, so for those
+    # branches the same three gates are re-applied inside the action instead,
+    # after it resolves the associated PR — not skipped, just enforced later.
     #
     # 'cnslr-bt' is hard-coded rather than read from a repo variable: an unset
     # variable makes this comparison `github.actor != ''`, which is always true
@@ -68,6 +82,11 @@ jobs:
         github.event_name == 'check_run' &&
         github.event.check_run.name != 'auto-approve' &&
         github.event.check_run.pull_requests[0] != null
+      ) || (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.pull_requests[0] != null
       )
     steps:
       # Deliberately omitted, because the defaults are correct here:

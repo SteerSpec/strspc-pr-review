@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.2...v1.2.0) (2026-07-26)
+
+
+### Features
+
+* **ci:** dogfood pr-auto-approve on this repo with cnslr-bt ([3e629c7](https://github.com/SteerSpec/strspc-pr-review/commit/3e629c79a89e59a1b6786980da402c469128d3e0))
+
+
+### Bug Fixes
+
+* **pr-auto-approve:** make the bot review request best-effort ([5a0c294](https://github.com/SteerSpec/strspc-pr-review/commit/5a0c294ba8a6c7803bbcdf07118d4e9a5277e73f))
+
 ## [1.1.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.1...v1.1.2) (2026-07-25)
 
 

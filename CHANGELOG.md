@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.2.0...v1.2.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **ci:** use workflow_run as the re-entry point for Actions-based CI ([d2f1ee4](https://github.com/SteerSpec/strspc-pr-review/commit/d2f1ee44cb8e2e442c73f5b8fec1eb8fe0550c2b))
+
 ## [1.2.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.1.2...v1.2.0) (2026-07-26)
 
 

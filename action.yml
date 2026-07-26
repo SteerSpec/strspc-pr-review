@@ -85,17 +85,30 @@ runs:
       with:
         github-token: ${{ inputs.bot-github-token }}
         script: |
+          // Best-effort, exactly like decide.js's top-level try/catch: this step
+          // must never flip a check red for a reason unrelated to the review
+          // state. Requesting the review is a convenience — repos that request
+          // Copilot via a ruleset don't need it at all, and the approval itself
+          // is decided by the evaluate step below regardless. A token without
+          // pull_requests:write 403s here, which previously failed the whole job
+          // BEFORE the evaluation ever ran.
           const botLogin = '${{ inputs.bot-login }}';
-          const { owner, repo } = context.repo;
-          const prNumber = context.payload.pull_request.number;
-          const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-          if (pr.user.login === botLogin) return; // can't request review from the PR's own author
-          const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
-          if (!alreadyRequested) {
-            await github.rest.pulls.requestReviewers({
-              owner, repo, pull_number: prNumber,
-              reviewers: [botLogin],
-            });
+          try {
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (pr.user.login === botLogin) return; // can't request review from the PR's own author
+            const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
+            if (!alreadyRequested) {
+              await github.rest.pulls.requestReviewers({
+                owner, repo, pull_number: prNumber,
+                reviewers: [botLogin],
+              });
+            }
+          } catch (err) {
+            core.warning(
+              `pr-auto-approve: could not request a review from ${botLogin}: ${err.status || ''} ${err.message || err}`.trim(),
+            );
           }
 
     - name: Evaluate and approve

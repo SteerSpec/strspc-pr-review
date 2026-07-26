@@ -9,15 +9,25 @@ on:
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
     types: [submitted]
+  # check_run catches checks posted by third-party apps (external CI services).
+  # It does NOT fire for checks produced by your own GitHub Actions workflows:
+  # Actions creates those with GITHUB_TOKEN, and GITHUB_TOKEN-generated events
+  # never start a new workflow run (GitHub's recursion guard).
   check_run:
     types: [completed]
-  # OPTIONAL: uncomment if your gating CI reports completion via a separate
-  # workflow (workflow_run) rather than check_run. If you enable this, also
-  # OR the workflow_run branch into the job if: below (see the comment there)
-  # and add `github.event.workflow_run.pull_requests[0].number ||` to the
-  # concurrency group expression.
-  # workflow_run:
-  #   types: [completed]
+  # REQUIRED IF YOUR CI IS GITHUB ACTIONS — see the note above. Without this,
+  # a PR whose Copilot review arrives BEFORE CI finishes is never re-evaluated:
+  # the review-triggered run skips with "check still running" and nothing ever
+  # follows, so the PR silently never gets approved.
+  #
+  # List the workflow(s) that must pass, by their `name:` value. Then also OR
+  # the workflow_run branch into the job if: below (already included) and keep
+  # `github.event.workflow_run.pull_requests[0].number ||` in the concurrency
+  # group. Delete this trigger only if all your gating checks come from
+  # third-party apps rather than Actions.
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
 
 jobs:
   auto-approve:
@@ -33,6 +43,7 @@ jobs:
         pr-auto-approve-${{ github.repository }}-${{
           github.event.pull_request.number ||
           github.event.check_run.pull_requests[0].number ||
+          github.event.workflow_run.pull_requests[0].number ||
           github.run_id
         }}
       cancel-in-progress: true
@@ -52,19 +63,13 @@ jobs:
     # For multiple base branches, set branches: [main, develop] above and change
     # the base.ref line below to:
     #   contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)
-    # OPTIONAL workflow_run support (see the `on:` section above): OR this into
-    # the if: expression below if you enabled the workflow_run trigger. The
-    # pull_requests[0] != null guard matters here: workflow_run fires for
-    # EVERY completed run of the named workflow, including non-PR runs (e.g.
-    # a push to main), which have an empty pull_requests array -- without the
-    # guard those trigger a wasted job run and a noisy "skipped: workflow_run:
-    # no associated PRs" Slack notification.
-    #   || (
-    #     github.event_name == 'workflow_run' &&
-    #     github.event.workflow_run.conclusion == 'success' &&
-    #     github.event.workflow_run.head_repository.full_name == github.repository &&
-    #     github.event.workflow_run.pull_requests[0] != null
-    #   )
+    # The workflow_run branch below pairs with the trigger in the `on:` section.
+    # The pull_requests[0] != null guard matters: workflow_run fires for EVERY
+    # completed run of the named workflow, including non-PR runs (e.g. a push to
+    # main), which have an empty pull_requests array -- without the guard those
+    # trigger a wasted job run and a noisy "skipped: workflow_run: no associated
+    # PRs" Slack notification. Delete that branch only if you also deleted the
+    # workflow_run trigger.
     if: >-
       (
         (
@@ -81,6 +86,11 @@ jobs:
         github.event_name == 'check_run' &&
         github.event.check_run.name != 'auto-approve' &&
         github.event.check_run.pull_requests[0] != null
+      ) || (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.pull_requests[0] != null
       )
     steps:
       # @v1 tracks the latest v1.x release. Pin an exact @vX.Y.Z if you prefer

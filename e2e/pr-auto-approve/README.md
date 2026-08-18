@@ -5,8 +5,8 @@ End-to-end tests for the reusable `pr-auto-approve.yml` workflow.
 ## How it works
 
 - Uses a sandbox repository with a default branch and a base branch.
-- The sandbox's caller workflow sets `test_copilot_logins: <reviewer-login>` and
-  `sandbox_repos: <owner/sandbox-repo>`, so reviews posted by the reviewer are
+- The sandbox's caller workflow sets `test-copilot-logins: <reviewer-login>` and
+  `sandbox-repos: <owner/sandbox-repo>`, so reviews posted by the reviewer are
   treated as Copilot reviews.
 - The harness drives scenarios via `gh`:
   1. Create a branch + trivial change
@@ -31,10 +31,10 @@ Copy `templates/pr-auto-approve.yml` to the sandbox repo's
 
 ```yaml
 with:
-  bot_login: your-bot-login
-  base_branch: main
-  test_copilot_logins: your-bot-login   # treat bot reviews as Copilot in sandbox
-  sandbox_repos: your-org/pr-auto-approve-sandbox
+  bot-login: your-bot-login
+  base-branch: main
+  test-copilot-logins: your-bot-login   # treat bot reviews as Copilot in sandbox
+  sandbox-repos: your-org/pr-auto-approve-sandbox
 ```
 
 ### 3. Authenticate `gh` as the bot

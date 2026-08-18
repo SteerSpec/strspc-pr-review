@@ -178,6 +178,44 @@ fires for every completed run of the named workflow, including non-PR runs (e.g.
 push to main), which have an empty `pull_requests` array — without the guard those
 trigger a wasted job run and a noisy "skipped" Slack notification.
 
+### Copilot cannot re-trigger the workflow
+
+`workflow_run` fixes the case where Copilot reviews **before** CI. The mirror case —
+Copilot reviewing **after** CI, which is the common one — cannot be fixed with a
+trigger at all, because every signal Copilot could send is suppressed:
+
+| Signal | Why it never runs the job |
+|---|---|
+| `check_run` | Copilot's check run is created with `GITHUB_TOKEN` (recursion guard) |
+| `pull_request_review` | The run **is** created, then held at `action_required` pending manual approval |
+| `workflow_run` from Copilot's own review workflow | Same actor, so same approval gate |
+
+That second row is a GitHub behaviour change, not a configuration mistake. In our own
+repo the identical workflow, event and actor executed normally on 2026-07-25 and was
+gated on 2026-08-18, with no enterprise policy, no enabled org Actions policy, and an
+unchanged fork-PR approval tier. Copilot has no org membership, and GitHub offers no
+way to grant it any.
+
+So the wait has to happen inside a run that a non-gated actor started. Set
+`wait-for-copilot-seconds` and the run triggered by **CI completing** will poll until
+Copilot's check finishes rather than skipping with `check still running`:
+
+```yaml
+      - uses: SteerSpec/strspc-pr-review@v1
+        with:
+          bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
+          bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
+          wait-for-copilot-seconds: '300'
+```
+
+It is opt-in (`0` by default) because waiting consumes billable Actions minutes on
+private repos — it is free on public ones. Copilot typically reports within ~3
+minutes, so `300` leaves headroom. The wait is deliberately narrow: it only runs
+while Copilot's check is the **last** one outstanding, so an unrelated slow or hung
+job can never consume the timeout, and on expiry the action skips as before, having
+logged a warning. A Copilot check that finishes red is still caught by the normal
+failing-check gate.
+
 ---
 
 ## Inputs
@@ -189,6 +227,7 @@ trigger a wasted job run and a noisy "skipped" Slack notification.
 | `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
+| `wait-for-copilot-seconds` | No | `0` | Seconds to wait for Copilot's review check when it is the **last** check still running, instead of skipping. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow). `0` disables |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
 | `test-copilot-logins` | No | `''` | Extra logins treated as Copilot in sandbox repos (e2e only) |
 | `slack-channel` | No | `alert-pr-notifications` | Slack channel for notifications |

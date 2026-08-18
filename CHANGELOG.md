@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.2.1...v1.3.0) (2026-08-18)
+
+
+### Features
+
+* **pr-auto-approve:** optionally wait for Copilot's review check ([538c735](https://github.com/SteerSpec/strspc-pr-review/commit/538c735f09f1c3f157dc6e8639a330e8d69a22bc))
+* **pr-auto-approve:** optionally wait for Copilot's review check ([034440e](https://github.com/SteerSpec/strspc-pr-review/commit/034440ed1c6b4546b3c55b5c556ee3fa16beed8a))
+
+
+### Bug Fixes
+
+* **pr-auto-approve:** stop waiting once a check has already failed ([298ae88](https://github.com/SteerSpec/strspc-pr-review/commit/298ae88060843972088a3a5bf0b8963541d2971e))
+
 ## [1.2.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.2.0...v1.2.1) (2026-07-26)
 
 

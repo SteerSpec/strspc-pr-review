@@ -1699,6 +1699,22 @@ test('wait on: another check still pending → no wait, CI will re-trigger us', 
   }
 });
 
+test('wait on: an already-failed check short-circuits the wait (no timeout burned)', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '300';
+  try {
+    const core = makeCore();
+    const { github, state } = makePollingGithub([
+      [{ ...CI_OK, conclusion: 'failure' }, copilotCheck('in_progress')],
+    ]);
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /failing check: ci \(failure\)/);
+    assert.equal(state.calls, 1, 'approval is already impossible — must not poll');
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+  }
+});
+
 test('wait on: Copilot check finishing red is still caught by the failing-check gate', async () => {
   process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
   process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';

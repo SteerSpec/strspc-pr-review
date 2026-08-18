@@ -128,6 +128,13 @@ function makeIsCopilot(testLogins) {
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// A completed check that blocks approval. Shared by the failing-check gate and
+// by the Copilot wait, so the two can never drift into disagreeing about what
+// counts as a failure.
+const CHECK_OK_CONCLUSIONS = ['success', 'neutral', 'skipped', 'cancelled', 'stale'];
+const isFailedCheck = (cr) =>
+  cr.status === 'completed' && !CHECK_OK_CONCLUSIONS.includes(cr.conclusion);
+
 // Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
 // (name, app.id) keeping the latest attempt. Prevents the self-pending trap
 // (this job waiting on its own check) and rerun staleness.
@@ -185,6 +192,9 @@ async function waitForCopilotCheck({
   const deadline = Date.now() + waitSeconds * 1000;
   let current = checkRuns;
   while (true) {
+    // A check has already failed, so approval is impossible whatever Copilot
+    // says. Return now rather than spending the timeout to reach the same skip.
+    if (current.some(isFailedCheck)) return current;
     const pending = current.filter((cr) => cr.status !== 'completed');
     if (pending.length !== 1 || !COPILOT_CHECK_NAMES.has(pending[0].name)) return current;
     if (Date.now() >= deadline) {
@@ -359,11 +369,7 @@ async function decideInner({ github, context, core, sleep = defaultSleep }) {
     core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
   }
 
-  const badCheck = checkRuns.find(
-    (cr) =>
-      cr.status === 'completed' &&
-      !['success', 'neutral', 'skipped', 'cancelled', 'stale'].includes(cr.conclusion),
-  );
+  const badCheck = checkRuns.find(isFailedCheck);
   if (badCheck) {
     return setDecision(
       'skip',

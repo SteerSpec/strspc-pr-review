@@ -105,7 +105,9 @@ jobs:
           # Without this, a PR whose Copilot review lands AFTER CI is never
           # re-evaluated and needs a manual re-run — which is how every approval
           # up to v1.3.0 actually happened. Copilot cannot re-trigger us: its
-          # check run is GITHUB_TOKEN-created (no check_run event), and any run
+          # check run is created with GITHUB_TOKEN, and GITHUB_TOKEN-generated
+          # events never start a new workflow run (the recursion guard) — the
+          # check_run event is emitted, it just can't start us. Any run
           # Copilot itself triggers is held at 'action_required' pending manual
           # approval. Verified 2026-08-18; the identical workflow/event/actor ran
           # clean on 2026-07-25, so this is a GitHub behaviour change, not config.

@@ -46,6 +46,21 @@ inputs:
       When true, skip the "all checks must pass" gate when no external check
       runs exist for the head SHA (e.g., docs-only PRs that trigger no CI).
       Defaults to false (safe default: require at least one passing check).
+  wait-for-copilot-seconds:
+    required: false
+    default: '0'
+    description: >-
+      Seconds to wait for Copilot's review check to finish when it is the LAST
+      check still running, instead of skipping immediately. 0 (default) keeps
+      the previous behaviour. Needed because Copilot cannot re-trigger the
+      workflow itself: its check run is created with GITHUB_TOKEN (so check_run
+      never fires) and GitHub holds runs Copilot triggers at "action_required"
+      pending manual approval. Without this, a PR whose Copilot review lands
+      AFTER CI is never re-evaluated. Opt-in because waiting consumes billable
+      Actions minutes on private repos (it is free on public ones); 300 is a
+      sensible starting point, as Copilot typically reports within ~3 minutes.
+      The wait is skipped when any other check is still running, since CI
+      finishing re-triggers this workflow anyway.
   test-copilot-logins:
     required: false
     default: ''
@@ -119,6 +134,7 @@ runs:
         AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base-branch }}
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
+        AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}

@@ -110,6 +110,15 @@ jobs:
           # branches: filter and base.ref check above (see BASE-BRANCH SYNC).
           # base-branch: develop
 
+          # STRONGLY RECOMMENDED if Copilot reviews your PRs. Without it, a PR
+          # whose Copilot review lands AFTER CI is never re-evaluated and sits
+          # unapproved forever: Copilot's check_run is GITHUB_TOKEN-created, and
+          # any workflow run Copilot itself triggers is held at 'action_required'
+          # pending manual approval. This makes the CI-triggered run wait for
+          # Copilot's check instead of skipping. Free on public repos; consumes
+          # billable Actions minutes on private ones, hence off by default.
+          # wait-for-copilot-seconds: '300'
+
           # Optional: set to 'true' if your repo has no CI checks for some PRs
           # (e.g. docs-only repos or PRs that skip CI via path filters).
           # When 'false' (default), PRs with no external checks are never approved.

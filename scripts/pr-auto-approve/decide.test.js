@@ -1586,3 +1586,137 @@ test('workflow_run event: draft PR → skip with workflow_run: PR is draft', asy
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /PR is draft/);
 });
+
+// -- Waiting for Copilot's review check -----------------------------------
+//
+// Copilot cannot re-trigger the workflow (its check run is GITHUB_TOKEN-created,
+// and runs it triggers are held at action_required), so when its check is the
+// last one outstanding the only way to reach a decision is to wait here.
+
+const CI_OK = {
+  name: 'ci',
+  status: 'completed',
+  conclusion: 'success',
+  started_at: '2026-04-15T10:00:00Z',
+  app: { id: 1 },
+};
+const copilotCheck = (status, conclusion = null) => ({
+  name: 'copilot-pull-request-reviewer',
+  status,
+  conclusion,
+  started_at: '2026-04-15T10:01:00Z',
+  app: { id: 15368 },
+});
+const CLEAN_COPILOT_REVIEW = {
+  id: 1,
+  state: 'COMMENTED',
+  submitted_at: '2026-04-16T10:00:00Z',
+  commit_id: 'deadbeef',
+  user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+};
+
+// Returns a github fake whose listForRef walks `sequence`, holding on the last
+// entry, plus a counter so tests can assert whether polling happened at all.
+function makePollingGithub(sequence, opts = {}) {
+  const { github, calls } = makeFakeGithub(opts);
+  const state = { calls: 0 };
+  github.rest.checks.listForRef = async () => {
+    const runs = sequence[Math.min(state.calls, sequence.length - 1)];
+    state.calls++;
+    return { data: { total_count: runs.length, check_runs: runs } };
+  };
+  return { github, calls, state };
+}
+
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('wait off by default: pending Copilot check skips immediately without polling', async () => {
+  const core = makeCore();
+  const { github, state } = makePollingGithub([[CI_OK, copilotCheck('in_progress')]]);
+  const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /check still running: copilot-pull-request-reviewer/);
+  assert.equal(state.calls, 1, 'must not poll when the wait is not opted into');
+});
+
+test('wait on: Copilot check completing on a later poll leads to approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls, state } = makePollingGithub(
+      [
+        [CI_OK, copilotCheck('in_progress')],
+        [CI_OK, copilotCheck('in_progress')],
+        [CI_OK, copilotCheck('completed', 'success')],
+      ],
+      { reviews: [CLEAN_COPILOT_REVIEW], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+    assert.ok(state.calls >= 3, `expected polling, saw ${state.calls} fetches`);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: Copilot check never finishing skips after the timeout, with a warning', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '1';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '400';
+  try {
+    const core = makeCore();
+    const warnings = [];
+    core.warning = (m) => warnings.push(m);
+    const { github, state } = makePollingGithub([[CI_OK, copilotCheck('in_progress')]]);
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /check still running: copilot-pull-request-reviewer/);
+    assert.ok(state.calls > 1, 'should have polled before giving up');
+    assert.ok(
+      warnings.some((w) => /gave up waiting for copilot-pull-request-reviewer after 1s/.test(w)),
+      `expected a give-up warning, got: ${JSON.stringify(warnings)}`,
+    );
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: another check still pending → no wait, CI will re-trigger us', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '300';
+  try {
+    const core = makeCore();
+    const { github, state } = makePollingGithub([
+      [{ ...CI_OK, status: 'in_progress', conclusion: null }, copilotCheck('in_progress')],
+    ]);
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.equal(state.calls, 1, 'must not burn the timeout on an unrelated pending check');
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+  }
+});
+
+test('wait on: Copilot check finishing red is still caught by the failing-check gate', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [
+        [CI_OK, copilotCheck('in_progress')],
+        [CI_OK, copilotCheck('completed', 'failure')],
+      ],
+      { reviews: [CLEAN_COPILOT_REVIEW], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /failing check: copilot-pull-request-reviewer \(failure\)/);
+    assert.equal(calls.createReview.length, 0);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});

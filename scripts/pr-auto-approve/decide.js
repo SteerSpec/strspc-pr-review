@@ -23,6 +23,14 @@ const COPILOT_LOGINS = new Set([
   'github-copilot[bot]',
 ]);
 
+// Check-run names for Copilot's review, derived from the logins above so the
+// two can't drift: GitHub names the check after the bot minus the "[bot]"
+// suffix (verified: login 'copilot-pull-request-reviewer[bot]' produces check
+// run 'copilot-pull-request-reviewer').
+const COPILOT_CHECK_NAMES = new Set(
+  [...COPILOT_LOGINS].map((login) => login.replace(/\[bot\]$/, '')),
+);
+
 // Copilot reports low-confidence findings in a collapsed block inside the review
 // BODY instead of as inline review comments, while its summary line still reads
 // "generated no new comments". Those comments are absent from
@@ -57,6 +65,17 @@ function getSandboxRepos() {
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
 function getAllowNoChecks() { return (process.env.AUTO_APPROVE_ALLOW_NO_CHECKS || '').toLowerCase() === 'true'; }
+// Seconds to wait for Copilot's review check to finish before giving up.
+// 0 (the default) preserves the historical behaviour of skipping immediately.
+// Opt-in because waiting consumes billable Actions minutes on private repos.
+function getCopilotWaitSeconds() {
+  return Math.max(0, parseInt(process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS, 10) || 0);
+}
+// Poll interval while waiting. Not an action input — only the tests override it,
+// so they don't have to sleep in real time.
+function getCopilotPollMs() {
+  return Math.max(1, parseInt(process.env.AUTO_APPROVE_COPILOT_POLL_MS, 10) || 15000);
+}
 
 function isCopilot(u) {
   if (!u) return false;
@@ -107,6 +126,78 @@ function makeIsCopilot(testLogins) {
   };
 }
 
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
+// (name, app.id) keeping the latest attempt. Prevents the self-pending trap
+// (this job waiting on its own check) and rerun staleness.
+async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
+  // Direct call (not paginate): 100 per page covers all practical repos; loop pages if needed.
+  const allCheckRuns = [];
+  let page = 1;
+  while (true) {
+    const { data } = await github.rest.checks.listForRef({
+      owner, repo, ref: headSha, per_page: 100, page,
+    });
+    const runs = data.check_runs || [];
+    allCheckRuns.push(...runs);
+    if (allCheckRuns.length >= data.total_count || runs.length === 0) break;
+    page++;
+  }
+  const selfRunId = String(context.runId);
+  // Bounded match: `/runs/111` must not match `/runs/1111`. Accept the id
+  // only when followed by `/` (job path) or end-of-string.
+  const selfRunRe = new RegExp(`/runs/${selfRunId}(/|$)`);
+  const validCheckRuns = allCheckRuns.filter((cr) => cr != null);
+  const notSelf = validCheckRuns.filter(
+    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)),
+  );
+  // Dedupe by (name, app.id) keeping the most-recently-started run.
+  const latestByKey = new Map();
+  for (const cr of notSelf) {
+    const key = `${cr.name}::${cr.app && cr.app.id}`;
+    const ts = Date.parse(cr.started_at || cr.completed_at || '') || 0;
+    const prev = latestByKey.get(key);
+    const isNewer =
+      !prev ||
+      ts > prev._ts ||
+      (ts === prev._ts && (cr.id || 0) > (prev.id || 0));
+    if (isNewer) {
+      latestByKey.set(key, Object.assign({}, cr, { _ts: ts }));
+    }
+  }
+  return [...latestByKey.values()];
+}
+
+// Poll until Copilot's review check completes or the deadline passes, and
+// return the freshest check-run list — the caller re-applies the failing and
+// pending gates to whatever comes back, so a Copilot check that ends in failure
+// is still caught.
+//
+// Deliberately narrow: it waits only while Copilot's check is the LAST one
+// outstanding. If anything else is still running, CI completing will re-trigger
+// this workflow anyway, so waiting here would burn minutes to reach the same
+// place. That also stops an unrelated slow or hung job from consuming the
+// entire timeout.
+async function waitForCopilotCheck({
+  github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
+}) {
+  const deadline = Date.now() + waitSeconds * 1000;
+  let current = checkRuns;
+  while (true) {
+    const pending = current.filter((cr) => cr.status !== 'completed');
+    if (pending.length !== 1 || !COPILOT_CHECK_NAMES.has(pending[0].name)) return current;
+    if (Date.now() >= deadline) {
+      core.warning(
+        `pr-auto-approve: gave up waiting for ${pending[0].name} after ${waitSeconds}s`,
+      );
+      return current;
+    }
+    await sleep(Math.min(getCopilotPollMs(), Math.max(0, deadline - Date.now())));
+    current = await fetchCheckRuns({ github, context, owner, repo, headSha });
+  }
+}
+
 async function decide(args) {
   try {
     return await decideInner(args);
@@ -128,7 +219,7 @@ async function decide(args) {
   }
 }
 
-async function decideInner({ github, context, core }) {
+async function decideInner({ github, context, core, sleep = defaultSleep }) {
   const BOT_LOGIN = getBotLogin();
   const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
@@ -244,44 +335,22 @@ async function decideInner({ github, context, core }) {
     return setDecision('skip', 'PR author is the bot itself');
   }
 
-  // Check runs: paginate, filter out this workflow's own run, dedupe by (name, app.id)
-  // keeping the latest attempt. Prevents the self-pending trap and rerun staleness.
   const headSha = pr.head.sha;
-  // Direct call (not paginate): 100 per page covers all practical repos; loop pages if needed.
-  const allCheckRuns = [];
-  let page = 1;
-  while (true) {
-    const { data } = await github.rest.checks.listForRef({
-      owner, repo, ref: headSha, per_page: 100, page,
+  let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
+
+  // Copilot finishing its review is the signal this gate needs, but Copilot
+  // cannot deliver it. Its check run is created with GITHUB_TOKEN so check_run
+  // never fires, and GitHub now holds any run Copilot itself triggers at
+  // `action_required` pending manual approval (verified 2026-08-18: the same
+  // workflow, event and actor ran clean on 2026-07-25 and is gated now). That
+  // leaves this run — started by CI completing, so owned by an ungated actor —
+  // as the only place the wait can happen. Opt-in: see getCopilotWaitSeconds.
+  const waitSeconds = getCopilotWaitSeconds();
+  if (waitSeconds > 0) {
+    checkRuns = await waitForCopilotCheck({
+      github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
     });
-    const runs = data.check_runs || [];
-    allCheckRuns.push(...runs);
-    if (allCheckRuns.length >= data.total_count || runs.length === 0) break;
-    page++;
   }
-  const selfRunId = String(context.runId);
-  // Bounded match: `/runs/111` must not match `/runs/1111`. Accept the id
-  // only when followed by `/` (job path) or end-of-string.
-  const selfRunRe = new RegExp(`/runs/${selfRunId}(/|$)`);
-  const validCheckRuns = allCheckRuns.filter((cr) => cr != null);
-  const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)),
-  );
-  // Dedupe by (name, app.id) keeping the most-recently-started run.
-  const latestByKey = new Map();
-  for (const cr of notSelf) {
-    const key = `${cr.name}::${cr.app && cr.app.id}`;
-    const ts = Date.parse(cr.started_at || cr.completed_at || '') || 0;
-    const prev = latestByKey.get(key);
-    const isNewer =
-      !prev ||
-      ts > prev._ts ||
-      (ts === prev._ts && (cr.id || 0) > (prev.id || 0));
-    if (isNewer) {
-      latestByKey.set(key, Object.assign({}, cr, { _ts: ts }));
-    }
-  }
-  const checkRuns = [...latestByKey.values()];
 
   if (checkRuns.length === 0) {
     if (!getAllowNoChecks()) {

@@ -5,7 +5,6 @@
 
 ### Features
 
-* **pr-auto-approve:** optionally wait for Copilot's review check ([538c735](https://github.com/SteerSpec/strspc-pr-review/commit/538c735f09f1c3f157dc6e8639a330e8d69a22bc))
 * **pr-auto-approve:** optionally wait for Copilot's review check ([034440e](https://github.com/SteerSpec/strspc-pr-review/commit/034440ed1c6b4546b3c55b5c556ee3fa16beed8a))
 
 

@@ -24,8 +24,30 @@ on:
   # the approval gate needs. Without it, a PR whose Copilot review lands BEFORE
   # CI completes is never re-evaluated: the review-triggered run skips with
   # "check still running" and nothing follows. Observed on #35.
+  #
+  # The Copilot entries close the MIRROR ordering — Copilot reviewing AFTER CI,
+  # which is the common case. Nothing else re-triggers it: Copilot's check run
+  # is app_id 15368 (GITHUB_TOKEN, so no check_run event) and its review submission
+  # produces no run either. But its review IS a registered Actions workflow whose
+  # run is attributed to actor 'Copilot' rather than github-actions[bot], so it can
+  # drive workflow_run. Observed on #39: workflow_run fired at 16:50:59 and skipped
+  # with "check still running"; Copilot submitted at 16:52:04; nothing followed.
+  #
+  # Three Copilot entries on purpose — do NOT "tidy up" the redundant-looking ones.
+  # For this dynamic workflow the workflow name ('Copilot', id 318940804) and the
+  # run's display name ('Running Copilot Code Review') differ, and GitHub documents
+  # workflows: matching only for ordinary workflows. Names matching nothing are
+  # inert, so listing all three settles it in one cycle rather than two.
+  #
+  # No loop risk: this workflow is named 'PR Auto-Approve (Copilot)' and is not in
+  # the list. Nor second-order — cnslr-bt's approval does not make Copilot
+  # re-review, since review_on_push fires on pushes, not approvals.
   workflow_run:
-    workflows: ['Test PR Auto-Approve Decision Logic']
+    workflows:
+      - 'Test PR Auto-Approve Decision Logic'
+      - 'Copilot'                     # workflow name, id 318940804
+      - 'Copilot code review'         # workflow name, id 264079549
+      - 'Running Copilot Code Review' # run display name for id 318940804
     types: [completed]
 
 jobs:

@@ -5,13 +5,11 @@
 
 ### Features
 
-* **skills:** ship setup, diagnose and caller-sync skills with the action ([4a7d487](https://github.com/SteerSpec/strspc-pr-review/commit/4a7d4876a1c091d6d3efd62bbbcafbb3f7f9a835))
 * **skills:** ship setup, diagnose and caller-sync skills with the action ([5800d6a](https://github.com/SteerSpec/strspc-pr-review/commit/5800d6a05cff6aad7c66c117486f9017d0523a31))
 
 
 ### Bug Fixes
 
-* **security:** use pull_request_target so a PR cannot exfiltrate the bot token ([4cbc591](https://github.com/SteerSpec/strspc-pr-review/commit/4cbc5918fe464b0f1a4eb867f37559185922ddae))
 * **security:** use pull_request_target so a PR cannot exfiltrate the bot token ([c5d5c0b](https://github.com/SteerSpec/strspc-pr-review/commit/c5d5c0b15df79d12a5ad76d1753cc63891fadca6))
 * **skills:** close gaps in the drift guards, use portable base64 ([ebba5ae](https://github.com/SteerSpec/strspc-pr-review/commit/ebba5aeafdc18970dfa51d620042c08700466a04))
 

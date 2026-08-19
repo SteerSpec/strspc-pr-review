@@ -39,7 +39,7 @@ The rounds threshold is unaffected by both rules: it remains an unconditional es
 
 > **Configuration tradeoff.** That escape hatch is what `rounds-threshold` tunes, so setting it to `1` makes *every* Copilot review satisfy it immediately — the clean, suppressed-comment, and freshness rules are then never evaluated, and the action degrades to "approve as soon as Copilot has reviewed at all, on whatever commit". Keep it at 2 or higher unless that is genuinely what you want.
 
-Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The base-branch, draft, and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
+Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The base-branch, draft, and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request_target`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
 
 Every run records a one-line `reason` (also exposed as the [`reason` output](#outputs)) explaining what it did — see [Troubleshooting](#troubleshooting).
 
@@ -94,7 +94,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 
 ```yaml
 on:
-  pull_request:
+  pull_request_target:   # NOT pull_request — see the security note below
     branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
   pull_request_review:
@@ -124,7 +124,7 @@ jobs:
     if: >-
       (
         (
-          github.event_name == 'pull_request' ||
+          github.event_name == 'pull_request_target' ||
           (
             github.event_name == 'pull_request_review' &&
             github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN
@@ -153,10 +153,40 @@ jobs:
 
 **Base branches.** `base-branch` accepts a single branch or a comma-separated set
 (e.g. `develop,main`; whitespace-only falls back to `main`). It gates **3 points that
-must list the same branches**: the `on.pull_request.branches:` filter, the job `if:`
+must list the same branches**: the `on.pull_request_target.branches:` filter, the job `if:`
 `base.ref` check, and the `base-branch` input. For multiple branches, set
 `branches: [main, develop]` and change the `base.ref` line to
 `contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
+
+**Why `pull_request_target` and not `pull_request`.** This workflow holds a bot PAT.
+For a **same-repo** PR, the `pull_request` event runs the workflow definition from the
+PR's **head commit** with your secrets in scope — so anyone who can push a branch
+could edit the workflow in their own PR and exfiltrate the token. That token can
+approve PRs, so leaking it means self-approving arbitrary changes.
+`pull_request_target` instead *"runs in the context of the **default branch of the
+base repository**"*, so the definition is never PR-controlled. Note it is the
+**default** branch, not the PR's base branch — those differ whenever a PR targets a
+non-default branch.
+
+The usual `pull_request_target` warning is about checking out and executing PR code
+with secrets in scope. This action never checks anything out — it only calls the
+GitHub API — which is what makes the swap safe here. **If you add a checkout step,
+that reasoning no longer holds.**
+
+Two consequences worth knowing:
+
+- The **fork guard** (`head.repo.full_name == github.repository`) becomes load-bearing
+  rather than defensive, since `pull_request_target` would otherwise run with secrets
+  for a fork-associated PR. Keep it.
+- The **bootstrap PR cannot approve itself.** The definition comes from the base
+  branch, which doesn't have the workflow yet, so the PR that *adds* this file needs a
+  human approval or an admin bypass. Every PR after it is handled automatically.
+
+`pull_request_review` needs no such change: it *"will only trigger a workflow run if the
+workflow file exists on the default branch"*, so its definition is not PR-controlled
+either. Note that its `GITHUB_REF` is still the PR **merge ref** — so a `checkout` step
+in that job would pull PR code with secrets in scope, which is another reason not to add
+one.
 
 **If your CI is GitHub Actions, you need the `workflow_run` trigger.** `check_run`
 alone is not enough, and the failure is silent. GitHub Actions creates its check

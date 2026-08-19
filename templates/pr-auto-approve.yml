@@ -4,9 +4,28 @@ name: PR Auto-Approve (Copilot)
 # Then set the required variables/secrets (see comments below).
 
 on:
-  pull_request:
+  # SECURITY: pull_request_target, NOT pull_request. For a same-repo PR the
+  # `pull_request` event runs the workflow definition from the PR's HEAD commit
+  # with your secrets in scope, so anyone who can push a branch could edit this
+  # file in their own PR and exfiltrate the bot token. `pull_request_target`
+  # instead "runs in the context of the default branch of the base repository",
+  # so the definition is never PR-controlled. Note "default branch", not "base
+  # branch": they differ whenever a PR targets a non-default branch.
+  #
+  # The usual pull_request_target footgun does not apply here: it is dangerous
+  # when you check out and execute PR code with secrets in scope, and this
+  # workflow never checks anything out — the action only calls the GitHub API.
+  # If you add a checkout step, stop and reconsider.
+  #
+  # It also makes the fork guard in the if: below load-bearing rather than
+  # belt-and-braces. Do not remove it.
+  pull_request_target:
     branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
+  # Safe as-is: pull_request_review "will only trigger a workflow run if the
+  # workflow file exists on the default branch", so the definition is not
+  # PR-controlled and this is not an injection path. Its GITHUB_REF is still the
+  # PR merge ref, so a checkout step here WOULD pull PR code — do not add one.
   pull_request_review:
     types: [submitted]
   # check_run catches checks posted by third-party apps (external CI services).
@@ -47,8 +66,10 @@ jobs:
           github.run_id
         }}
       cancel-in-progress: true
-    # Skip fork PRs (no access to BOT_GITHUB_TOKEN) and draft PRs. Handle both
-    # pull_request and pull_request_review (a Copilot review submission should
+    # Skip fork PRs and draft PRs. The fork guard is REQUIRED, not optional:
+    # with pull_request_target the run would otherwise get your secrets while
+    # associated with a fork. Handle both pull_request_target and
+    # pull_request_review (a Copilot review submission should
     # re-evaluate the PR), but guard the review path with actor != bot-login so
     # the bot's own APPROVE review never re-triggers this workflow (loop-guard).
     # The guard reads vars.PR_AUTO_APPROVE_BOT_LOGIN — keep it pointing at the
@@ -58,7 +79,7 @@ jobs:
     # Allow check_run events through but exclude this job's own check to prevent
     # feedback loops — update 'auto-approve' below if you rename this job.
     # BASE-BRANCH SYNC — 3 points must list the same branch(es):
-    #   1. on.pull_request.branches (above)   2. the base.ref check (below)
+    #   1. on.pull_request_target.branches (above)   2. the base.ref check (below)
     #   3. the base-branch input (at the bottom).
     # For multiple base branches, set branches: [main, develop] above and change
     # the base.ref line below to:
@@ -73,7 +94,7 @@ jobs:
     if: >-
       (
         (
-          github.event_name == 'pull_request' ||
+          github.event_name == 'pull_request_target' ||
           (
             github.event_name == 'pull_request_review' &&
             github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN

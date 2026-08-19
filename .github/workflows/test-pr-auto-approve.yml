@@ -40,7 +40,10 @@ jobs:
         uses: reviewdog/action-actionlint@50842263c20a7c46bd0065b9e624d3c569db061e # v1
         with:
           fail_level: error
-          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml'
+          # Files are named explicitly, so anything omitted is never linted.
+          # templates/pr-auto-approve.yml is included because consumers copy it
+          # verbatim into their own repos — a syntax error there ships to them.
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml templates/pr-auto-approve.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:

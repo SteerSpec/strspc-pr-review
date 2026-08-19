@@ -7,9 +7,28 @@ name: PR Auto-Approve (Copilot)
 # its own broken code to approve itself.
 
 on:
-  pull_request:
+  # pull_request_target, NOT pull_request. For a same-repo PR, `pull_request`
+  # runs the workflow definition from the PR's HEAD commit with secrets in
+  # scope, so anyone able to push a branch could edit this file in their own PR
+  # and exfiltrate BOT_TOKEN — a token with org-wide write whose review is what
+  # satisfies the required-approval ruleset. pull_request_target instead "runs in
+  # the context of the default branch of the base repository", so the definition
+  # is never PR-controlled. Note "default branch", not "base branch": they differ
+  # whenever a PR targets a non-default branch.
+  #
+  # The usual pull_request_target footgun does not apply: it is dangerous when
+  # you check out and execute PR code with secrets in scope, and this workflow
+  # never checks anything out — the action only calls the GitHub API.
+  #
+  # This makes the fork guard in the if: below load-bearing rather than
+  # belt-and-braces. Do not remove it.
+  pull_request_target:
     branches: [develop]
     types: [opened, ready_for_review, synchronize, reopened]
+  # Safe as-is: pull_request_review "will only trigger a workflow run if the
+  # workflow file exists on the default branch", so the definition is not
+  # PR-controlled and this is not an injection path. Its GITHUB_REF is still the
+  # PR merge ref, so a checkout step here WOULD pull PR code — we never add one.
   pull_request_review:
     types: [submitted]
   # check_run is kept for checks posted by third-party apps, but it does NOT
@@ -51,13 +70,15 @@ jobs:
           github.run_id
         }}
       cancel-in-progress: true
-    # BASE-BRANCH SYNC — 3 points must agree: on.pull_request.branches above,
+    # BASE-BRANCH SYNC — 3 points must agree: on.pull_request_target.branches above,
     # the base.ref check here, and the base-branch input below. All three say
     # 'develop' because the pr-copilot ruleset targets the default branch only,
     # so PRs to main never receive a Copilot review and could never be approved.
     #
     # Note the base.ref / draft / fork conditions below apply ONLY to the
-    # pull_request and pull_request_review branch of this expression. check_run
+    # pull_request_target and pull_request_review branch of this expression. The
+    # fork condition is what keeps pull_request_target safe, since that event
+    # would otherwise hand secrets to a run associated with a fork. check_run
     # and workflow_run events carry no pull_request payload, so for those
     # branches the same three gates are re-applied inside the action instead,
     # after it resolves the associated PR — not skipped, just enforced later.
@@ -69,7 +90,7 @@ jobs:
     if: >-
       (
         (
-          github.event_name == 'pull_request' ||
+          github.event_name == 'pull_request_target' ||
           (
             github.event_name == 'pull_request_review' &&
             github.actor != 'cnslr-bt'
@@ -102,3 +123,17 @@ jobs:
           bot-login: cnslr-bt
           bot-github-token: ${{ secrets.BOT_TOKEN }}
           base-branch: develop
+          # Without this, a PR whose Copilot review lands AFTER CI is never
+          # re-evaluated and needs a manual re-run — which is how every approval
+          # up to v1.3.0 actually happened. Copilot cannot re-trigger us: its
+          # check run is created with GITHUB_TOKEN, and GITHUB_TOKEN-generated
+          # events never start a new workflow run (the recursion guard) — the
+          # check_run event is emitted, it just can't start us. Any run
+          # Copilot itself triggers is held at 'action_required' pending manual
+          # approval. Verified 2026-08-18; the identical workflow/event/actor ran
+          # clean on 2026-07-25, so this is a GitHub behaviour change, not config.
+          # So this run — started by CI completing, an actor GitHub does not gate —
+          # waits for Copilot's check instead. Free here (public repo); it costs
+          # billable minutes on private ones, which is why the default is 0.
+          # Copilot has been reporting in ~1-3 minutes, so 300s leaves headroom.
+          wait-for-copilot-seconds: '300'

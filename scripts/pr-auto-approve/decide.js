@@ -349,8 +349,10 @@ async function decideInner({ github, context, core, sleep = defaultSleep }) {
   let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
 
   // Copilot finishing its review is the signal this gate needs, but Copilot
-  // cannot deliver it. Its check run is created with GITHUB_TOKEN so check_run
-  // never fires, and GitHub now holds any run Copilot itself triggers at
+  // cannot deliver it. Its check run is created with GITHUB_TOKEN, and
+  // GITHUB_TOKEN-generated events never start a new workflow run (the recursion
+  // guard) — the check_run event is emitted, it just cannot start us. GitHub
+  // now also holds any run Copilot itself triggers at
   // `action_required` pending manual approval (verified 2026-08-18: the same
   // workflow, event and actor ran clean on 2026-07-25 and is gated now). That
   // leaves this run — started by CI completing, so owned by an ungated actor —

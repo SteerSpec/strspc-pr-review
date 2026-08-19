@@ -49,19 +49,51 @@ test('skill directory name matches its frontmatter name', () => {
   }
 });
 
+// Workflow-level keys that appear in caller snippets and are not action inputs.
+const WORKFLOW_KEYS = new Set([
+  'on', 'jobs', 'name', 'branches', 'types', 'workflows', 'uses', 'if', 'group',
+  'permissions', 'runs-on', 'steps', 'concurrency', 'cancel-in-progress', 'with',
+  'contents', 'pull-requests', 'checks', 'secrets', 'env',
+  'pull_request_target', 'pull_request_review', 'check_run', 'workflow_run',
+]);
+
+// Input names a yaml snippet documents.
+//
+// Matching on the KEY rather than the value shape is deliberate: `key: 300`,
+// `key: "300"`, `key: true` and `key: ${{ … }}` must all be caught, so anything
+// keyed on quoting would leave gaps.
+//
+// Two snippet shapes exist in these skills and both must be covered — scoping
+// only to `with:` silently stops inspecting the bare ones, which a test below
+// pins.
+function documentedInputs(yamlBlock) {
+  const lines = yamlBlock.split('\n').filter((l) => l.trim() !== '' && !/^\s*#/.test(l));
+  const keyOf = (line) => (/^\s*([a-z0-9-]+):/.exec(line) || [])[1];
+
+  const withLine = lines.findIndex((l) => /^\s*with:\s*$/.test(l));
+  if (withLine !== -1) {
+    // Full caller workflow: inputs are the keys nested under `with:`.
+    const withIndent = lines[withLine].length - lines[withLine].trimStart().length;
+    const found = [];
+    for (const line of lines.slice(withLine + 1)) {
+      if (line.length - line.trimStart().length <= withIndent) break;
+      const k = keyOf(line);
+      if (k) found.push(k);
+    }
+    return found;
+  }
+  // Bare fragment showing one or more inputs on their own.
+  return lines.map(keyOf).filter((k) => k && !WORKFLOW_KEYS.has(k));
+}
+
 // The drift guard that matters: a skill must not document an input that does not
 // exist. Catches renamed and removed inputs, which is exactly how these rot.
 test('every action input a skill names actually exists in action.yml', () => {
   const inputs = declaredInputs();
-  // Only inspect fenced yaml blocks: prose mentions plain words like "checks"
-  // that would collide with input names.
   for (const file of skillFiles()) {
     const body = fs.readFileSync(file, 'utf8');
     for (const block of body.matchAll(/```yaml\n([\s\S]*?)```/g)) {
-      for (const m of block[1].matchAll(/^\s*([a-z0-9-]+):\s*'/gm)) {
-        const key = m[1];
-        // Skip workflow-level keys that legitimately appear in caller snippets.
-        if (['name', 'branches', 'types', 'workflows', 'uses', 'if', 'group'].includes(key)) continue;
+      for (const key of documentedInputs(block[1])) {
         assert.ok(
           inputs.has(key),
           `${path.basename(path.dirname(file))}: documents input '${key}' which action.yml does not declare`,
@@ -71,14 +103,17 @@ test('every action input a skill names actually exists in action.yml', () => {
   }
 });
 
-// pull_request in a caller snippet would be a token-exfiltration path. The skills
-// are what people copy from, so this must never regress.
+// pull_request in a caller snippet is a token-exfiltration path. The skills are
+// what people copy from, so this must never regress. Matching the key alone —
+// not the whole line — also catches `pull_request: # note` and `pull_request: {}`.
+// `pull_request_target:` and `pull_request_review:` cannot match: the character
+// after `pull_request` is `_`, not `:`.
 test('no skill shows a pull_request trigger in a caller snippet', () => {
   for (const file of skillFiles()) {
     const body = fs.readFileSync(file, 'utf8');
     for (const block of body.matchAll(/```yaml\n([\s\S]*?)```/g)) {
       assert.ok(
-        !/^\s*pull_request:\s*$/m.test(block[1]),
+        !/^\s*pull_request:/m.test(block[1]),
         `${path.basename(path.dirname(file))}: yaml block uses pull_request; must be pull_request_target`,
       );
     }

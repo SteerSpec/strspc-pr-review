@@ -64,7 +64,12 @@ Committing via the API avoids cloning each repo:
 
 ```bash
 gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/ci/auto-approve" -f sha="<default-branch-sha>"
-base64 -i workflow.yml -o workflow.b64
+
+# openssl, not base64: `base64 -i/-o` is BSD/macOS-only — on GNU coreutils `-i`
+# means "ignore garbage" and `-o` is not a flag at all. `-A` keeps it on one
+# line, which the contents API requires.
+openssl base64 -A -in workflow.yml -out workflow.b64
+
 gh api repos/{owner}/{repo}/contents/.github/workflows/auto-approve.yml -X PUT \
   -f message="ci: sync auto-approve caller" -F content=@workflow.b64 -f branch="ci/auto-approve"
 ```

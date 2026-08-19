@@ -248,6 +248,29 @@ failing-check gate.
 
 ---
 
+## Claude Code skills
+
+If you use [Claude Code](https://claude.com/claude-code), this repo ships skills that automate the
+setup and the debugging:
+
+```
+/plugin marketplace add SteerSpec/.claude
+```
+
+| Skill | Use it when |
+|---|---|
+| `pr-auto-approve-setup` | Adding the action to a repo — walks the prerequisites and the traps below |
+| `pr-auto-approve-diagnose` | A PR isn't being approved and you need the `reason` behind it |
+| `pr-caller-sync` | The action changed and caller repos need matching updates |
+
+The skills live in [`skills/`](skills/) in this repository and are pinned by release tag in the
+marketplace, so an installed skill always matches a released version of the action rather than
+describing behaviour that hasn't shipped.
+
+They're a convenience, not a requirement — everything they do is documented on this page.
+
+---
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -319,13 +342,19 @@ npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
 action.yml                           # composite Action entry point
 scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
-  decide.test.js   # 62 unit tests (Node native test runner)
+  decide.test.js   # unit tests (Node native test runner)
+  skills.test.js   # guards skills/ against drifting from action.yml
 .github/workflows/
+  auto-approve.yml             # this repo running the action on itself
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
   test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck
   release-please.yml           # semver tagging on main
 templates/
   pr-auto-approve.yml          # copy-paste starter for caller repos
+skills/
+  pr-auto-approve-setup/       # Claude Code skills, published via SteerSpec/.claude
+  pr-auto-approve-diagnose/
+  pr-caller-sync/
 e2e/pr-auto-approve/
   run.sh     # end-to-end harness against a real sandbox repo
   README.md  # e2e setup guide

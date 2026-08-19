@@ -8,7 +8,9 @@ on:
   # `pull_request` event runs the workflow definition from the PR's HEAD commit
   # with your secrets in scope, so anyone who can push a branch could edit this
   # file in their own PR and exfiltrate the bot token. `pull_request_target`
-  # runs the definition from the base branch, so a PR cannot alter it.
+  # instead "runs in the context of the default branch of the base repository",
+  # so the definition is never PR-controlled. Note "default branch", not "base
+  # branch": they differ whenever a PR targets a non-default branch.
   #
   # The usual pull_request_target footgun does not apply here: it is dangerous
   # when you check out and execute PR code with secrets in scope, and this
@@ -20,9 +22,10 @@ on:
   pull_request_target:
     branches: [main]
     types: [opened, ready_for_review, synchronize, reopened]
-  # Safe as-is: pull_request_review workflows already run from the base branch
-  # ("in the context of the default branch of the base repository"), so this is
-  # not an injection path and does not need pull_request_target.
+  # Safe as-is: pull_request_review "will only trigger a workflow run if the
+  # workflow file exists on the default branch", so the definition is not
+  # PR-controlled and this is not an injection path. Its GITHUB_REF is still the
+  # PR merge ref, so a checkout step here WOULD pull PR code — do not add one.
   pull_request_review:
     types: [submitted]
   # check_run catches checks posted by third-party apps (external CI services).

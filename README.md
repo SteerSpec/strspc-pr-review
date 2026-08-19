@@ -163,8 +163,10 @@ For a **same-repo** PR, the `pull_request` event runs the workflow definition fr
 PR's **head commit** with your secrets in scope — so anyone who can push a branch
 could edit the workflow in their own PR and exfiltrate the token. That token can
 approve PRs, so leaking it means self-approving arbitrary changes.
-`pull_request_target` runs the definition from the **base branch**, so a PR cannot
-alter it.
+`pull_request_target` instead *"runs in the context of the **default branch of the
+base repository**"*, so the definition is never PR-controlled. Note it is the
+**default** branch, not the PR's base branch — those differ whenever a PR targets a
+non-default branch.
 
 The usual `pull_request_target` warning is about checking out and executing PR code
 with secrets in scope. This action never checks anything out — it only calls the
@@ -180,8 +182,11 @@ Two consequences worth knowing:
   branch, which doesn't have the workflow yet, so the PR that *adds* this file needs a
   human approval or an admin bypass. Every PR after it is handled automatically.
 
-`pull_request_review` needs no such change — those workflows already run from the base
-branch, so they are not an injection path.
+`pull_request_review` needs no such change: it *"will only trigger a workflow run if the
+workflow file exists on the default branch"*, so its definition is not PR-controlled
+either. Note that its `GITHUB_REF` is still the PR **merge ref** — so a `checkout` step
+in that job would pull PR code with secrets in scope, which is another reason not to add
+one.
 
 **If your CI is GitHub Actions, you need the `workflow_run` trigger.** `check_run`
 alone is not enough, and the failure is silent. GitHub Actions creates its check

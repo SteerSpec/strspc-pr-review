@@ -81,6 +81,25 @@ workflow_run:
   types: [completed]
 ```
 
+**Read `.github/workflows/` to find them. Do not go by what ran on your PR.** The PR that adds this
+caller usually touches only `.github/workflows/`, so any path-filtered workflow stays silent on it —
+and a workflow you never saw run is one you will not think to list.
+
+```bash
+for f in .github/workflows/*.yml; do
+  grep -q 'pull_request' "$f" && echo "$f — $(grep -m1 '^name:' "$f")"
+done
+```
+
+Open each hit and check its `on:` block: keep the ones triggered by `pull_request` for your base
+branch, and discard the `pull_request_target` false positives the grep also matches. Two shapes hide
+from a quick scan — the array form (`on: [push, pull_request]`) and path filters, which is the one
+that bites. A workflow filtered to `src/**` runs on every real PR and on none of your test ones.
+
+Getting this wrong fails silently and late: the missing workflow finishes last on some future PR,
+the re-entry it should have triggered never happens, and that PR sits unapproved with no error and
+no red check.
+
 ### `wait-for-copilot-seconds` if Copilot reviews your PRs
 
 Copilot cannot re-trigger the workflow at all: its check run is `GITHUB_TOKEN`-created, and any

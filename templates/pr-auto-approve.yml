@@ -39,11 +39,32 @@ on:
   # the review-triggered run skips with "check still running" and nothing ever
   # follows, so the PR silently never gets approved.
   #
-  # List the workflow(s) that must pass, by their `name:` value. Then also OR
-  # the workflow_run branch into the job if: below (already included) and keep
-  # `github.event.workflow_run.pull_requests[0].number ||` in the concurrency
-  # group. Delete this trigger only if all your gating checks come from
-  # third-party apps rather than Actions.
+  # List EVERY workflow that gates PRs, by its `name:` value — not just the
+  # obvious one. Whichever finishes LAST is the run that sees all other checks
+  # complete, so a workflow you left out is a PR that never gets re-evaluated.
+  #
+  # Find them by reading .github/workflows/, NOT by watching what ran on the PR
+  # that adds this file: that PR usually touches only .github/workflows/, so any
+  # path-filtered workflow stays silent on it and looks like it doesn't exist.
+  #
+  #   find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) |
+  #     while read -r f; do
+  #       grep -q 'pull_request' "$f" && echo "$f — $(grep -m1 '^name:' "$f")"
+  #     done
+  #
+  # Both extensions: Actions accepts .yml and .yaml, and matching only one would
+  # skip a gating workflow — the omission this comment is warning about. find
+  # rather than a shell glob because an unmatched glob is a hard error in zsh.
+  #
+  # Then check each one's `on:` block and drop the pull_request_target false
+  # positives. Watch for the array form (on: [push, pull_request]) and for path
+  # filters — a workflow filtered to src/** runs on every real PR and none of
+  # your test ones. Omitting it fails silently and late.
+  #
+  # Then also OR the workflow_run branch into the job if: below (already
+  # included) and keep `github.event.workflow_run.pull_requests[0].number ||` in
+  # the concurrency group. Delete this trigger only if all your gating checks
+  # come from third-party apps rather than Actions.
   workflow_run:
     workflows: ['CI']
     types: [completed]

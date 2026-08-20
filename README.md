@@ -199,8 +199,17 @@ review-triggered run skips with `check still running`, and nothing re-evaluates 
 PR afterwards. It sits unapproved with no error anywhere. The `workflow_run`
 trigger supplies the missing "CI is green now" signal.
 
-Set `workflows:` to the `name:` of your gating workflow, and keep both the
-`workflow_run` branch in the job `if:` and
+Set `workflows:` to the `name:` of **every** workflow that gates PRs, not just the
+obvious one — whichever finishes last is the run that sees all other checks
+complete, so one left out is a PR that never gets re-evaluated. Find them by
+reading `.github/workflows/`, not by watching what ran on the PR that adds this
+file: that PR usually touches only `.github/workflows/`, so a path-filtered
+workflow stays silent on it and looks like it doesn't exist. Watch for the array
+form (`on: [push, pull_request]`) too. The
+[`pr-auto-approve-setup`](skills/pr-auto-approve-setup/SKILL.md) skill has the
+enumeration command.
+
+Keep both the `workflow_run` branch in the job `if:` and
 `github.event.workflow_run.pull_requests[0].number ||` in the concurrency group —
 [`templates/pr-auto-approve.yml`](templates/pr-auto-approve.yml) ships all three
 wired up. The `if:` branch's `pull_requests[0] != null` check matters: `workflow_run`

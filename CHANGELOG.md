@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.4.0...v1.5.0) (2026-08-20)
+
+
+### Features
+
+* **ci:** open the marketplace pin-update PR on release ([063a55e](https://github.com/SteerSpec/strspc-pr-review/commit/063a55e5076e15e387ee50081fab9071c73338e2))
+* ship the rollout's lessons, and automate the pin that delivers them ([27a1628](https://github.com/SteerSpec/strspc-pr-review/commit/27a1628cccc65a2c67aa0e623ee3a68c52685cec))
+* **skills:** cover a red Copilot check over a clean Copilot review ([452fe1d](https://github.com/SteerSpec/strspc-pr-review/commit/452fe1d17482ac8f51d6218bf8f9b1fd4e72d25e))
+* **skills:** tell people how to find their gating workflows ([19eff3d](https://github.com/SteerSpec/strspc-pr-review/commit/19eff3dd35fe71f601ac5c38970627e848702ef3))
+
+
+### Bug Fixes
+
+* address Copilot review on [#53](https://github.com/SteerSpec/strspc-pr-review/issues/53) ([028cf96](https://github.com/SteerSpec/strspc-pr-review/commit/028cf9617252058b15fa140a7afbcfb5e6169c5d))
+
 ## [1.4.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.3.0...v1.4.0) (2026-08-19)
 
 

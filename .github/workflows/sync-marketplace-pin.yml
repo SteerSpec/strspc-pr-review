@@ -70,7 +70,12 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
           TARGET_REPO: SteerSpec/.claude
           TARGET_FILE: .claude-plugin/marketplace.json
-          TAG_INPUT: ${{ inputs.tag }}
+          # github.event.inputs, not the inputs context: this workflow has two
+          # triggers, and only one of them is workflow_dispatch. Dereferencing a
+          # property that doesn't exist on the event payload is documented to
+          # give an empty string, which is exactly the behaviour wanted on a
+          # workflow_run trigger.
+          TAG_INPUT: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
 
@@ -78,12 +83,22 @@ jobs:
           # Please finished". Ask what the latest release is: if that run cut
           # one, this is it; if it only touched the release PR, this is the
           # previous tag and the already-pinned guard below exits cleanly.
+          #
+          # Deliberately NOT `|| true`: after a successful Release Please run,
+          # being unable to read the latest release means something is wrong
+          # (auth, rate limit, a repo that has never released), and swallowing
+          # that turns a real failure into a green run that quietly pinned
+          # nothing. Silent no-ops are the exact failure class this workflow has
+          # already shipped twice.
           TAG="${TAG_INPUT:-}"
           if [ -z "$TAG" ]; then
-            TAG="$(gh release view --repo "$SOURCE_REPO" --json tagName --jq '.tagName' 2>/dev/null || true)"
+            TAG="$(gh release view --repo "$SOURCE_REPO" --json tagName --jq '.tagName')"
           fi
+          # Belt and braces: gh failing is now fatal under set -e, but an empty
+          # tagName would slip past that and read as "sync everything to ''".
           if [ -z "$TAG" ]; then
-            echo "No release found in $SOURCE_REPO; nothing to sync." && exit 0
+            echo "Could not determine a release tag for $SOURCE_REPO." >&2
+            exit 1
           fi
 
           version="${TAG#v}"

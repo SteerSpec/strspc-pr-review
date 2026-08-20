@@ -47,9 +47,14 @@ on:
   # that adds this file: that PR usually touches only .github/workflows/, so any
   # path-filtered workflow stays silent on it and looks like it doesn't exist.
   #
-  #   for f in .github/workflows/*.yml; do
-  #     grep -q 'pull_request' "$f" && echo "$f — $(grep -m1 '^name:' "$f")"
-  #   done
+  #   find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) |
+  #     while read -r f; do
+  #       grep -q 'pull_request' "$f" && echo "$f — $(grep -m1 '^name:' "$f")"
+  #     done
+  #
+  # Both extensions: Actions accepts .yml and .yaml, and matching only one would
+  # skip a gating workflow — the omission this comment is warning about. find
+  # rather than a shell glob because an unmatched glob is a hard error in zsh.
   #
   # Then check each one's `on:` block and drop the pull_request_target false
   # positives. Watch for the array form (on: [push, pull_request]) and for path

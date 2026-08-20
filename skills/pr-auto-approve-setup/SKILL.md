@@ -86,10 +86,14 @@ caller usually touches only `.github/workflows/`, so any path-filtered workflow 
 and a workflow you never saw run is one you will not think to list.
 
 ```bash
-for f in .github/workflows/*.yml; do
+find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) | while read -r f; do
   grep -q 'pull_request' "$f" && echo "$f — $(grep -m1 '^name:' "$f")"
 done
 ```
+
+Both extensions, because Actions accepts both — matching only `*.yml` would skip a `.yaml`
+workflow and produce exactly the omission this section warns about. `find` rather than a shell
+glob because an unmatched glob is a hard error in zsh, which is the default shell on macOS.
 
 Open each hit and check its `on:` block: keep the ones triggered by `pull_request` for your base
 branch, and discard the `pull_request_target` false positives the grep also matches. Two shapes hide

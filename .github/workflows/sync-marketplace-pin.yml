@@ -66,16 +66,29 @@ jobs:
           gh api "repos/$TARGET_REPO/contents/$TARGET_FILE?ref=main" --jq '.content' \
             | base64 -d > marketplace.json
 
-          # Select by source.url, not by name or array index: a rename or a
-          # reordering must not silently retarget this at someone else's entry.
-          name="$(jq -r --arg u "$url" \
-            'first(.plugins[] | select(.source.url? == $u) | .name) // ""' marketplace.json)"
-          if [ -z "$name" ]; then
+          # Select by source.url throughout — read, compare and update — so a
+          # rename or a reordering cannot silently retarget this at someone
+          # else's entry. Resolving to a name and then keying on THAT would
+          # quietly depend on .claude's duplicate-name check to stay correct,
+          # which is an invariant enforced in a different repo.
+          matches="$(jq --arg u "$url" \
+            '[.plugins[] | select(.source.url? == $u)] | length' marketplace.json)"
+          if [ "$matches" -eq 0 ]; then
             echo "No entry in $TARGET_REPO points at $url; nothing to sync." && exit 0
           fi
+          if [ "$matches" -gt 1 ]; then
+            # Legitimate one day (this repo cross-linked twice at different
+            # paths), but then each entry needs its own skills list — so stop
+            # rather than write the same one over both.
+            echo "$matches entries point at $url; refusing to guess which to pin." >&2
+            exit 1
+          fi
+          # Only for log lines and the PR body from here on.
+          name="$(jq -r --arg u "$url" \
+            'first(.plugins[] | select(.source.url? == $u) | .name)' marketplace.json)"
 
-          current_ref="$(jq -r --arg n "$name" \
-            '.plugins[] | select(.name == $n) | .source.ref // ""' marketplace.json)"
+          current_ref="$(jq -r --arg u "$url" \
+            'first(.plugins[] | select(.source.url? == $u) | .source.ref) // ""' marketplace.json)"
           if [ "$current_ref" = "$TAG" ]; then
             echo "$name already pinned at $TAG; nothing to do." && exit 0
           fi
@@ -91,15 +104,15 @@ jobs:
             exit 1
           fi
 
-          jq --arg n "$name" --arg ref "$TAG" --arg sha "$sha" --arg v "$version" \
+          jq --arg u "$url" --arg ref "$TAG" --arg sha "$sha" --arg v "$version" \
              --argjson skills "$skills" '
-            (.plugins[] | select(.name == $n)) |= (
+            (.plugins[] | select(.source.url? == $u)) |= (
               .source.ref = $ref | .source.sha = $sha | .version = $v | .skills = $skills
             )' marketplace.json > updated.json
           mv -f updated.json marketplace.json
 
           echo "$name -> ref=$TAG sha=${sha:0:7} version=$version"
-          jq -r --arg n "$name" '.plugins[] | select(.name == $n)' marketplace.json
+          jq -r --arg u "$url" '.plugins[] | select(.source.url? == $u)' marketplace.json
 
           branch="chore/sync-skills-pin-$TAG"
           base="$(gh api "repos/$TARGET_REPO/git/ref/heads/main" --jq '.object.sha')"

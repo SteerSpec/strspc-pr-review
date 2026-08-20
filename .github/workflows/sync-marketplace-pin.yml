@@ -16,6 +16,13 @@ name: Sync marketplace pin
 # default token has no access to another repository at all, and a
 # GITHUB_TOKEN-authored commit would leave the resulting PR's head SHA with no
 # checks, which .claude's own auto-approve refuses to approve.
+#
+# CONSEQUENCE, and it is not a bug to be fixed: the PR arrives authored by the
+# bot, so .claude's auto-approve skips it with "PR author is the bot itself".
+# GitHub blocks self-approval, and there is no second bot identity to open it
+# as. Every pin PR therefore needs one human approval. That is fine — the
+# automation's value is in never forgetting the edit and never getting the sha
+# wrong, not in saving a click.
 
 on:
   # NOT `release: [published]`, which cannot work here and shipped broken in

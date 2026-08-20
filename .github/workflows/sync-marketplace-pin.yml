@@ -1,0 +1,150 @@
+name: Sync marketplace pin
+
+# The skills in this repo reach users through SteerSpec/.claude, whose
+# marketplace entry pins this repo at a tag:
+#
+#   {"source": "git-subdir", "url": "…/strspc-pr-review.git",
+#    "path": "skills", "ref": "v1.4.0", "sha": "…", "version": "1.4.0"}
+#
+# Releasing here changes nothing for them until that pin moves. Nothing else
+# moves it: .claude's bump workflow deliberately selects `source == "./"` so it
+# can never bump a cross-linked entry out of step with its pin. So this runs on
+# release and opens the PR that does it.
+#
+# It authenticates with BOT_TOKEN rather than GITHUB_TOKEN for two reasons: the
+# default token has no access to another repository at all, and a
+# GITHUB_TOKEN-authored commit would leave the resulting PR's head SHA with no
+# checks, which .claude's own auto-approve refuses to approve.
+
+on:
+  release:
+    types: [published]
+  # For re-running against a tag whose release already published — the guards
+  # below make that a no-op when the pin is already correct.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to sync (e.g. v1.5.0)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize, so two releases in quick succession can't race on .claude's head.
+  group: sync-marketplace-pin
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open the pin-update PR in the marketplace repo
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
+          SOURCE_REPO: ${{ github.repository }}
+          TARGET_REPO: SteerSpec/.claude
+          TARGET_FILE: .claude-plugin/marketplace.json
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          version="${TAG#v}"
+          # Anchored and exact, deliberately. Two reasons: .claude's validate.yml
+          # rejects a non-semver version, and it would do so only AFTER this PR
+          # exists; and TAG comes from workflow_dispatch input, so it reaches gh
+          # as an argument. Everything below quotes it, but a tag that is not
+          # plainly MAJOR.MINOR.PATCH has no business getting that far.
+          if ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Tag '$TAG' is not vMAJOR.MINOR.PATCH; refusing to sync." >&2
+            exit 1
+          fi
+
+          sha="$(gh api "repos/$SOURCE_REPO/commits/$TAG" --jq '.sha')"
+          url="https://github.com/$SOURCE_REPO.git"
+
+          gh api "repos/$TARGET_REPO/contents/$TARGET_FILE?ref=main" --jq '.content' \
+            | base64 -d > marketplace.json
+
+          # Select by source.url, not by name or array index: a rename or a
+          # reordering must not silently retarget this at someone else's entry.
+          name="$(jq -r --arg u "$url" \
+            'first(.plugins[] | select(.source.url? == $u) | .name) // ""' marketplace.json)"
+          if [ -z "$name" ]; then
+            echo "No entry in $TARGET_REPO points at $url; nothing to sync." && exit 0
+          fi
+
+          current_ref="$(jq -r --arg n "$name" \
+            '.plugins[] | select(.name == $n) | .source.ref // ""' marketplace.json)"
+          if [ "$current_ref" = "$TAG" ]; then
+            echo "$name already pinned at $TAG; nothing to do." && exit 0
+          fi
+
+          # Rebuild the skills list from the tag rather than carrying the old one
+          # forward. A release that ADDS a skill would otherwise move the pin
+          # without exposing the skill — the entry declares strict:false, so this
+          # array is the complete set, not a filter over a directory scan.
+          skills="$(gh api "repos/$SOURCE_REPO/contents/skills?ref=$TAG" \
+            --jq '[.[] | select(.type == "dir") | "./" + .name] | sort')"
+          if [ "$(jq 'length' <<<"$skills")" -eq 0 ]; then
+            echo "No skills/ directories at $TAG; refusing to publish an empty set." >&2
+            exit 1
+          fi
+
+          jq --arg n "$name" --arg ref "$TAG" --arg sha "$sha" --arg v "$version" \
+             --argjson skills "$skills" '
+            (.plugins[] | select(.name == $n)) |= (
+              .source.ref = $ref | .source.sha = $sha | .version = $v | .skills = $skills
+            )' marketplace.json > updated.json
+          mv -f updated.json marketplace.json
+
+          echo "$name -> ref=$TAG sha=${sha:0:7} version=$version"
+          jq -r --arg n "$name" '.plugins[] | select(.name == $n)' marketplace.json
+
+          branch="chore/sync-skills-pin-$TAG"
+          base="$(gh api "repos/$TARGET_REPO/git/ref/heads/main" --jq '.object.sha')"
+          # Reuse the branch if a previous attempt already created it, committing
+          # against ITS head rather than main's — otherwise expectedHeadOid below
+          # is stale and the mutation fails.
+          if head="$(gh api "repos/$TARGET_REPO/git/ref/heads/$branch" --jq '.object.sha' 2>/dev/null)"; then
+            echo "Reusing existing branch $branch"
+          else
+            gh api "repos/$TARGET_REPO/git/refs" -f "ref=refs/heads/$branch" -f "sha=$base" >/dev/null
+            head="$base"
+          fi
+
+          # createCommitOnBranch, not the REST Contents API: .claude's main
+          # enforces required_signatures and GitHub signs commits made through
+          # this mutation automatically. expectedHeadOid makes it a
+          # compare-and-swap so a concurrent write can't be clobbered.
+          jq -n \
+            --arg repo "$TARGET_REPO" \
+            --arg branch "$branch" \
+            --arg oid "$head" \
+            --arg path "$TARGET_FILE" \
+            --arg headline "chore: pin strspc-pr-review skills to $TAG" \
+            --arg contents "$(base64 -w0 marketplace.json 2>/dev/null || base64 marketplace.json | tr -d '\n')" \
+            '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {input: {
+                branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+                message: {headline: $headline},
+                expectedHeadOid: $oid,
+                fileChanges: {additions: [{path: $path, contents: $contents}]}
+              }}}' > payload.json
+          gh api graphql --input payload.json --jq '.data.createCommitOnBranch.commit.oid'
+
+          if gh pr view "$branch" --repo "$TARGET_REPO" --json number --jq '.number' >/dev/null 2>&1; then
+            echo "PR for $branch already open; the new commit updates it."
+            exit 0
+          fi
+
+          gh pr create --repo "$TARGET_REPO" --base main --head "$branch" \
+            --title "chore: pin strspc-pr-review skills to $TAG" \
+            --body "$(printf '%s\n' \
+              "Opened automatically by \`sync-marketplace-pin\` in \`$SOURCE_REPO\` on the $TAG release." \
+              "" \
+              "Moves the \`$name\` entry to \`ref: $TAG\` / \`sha: $sha\`, sets its \`version\` to \`$version\`, and rebuilds its \`skills\` list from that tag." \
+              "" \
+              "Until this merges, the $TAG skills reach nobody: Claude Code resolves the plugin from the pinned ref and caches it under the version string, so both have to move." \
+              "" \
+              "The \`skills\` array is regenerated rather than carried forward — the entry is \`strict: false\`, so that array is the complete set of exposed skills and a newly added one would otherwise never appear.")"

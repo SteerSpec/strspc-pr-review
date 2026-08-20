@@ -37,7 +37,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `no Copilot review yet` | Copilot hasn't reviewed. Confirm automatic Copilot review is enabled |
 | `no checks on head SHA yet` | No check runs exist. Either CI hasn't started, or the repo has no PR-time CI at all |
 | `check still running: <name>` | Waiting on that check. If it's `copilot-pull-request-reviewer` and never resolves, set `wait-for-copilot-seconds` |
-| `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green |
+| `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green. If `<name>` is `copilot-pull-request-reviewer`, see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) — the review can be clean and the check still red |
 | `latest Copilot review requested changes` | `CHANGES_REQUESTED` always blocks, regardless of round count |
 | `latest Copilot review has N comments` | Inline comments present and round count below `rounds-threshold` |
 | `latest Copilot review has N suppressed low-confidence comment(s)` | Copilot said "no new comments" but hid findings in a collapsed block in the review **body**. Open the review and expand it |
@@ -48,6 +48,40 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `check_run:` / `workflow_run:` prefixed skips | The event carried no usable PR — draft, fork, wrong base, or a non-PR run |
 | `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message |
 
+## 2a. Copilot's check is red but its review is clean
+
+Copilot's **review** and Copilot's **check run** succeed or fail independently. The gate reads the
+check, so a clean review sitting in the UI does not mean the check passed:
+
+```
+pr-auto-approve decision=skip reason=failing check: copilot-pull-request-reviewer (failure)
+```
+
+The action is right to refuse — a red check is a red check, and approving past one would hollow out
+the whole gate. But the cause is often GitHub-side and transient: Copilot finishes its analysis,
+posts the review, then fails to report results back to its own backend.
+
+Confirm by reading the Copilot job log:
+
+```bash
+gh run view <copilot-run-id> --log | grep -E 'resultCount=|sweagentd|CAPI proxy'
+```
+
+`resultCount=1` followed by `Error reporting results to sweagentd … CAPI proxy POST … fetch failed`
+is the transient shape — the review was produced and delivered; only the status report died. A
+genuine failure looks different, and the review will be missing rather than present.
+
+**Nothing recovers it automatically.** All three obvious routes are dead ends:
+
+| Attempt | Result |
+|---|---|
+| Re-run the Copilot run | `This workflow run cannot be retried` — it is a dynamic run |
+| Re-request Copilot as a reviewer | `422 Reviews may only be requested from collaborators` |
+| Wait for Copilot's review to re-trigger the action | Its review submission produces no workflow run at all |
+
+**Recovery: push a new commit.** Only a new head SHA re-runs Copilot. Make it a real change rather
+than an empty one if the branch is going to be reviewed by a human afterwards.
+
 ## 3. Tools that will mislead you
 
 These cost real debugging time — prefer the right-hand column.
@@ -57,6 +91,7 @@ These cost real debugging time — prefer the right-hand column.
 | `gh pr view --json reviews` | `gh api repos/{o}/{r}/pulls/{n}/reviews` | It **omits Copilot's review entirely**, making a reviewed PR look unreviewed |
 | `gh pr checks` | `gh run view <id> --json status,conclusion` | Serves stale data — shows `pending` for runs that finished |
 | The Copilot **workflow run** status | The **check run** on the head SHA | The workflow run can read `in_progress` long after the check completed |
+| Copilot's **review** in the PR UI | The **check run** conclusion | They fail independently. A clean review can sit above a red check, and the gate reads the check — see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) |
 | `gh run list --branch <pr-branch>` | `gh run list --workflow=auto-approve.yml` | `workflow_run` runs are attributed to the default branch |
 
 Copilot's check on a commit:

@@ -128,6 +128,10 @@ function makeIsCopilot(testLogins) {
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Drop the API host so the reason string stays readable in a Slack message and
+// a check summary; the path is the part that identifies the call.
+const stripApiHost = (url) => String(url).replace(/^https?:\/\/[^/]+/, '');
+
 // A completed check that blocks approval. Shared by the failing-check gate and
 // by the Copilot wait, so the two can never drift into disagreeing about what
 // counts as a failure.
@@ -216,7 +220,28 @@ async function decide(args) {
     // is converted to a clean skip so the workflow never flips a required
     // check to red for reasons unrelated to the review state.
     const { core } = args;
-    const reason = `evaluation failed: ${err.status || ''} ${err.message || err}`.trim();
+    // Name the request that failed. Without it, every failure reads the same --
+    // "403 Resource not accessible by personal access token" -- and isolating
+    // which of five endpoints was refused took hours the first time.
+    const req = err.request || {};
+    // Joined rather than interpolated: a missing status used to leave a double
+    // space ("evaluation failed:  socket hang up"), and adding the request made
+    // that worse.
+    let reason = ['evaluation failed:', err.status || '',
+      req.url ? `${req.method || 'GET'} ${stripApiHost(req.url)}` : '',
+      err.message || err]
+      .filter((part) => part !== '' && part !== undefined && part !== null)
+      .join(' ');
+    // One targeted hint, for the one misconfiguration that cannot be fixed by
+    // granting a permission: fine-grained PATs cannot hold `Checks` at all, so
+    // a PAT reading check runs on a private repo is permanently broken. Scoped
+    // narrowly so it stays a signal rather than noise on unrelated 403s.
+    if (err.status === 403 && /\/check-runs/.test(req.url || '')) {
+      reason +=
+        ' — reading check runs needs the Checks permission, which fine-grained' +
+        ' PATs cannot be granted. Reads should use the workflow GITHUB_TOKEN' +
+        ' (the github-token input, default); check the caller grants `checks: read`.';
+    }
     core.error(`pr-auto-approve ${reason}`);
     core.setOutput('decision', 'skip');
     core.setOutput('reason', reason);
@@ -229,7 +254,7 @@ async function decide(args) {
   }
 }
 
-async function decideInner({ github, context, core, sleep = defaultSleep }) {
+async function decideInner({ github, botGithub = github, context, core, sleep = defaultSleep }) {
   const BOT_LOGIN = getBotLogin();
   const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
@@ -535,7 +560,13 @@ async function decideInner({ github, context, core, sleep = defaultSleep }) {
   }
 
   try {
-    await github.rest.pulls.createReview({
+    // botGithub, not github: this is the ONE call that must come from the bot
+    // account rather than the workflow. Everything above reads through
+    // `github`, which is the workflow's own GITHUB_TOKEN — listing check runs
+    // needs the `Checks` permission, and a fine-grained PAT cannot be granted
+    // it, so PAT-based reads work on public repos and 403 forever on private
+    // ones. Defaults to `github` so a caller passing one client still works.
+    await botGithub.rest.pulls.createReview({
       owner,
       repo,
       pull_number: prNumber,

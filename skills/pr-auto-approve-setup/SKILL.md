@@ -18,7 +18,28 @@ These are the three things the action cannot do for you. If any is missing, ever
 |---|---|---|
 | Copilot automatic code review enabled | Settings → Code review → Copilot, or an org ruleset requesting Copilot | every run: `no Copilot review yet` |
 | A bot account that is **not** the PR author, with **write** access | `gh api repos/{owner}/{repo}/collaborators/{bot}/permission` | `PR author is the bot itself`, or the approval doesn't count |
-| A PAT **owned by that bot**, with `pull_requests: write` | `GH_TOKEN=<value> gh api user --jq .login` | `403`/`422` converted to a clean skip — no red check, easy to miss |
+| A PAT **owned by that bot**, with `Pull requests: write` (that alone) | `GH_TOKEN=<value> gh api user --jq .login` | `403`/`422` converted to a clean skip — no red check, easy to miss |
+
+### The PAT is for approving, not for reading
+
+The bot PAT posts the approval and nothing else. Everything the action *reads* — check runs, the
+PR, its reviews — goes through the workflow's own `GITHUB_TOKEN`, via the `github-token` input that
+defaults to it.
+
+That split is not tidiness. Listing check runs requires the **`Checks`** permission, and
+**fine-grained PATs cannot be granted `Checks` at all** — it appears in GitHub's permissions
+reference but is not assignable. Check runs are readable without it on public repos and not on
+private ones, so a PAT doing the reading works everywhere you are likely to test it and fails
+permanently the first time it meets a private repo:
+
+```
+evaluation failed: 403 GET /repos/o/r/commits/<sha>/check-runs — Resource not accessible…
+```
+
+on a **green** `auto-approve` check, because API errors become a skip. If you are on a version
+before this split, the only fixes are a classic PAT with `repo` scope or a GitHub App.
+
+So keep `checks: read` in the caller's job permissions. It is load-bearing, not decorative.
 
 Check the bot's **effective** permission with the `collaborators/.../permission` endpoint. Team
 membership listings and the org's base permission can both say something different from what the

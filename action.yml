@@ -116,14 +116,19 @@ runs:
         (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
-        github-token: ${{ inputs.bot-github-token }}
+        # The workflow token, not the PAT. Requesting a review FROM the bot does
+        # not have to be done BY the bot -- any token with pull-requests: write
+        # can request a collaborator. Keeping the PAT to the approval alone is
+        # what lets its permissions stay at Pull requests: write, and makes the
+        # token contract in the inputs above literally true.
+        github-token: ${{ inputs.github-token }}
         script: |
           // Best-effort, exactly like decide.js's top-level try/catch: this step
           // must never flip a check red for a reason unrelated to the review
           // state. Requesting the review is a convenience — repos that request
           // Copilot via a ruleset don't need it at all, and the approval itself
           // is decided by the evaluate step below regardless. A token without
-          // pull_requests:write 403s here, which previously failed the whole job
+          // pull-requests: write 403s here, which previously failed the whole job
           // BEFORE the evaluation ever ran.
           const botLogin = '${{ inputs.bot-login }}';
           try {
@@ -157,6 +162,10 @@ runs:
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}
         AUTO_APPROVE_BOT_TOKEN: ${{ inputs.bot-github-token }}
+        # GITHUB_API_URL is already in the runner env, but naming it here keeps
+        # the dependency visible: bot-client posts with fetch, not Octokit, so
+        # nothing else would resolve the API host on GHES/GHEC.
+        GITHUB_API_URL: ${{ github.api_url }}
       with:
         # The READ token. github-script authenticates exactly one client from
         # this input, and a second Octokit cannot be built in-script: v7's

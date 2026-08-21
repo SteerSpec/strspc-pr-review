@@ -39,11 +39,15 @@ class BotClientError extends Error {
  * @param {string} token          PAT for the bot account (needs Pull requests: write).
  * @param {object} [deps]
  * @param {typeof fetch} [deps.fetch]   Injected for tests; defaults to global fetch.
- * @param {string} [deps.baseUrl]       Defaults to the public API.
+ * @param {string} [deps.baseUrl]       Defaults to $GITHUB_API_URL, then public API.
  */
 function createBotClient(token, deps = {}) {
   const doFetch = deps.fetch || globalThis.fetch;
-  const baseUrl = deps.baseUrl || 'https://api.github.com';
+  // GITHUB_API_URL, not a hard-coded host: on GHES and GHEC-with-data-residency
+  // the API lives elsewhere, and a hard-coded api.github.com would post the
+  // approval to the wrong server. Octokit reads this for you; fetch does not.
+  const baseUrl =
+    deps.baseUrl || process.env.GITHUB_API_URL || 'https://api.github.com';
 
   if (typeof doFetch !== 'function') {
     throw new Error('bot-client: no fetch available (Node 18+ or inject one)');

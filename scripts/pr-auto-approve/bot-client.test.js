@@ -93,3 +93,38 @@ test('refuses to build when no fetch exists at all', () => {
     globalThis.fetch = saved;
   }
 });
+
+// GHES and GHEC-with-data-residency serve the API from another host. Octokit
+// picks that up on its own; a fetch-based client has to be told, and getting it
+// wrong posts the approval to the wrong server.
+test('honours GITHUB_API_URL for GHES/GHEC', async () => {
+  const saved = process.env.GITHUB_API_URL;
+  process.env.GITHUB_API_URL = 'https://ghe.example.com/api/v3';
+  try {
+    const fetchFn = recordingFetch(okResponse());
+    const client = createBotClient('t', { fetch: fetchFn });
+    await client.rest.pulls.createReview({
+      owner: 'o', repo: 'r', pull_number: 3, event: 'APPROVE', body: '',
+    });
+    assert.equal(fetchFn.calls[0].url, 'https://ghe.example.com/api/v3/repos/o/r/pulls/3/reviews');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_API_URL;
+    else process.env.GITHUB_API_URL = saved;
+  }
+});
+
+test('an explicit baseUrl still wins over the environment', async () => {
+  const saved = process.env.GITHUB_API_URL;
+  process.env.GITHUB_API_URL = 'https://ghe.example.com/api/v3';
+  try {
+    const fetchFn = recordingFetch(okResponse());
+    const client = createBotClient('t', { fetch: fetchFn, baseUrl: 'https://explicit.example' });
+    await client.rest.pulls.createReview({
+      owner: 'o', repo: 'r', pull_number: 3, event: 'APPROVE', body: '',
+    });
+    assert.equal(fetchFn.calls[0].url, 'https://explicit.example/repos/o/r/pulls/3/reviews');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_API_URL;
+    else process.env.GITHUB_API_URL = saved;
+  }
+});

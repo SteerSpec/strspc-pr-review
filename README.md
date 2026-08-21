@@ -209,7 +209,8 @@ form (`on: [push, pull_request]`) too. The
 [`pr-auto-approve-setup`](skills/pr-auto-approve-setup/SKILL.md) skill has the
 enumeration command.
 
-**`checks: read` in the caller's job permissions is load-bearing.** The action reads check runs
+**`checks: read` in the caller's job permissions is load-bearing** (`pull-requests: write` and
+`checks: read` are all the action asks of that token). The action reads check runs
 with the workflow's `GITHUB_TOKEN` (the `github-token` input, default `${{ github.token }}`); only
 the approval itself is posted with `bot-github-token`. That split exists because listing check runs
 requires the `Checks` permission, which fine-grained PATs cannot be granted — so a PAT doing the

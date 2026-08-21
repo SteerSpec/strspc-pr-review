@@ -128,3 +128,12 @@ test('an explicit baseUrl still wins over the environment', async () => {
     else process.env.GITHUB_API_URL = saved;
   }
 });
+
+test('strips a trailing slash so the path never becomes //repos', async () => {
+  const fetchFn = recordingFetch(okResponse());
+  const client = createBotClient('t', { fetch: fetchFn, baseUrl: 'https://ghe.example.com/api/v3/' });
+  await client.rest.pulls.createReview({
+    owner: 'o', repo: 'r', pull_number: 3, event: 'APPROVE', body: '',
+  });
+  assert.equal(fetchFn.calls[0].url, 'https://ghe.example.com/api/v3/repos/o/r/pulls/3/reviews');
+});

@@ -28,10 +28,10 @@ inputs:
     description: >-
       Token used for every READ (check runs, the PR, its reviews and their
       comments). Defaults to the workflow's GITHUB_TOKEN, which is what makes
-      this work on private repositories. The caller must grant it
-      `checks: read`, `contents: read` and `pull-requests: write` — the shipped
-      template already does. Override only if you have a reason to read as
-      someone else.
+      this work on private repositories. The action needs `checks: read` and
+      `pull-requests: write` from it and nothing else — the shipped template
+      also grants `contents: read`, which this action never uses. Override only
+      if you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'

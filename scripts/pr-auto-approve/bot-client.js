@@ -46,8 +46,12 @@ function createBotClient(token, deps = {}) {
   // GITHUB_API_URL, not a hard-coded host: on GHES and GHEC-with-data-residency
   // the API lives elsewhere, and a hard-coded api.github.com would post the
   // approval to the wrong server. Octokit reads this for you; fetch does not.
-  const baseUrl =
-    deps.baseUrl || process.env.GITHUB_API_URL || 'https://api.github.com';
+  // Trailing slash stripped: GHES installs and proxies hand out both forms of
+  // GITHUB_API_URL, and concatenating the slashed one yields //repos/... which
+  // some proxies reject.
+  const baseUrl = (
+    deps.baseUrl || process.env.GITHUB_API_URL || 'https://api.github.com'
+  ).replace(/\/+$/, '');
 
   if (typeof doFetch !== 'function') {
     throw new Error('bot-client: no fetch available (Node 18+ or inject one)');

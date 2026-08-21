@@ -1736,3 +1736,103 @@ test('wait on: Copilot check finishing red is still caught by the failing-check 
     delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
   }
 });
+
+// --- token split (t9w.16) ------------------------------------------------
+//
+// Reads go through `github` (the workflow's GITHUB_TOKEN, which can hold the
+// Checks permission) and only the approval goes through `botGithub` (the bot
+// PAT, which cannot). Getting this backwards is invisible on a public repo and
+// breaks every private one, so it is pinned here rather than left to review.
+
+test('token split: the approval goes to botGithub, never to github', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-16T10:00:00Z', user: cp }],
+    reviewComments: { 1: [] },
+  });
+
+  const botCalls = [];
+  const botGithub = {
+    rest: {
+      pulls: {
+        createReview: async (args) => {
+          botCalls.push(args);
+          return { data: { id: 99 } };
+        },
+      },
+    },
+  };
+
+  const result = await decide({ github, botGithub, context: makeContext(), core });
+
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(botCalls.length, 1, 'approval must be posted by the bot client');
+  assert.equal(botCalls[0].event, 'APPROVE');
+  assert.equal(calls.createReview.length, 0, 'the read client must never post the approval');
+});
+
+test('token split: botGithub defaults to github, so one-client callers still work', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-16T10:00:00Z', user: cp }],
+    reviewComments: { 1: [] },
+  });
+
+  const result = await decide({ github, context: makeContext(), core });
+
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
+});
+
+// --- diagnosable failures (t9w.16) ---------------------------------------
+
+test('evaluation failure names the request that was refused', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const err = new Error('Resource not accessible by personal access token');
+  err.status = 403;
+  err.request = { method: 'GET', url: 'https://api.github.com/repos/o/r/pulls/1/reviews' };
+  // paginate, not pulls.get: on a pull_request event the PR comes from the
+  // payload and pulls.get is never called, so overriding it proves nothing.
+  github.paginate = async () => { throw err; };
+
+  const result = await decide({ github, context: makeContext(), core });
+
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^evaluation failed: 403 GET \/repos\/o\/r\/pulls\/1\/reviews /);
+  // Unrelated 403s must not carry the Checks hint, or it stops meaning anything.
+  assert.doesNotMatch(result.reason, /Checks permission/);
+});
+
+test('a 403 on check-runs explains that fine-grained PATs cannot read them', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const err = new Error('Resource not accessible by personal access token');
+  err.status = 403;
+  err.request = {
+    method: 'GET',
+    url: 'https://api.github.com/repos/o/r/commits/abc123/check-runs',
+  };
+  github.rest.checks.listForRef = async () => { throw err; };
+
+  const result = await decide({ github, context: makeContext(), core });
+
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /GET \/repos\/o\/r\/commits\/abc123\/check-runs/);
+  assert.match(result.reason, /Checks permission, which fine-grained PATs cannot be granted/);
+  assert.match(result.reason, /checks: read/);
+});
+
+test('an error with no request object still produces a usable reason', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub();
+  const err = new Error('socket hang up');
+  github.rest.checks.listForRef = async () => { throw err; };
+
+  const result = await decide({ github, context: makeContext(), core });
+
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'evaluation failed: socket hang up');
+});

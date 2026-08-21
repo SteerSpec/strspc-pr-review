@@ -5,13 +5,11 @@
 
 ### Features
 
-* read with GITHUB_TOKEN so private repos work, and explain 403s ([17fc0bd](https://github.com/SteerSpec/strspc-pr-review/commit/17fc0bd2fec3c38cc51ea62a0d14645e97642d09))
 * read with GITHUB_TOKEN so private repos work, and explain 403s ([2ef061c](https://github.com/SteerSpec/strspc-pr-review/commit/2ef061c6ab0796f6a14331e976bfca2f4de51c25))
 
 
 ### Bug Fixes
 
-* **ci:** sync-marketplace-pin could never fire on a release ([00292ff](https://github.com/SteerSpec/strspc-pr-review/commit/00292ff740eb8e11b1284e1b28551fe083dbcd8e))
 * **ci:** sync-marketplace-pin could never fire on a release ([3cb8247](https://github.com/SteerSpec/strspc-pr-review/commit/3cb824734ac23640beaacb7fa892101d78d81502))
 * **ci:** use github.event.inputs, and stop swallowing gh errors ([7c7bc86](https://github.com/SteerSpec/strspc-pr-review/commit/7c7bc868b7e9381fb1f28f3d2e3859f2a14e807e))
 * make the one-call token contract true, and honour GITHUB_API_URL ([0a3e087](https://github.com/SteerSpec/strspc-pr-review/commit/0a3e0878de80e67d1284e3a58fefe9ed20049093))

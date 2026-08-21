@@ -15,7 +15,23 @@ inputs:
       The bot-github-token must be a PAT for this account.
   bot-github-token:
     required: true
-    description: 'PAT for bot-login with repo scope (posts the approval review).'
+    description: >-
+      PAT for bot-login, used for exactly one call: posting the APPROVE review.
+      It needs only `Pull requests: write` — NOT repo-wide scope. Everything
+      else is read with github-token below, because listing check runs requires
+      the `Checks` permission, which fine-grained PATs cannot be granted at all;
+      a PAT-based read therefore works on public repos (where check runs are
+      public) and fails with 403 forever on private ones.
+  github-token:
+    required: false
+    default: ${{ github.token }}
+    description: >-
+      Token used for every READ (check runs, the PR, its reviews and their
+      comments). Defaults to the workflow's GITHUB_TOKEN, which is what makes
+      this work on private repositories. The action needs `checks: read` and
+      `pull-requests: write` from it and nothing else — the shipped template
+      also grants `contents: read`, which this action never uses. Override only
+      if you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'
@@ -100,14 +116,19 @@ runs:
         (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
-        github-token: ${{ inputs.bot-github-token }}
+        # The workflow token, not the PAT. Requesting a review FROM the bot does
+        # not have to be done BY the bot -- any token with pull-requests: write
+        # can request a collaborator. Keeping the PAT to the approval alone is
+        # what lets its permissions stay at Pull requests: write, and makes the
+        # token contract in the inputs above literally true.
+        github-token: ${{ inputs.github-token }}
         script: |
           // Best-effort, exactly like decide.js's top-level try/catch: this step
           // must never flip a check red for a reason unrelated to the review
           // state. Requesting the review is a convenience — repos that request
           // Copilot via a ruleset don't need it at all, and the approval itself
           // is decided by the evaluate step below regardless. A token without
-          // pull_requests:write 403s here, which previously failed the whole job
+          // pull-requests: write 403s here, which previously failed the whole job
           // BEFORE the evaluation ever ran.
           const botLogin = '${{ inputs.bot-login }}';
           try {
@@ -140,11 +161,25 @@ runs:
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}
+        AUTO_APPROVE_BOT_TOKEN: ${{ inputs.bot-github-token }}
+        # GITHUB_API_URL is already in the runner env, but naming it here keeps
+        # the dependency visible: bot-client posts with fetch, not Octokit, so
+        # nothing else would resolve the API host on GHES/GHEC.
+        GITHUB_API_URL: ${{ github.api_url }}
       with:
-        github-token: ${{ inputs.bot-github-token }}
+        # The READ token. github-script authenticates exactly one client from
+        # this input, and a second Octokit cannot be built in-script: v7's
+        # `require` proxy resolves paths (which is how decide.js loads below)
+        # but not github-script's own bundled deps, so require('@actions/github')
+        # fails with "Cannot find module". Verified on a runner. The approval is
+        # therefore posted through a small fetch-backed client instead.
+        github-token: ${{ inputs.github-token }}
         script: |
-          const decide = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
-          await decide({ github, context, core });
+          const base = `${process.env.ACTION_PATH}/scripts/pr-auto-approve`;
+          const decide = require(`${base}/decide.js`);
+          const createBotClient = require(`${base}/bot-client.js`);
+          const botGithub = createBotClient(process.env.AUTO_APPROVE_BOT_TOKEN);
+          await decide({ github, botGithub, context, core });
 
     - name: Notify Slack (approved)
       if: steps.evaluate.outputs.decision == 'approved' && inputs.slack-bot-token != ''

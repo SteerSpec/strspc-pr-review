@@ -209,6 +209,14 @@ form (`on: [push, pull_request]`) too. The
 [`pr-auto-approve-setup`](skills/pr-auto-approve-setup/SKILL.md) skill has the
 enumeration command.
 
+**`checks: read` in the caller's job permissions is load-bearing** (`pull-requests: write` and
+`checks: read` are all the action asks of that token). The action reads check runs
+with the workflow's `GITHUB_TOKEN` (the `github-token` input, default `${{ github.token }}`); only
+the approval itself is posted with `bot-github-token`. That split exists because listing check runs
+requires the `Checks` permission, which fine-grained PATs cannot be granted — so a PAT doing the
+reading works on public repos and fails with `403` forever on private ones. The bot PAT therefore
+needs only `Pull requests: write`.
+
 Keep both the `workflow_run` branch in the job `if:` and
 `github.event.workflow_run.pull_requests[0].number ||` in the concurrency group —
 [`templates/pr-auto-approve.yml`](templates/pr-auto-approve.yml) ships all three

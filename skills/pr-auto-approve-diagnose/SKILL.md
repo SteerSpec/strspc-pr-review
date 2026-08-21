@@ -82,6 +82,29 @@ genuine failure looks different, and the review will be missing rather than pres
 **Recovery: push a new commit.** Only a new head SHA re-runs Copilot. Make it a real change rather
 than an empty one if the branch is going to be reviewed by a human afterwards.
 
+## 2b. The check is green and the PR still says REVIEW_REQUIRED
+
+If `auto-approve` reports **success** but the PR was never approved, and the log has **no
+`decision=` line at all**, the evaluation threw. API errors are deliberately converted to a skip so
+an outage never reds a required check — which means a permanent misconfiguration looks exactly like
+a healthy run.
+
+```bash
+gh run view <id> --log | grep 'evaluation failed'
+```
+
+The message names the request that was refused:
+
+```
+evaluation failed: 403 GET /repos/o/r/commits/<sha>/check-runs — Resource not accessible…
+```
+
+A `403` on `/check-runs` has one cause worth knowing: reading check runs needs the **`Checks`**
+permission, and **fine-grained PATs cannot be granted it**. Reads must go through the workflow's
+`GITHUB_TOKEN` (the `github-token` input, which defaults to it) and the caller must grant
+`checks: read`. This fails *only on private repositories* — check runs are readable without the
+permission on public ones — so it will have worked everywhere you tested.
+
 ## 3. Tools that will mislead you
 
 These cost real debugging time — prefer the right-hand column.

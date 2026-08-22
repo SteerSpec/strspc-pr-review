@@ -154,9 +154,14 @@ def check_config(path):
     if not isinstance(doc.get("blank_issues_enabled"), bool):
         fail(path.name, "`blank_issues_enabled` must be true or false")
 
-    links = doc.get("contact_links") or []
-    if not isinstance(links, list):
-        fail(path.name, "`contact_links` must be a list")
+    # Not `or []`: that coerces a falsy-but-wrong value ({} or "") to an empty
+    # list, and the type check below would then never fire on it.
+    links = doc.get("contact_links")
+    if links is None:
+        # Absent, or present-but-empty (`contact_links:`). Both are fine.
+        links = []
+    elif not isinstance(links, list):
+        fail(path.name, f"`contact_links` must be a list, got {type(links).__name__}")
         links = []
 
     for index, link in enumerate(links):

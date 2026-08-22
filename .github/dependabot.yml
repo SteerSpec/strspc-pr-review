@@ -32,5 +32,13 @@ updates:
       prefix: fix
     groups:
       dev-dependencies:
+        # dependency-type, not just a name: this repo has no production
+        # dependencies today, so patterns: ['*'] happens to match only dev ones
+        # and the group name is accurate by accident. Add a production dep and
+        # it would be bundled into a group called "dev-dependencies" with
+        # nothing to catch it. Constraining the group keeps the name true, and
+        # means a future production dependency gets its own PR -- which is the
+        # one you would actually want reviewed on its own.
+        dependency-type: development
         patterns: ['*']
         update-types: [minor, patch]

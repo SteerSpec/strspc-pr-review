@@ -51,8 +51,10 @@ const COPILOT_CHECK_NAMES = new Set(
 //
 // Treat this as unstable and expect a third wording. The parenthesised count and
 // the plural "s" stay optional so the next tweak degrades to "suppressed
-// comments present" rather than to silence, and e2e/pr-auto-approve/copilot.sh
-// re-checks the live markup against real reviews.
+// comments present" rather than to silence. Nothing here re-checks the markup
+// against live reviews yet — the unit tests only assert these two fixtures, so
+// a third wording would again pass CI and fail in production. A real-Copilot
+// e2e tier that catches that is planned but not yet built.
 const SUPPRESSED_RE =
   /(?:Comments? suppressed due to low confidence|Suppressed comments?)(?:\s*\((\d+)\))?/i;
 

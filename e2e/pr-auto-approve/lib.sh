@@ -3,9 +3,10 @@
 #
 # Shared helpers for the pr-auto-approve e2e harnesses.
 #
-# Sourced by:
-#   run.sh      — synthetic tier (fakes Copilot via test-copilot-logins)
-#   copilot.sh  — real-Copilot tier
+# Sourced by run.sh, the synthetic tier (which fakes Copilot via
+# test-copilot-logins). Split out ahead of a second, real-Copilot harness that
+# would otherwise duplicate ~120 of run.sh's lines; that harness does not exist
+# yet, which is why require_gh and the repo variable are already parameterised.
 #
 # Entrypoints own `set -euo pipefail`; this file only defines state and
 # functions, so sourcing it can never change the caller's shell options.

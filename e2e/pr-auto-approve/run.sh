@@ -5,7 +5,9 @@
 # Copilot is faked here: this script posts reviews as E2E_REVIEWER_LOGIN and the
 # sandbox's caller workflow sets test-copilot-logins so decide.js treats them as
 # Copilot reviews. That makes every scenario deterministic and fast, at the cost
-# of not exercising real Copilot at all — copilot.sh covers that.
+# of not exercising real Copilot at all — so it cannot detect drift in Copilot's
+# own output format. A real-Copilot tier that can is planned, and lib.sh is
+# factored to be shared with it; nothing covers that gap today.
 #
 # Prereqs:
 #   - Bash 4+ (macOS ships 3.2; `brew install bash` and run via

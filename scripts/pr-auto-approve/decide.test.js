@@ -1326,6 +1326,22 @@ test('countSuppressedComments: parses the real Copilot markup', () => {
     decide.countSuppressedComments('We assert Suppressed comments (5) is detected'),
     0,
   );
+  // ...and it has to END the line too. A count on its own does not separate a
+  // heading from a sentence that merely opens with the phrase.
+  assert.equal(
+    decide.countSuppressedComments('Suppressed comments (5) are documented below'),
+    0,
+  );
+
+  // Fail-safe on the count itself: a block whose count is not a number is still
+  // a block. Requiring digits would read it as no block at all — silence, which
+  // is the failure direction that auto-approves hidden findings.
+  assert.equal(decide.countSuppressedComments('<summary>Suppressed comments (N)</summary>'), 1);
+  assert.equal(
+    decide.countSuppressedComments('<summary>Suppressed comments (many)</summary>'),
+    1,
+  );
+  assert.equal(decide.countSuppressedComments('**Suppressed comments (N)**'), 1);
 
   // Fenced code is stripped before matching: Copilot quotes the offending lines
   // back, so a PR touching this very file must not trip its own gate.

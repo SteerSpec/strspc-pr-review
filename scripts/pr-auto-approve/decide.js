@@ -80,13 +80,22 @@ const SUPPRESSED_PHRASE =
 // Silence is the failure that auto-approves a PR with hidden findings, and it
 // is the one that already shipped once. A false skip is visible and a human
 // clears it; silence is not.
+// The count is captured only when it is numeric, but a NON-numeric one still
+// has to match: presence is what gates the approval, and parseInt's failure
+// falls through to `|| 1`. Requiring digits would make "(N)" or "(many)" read
+// as no block at all — silence, the one failure direction this gate exists to
+// prevent.
+const COUNT = String.raw`\((?:(\d+)|[^)]*)\)`;
 const FENCED_CODE_RE = /```[\s\S]*?```/g;
 const SUPPRESSED_IN_SUMMARY_RE = new RegExp(
-  String.raw`<summary>\s*(?:\*\*)?\s*${SUPPRESSED_PHRASE}\s*(?:\((\d+)\))?\s*(?:\*\*)?\s*</summary>`,
+  String.raw`<summary>\s*(?:\*\*)?\s*${SUPPRESSED_PHRASE}\s*(?:${COUNT})?\s*(?:\*\*)?\s*</summary>`,
   'i',
 );
+// Anchored at BOTH ends of the line. Without the trailing anchor the count is
+// not enough to separate a heading from prose that merely opens with the
+// phrase — "Suppressed comments (5) are documented below" would count as five.
 const SUPPRESSED_HEADING_RE = new RegExp(
-  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*\((\d+)\)`,
+  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*${COUNT}\s*(?:\*\*|__)?\s*$`,
   'im',
 );
 

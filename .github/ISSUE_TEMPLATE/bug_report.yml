@@ -27,8 +27,10 @@ body:
     attributes:
       label: How do you call it?
       options:
-        - Composite action (uses: SteerSpec/strspc-pr-review@v1)
-        - Reusable workflow (.github/workflows/pr-auto-approve.yml — deprecated)
+        # Quoted: the bare form parses as a YAML mapping because of the `: `,
+        # and GitHub drops a form whose dropdown options are not strings.
+        - "Composite action (uses: SteerSpec/strspc-pr-review@v1)"
+        - "Reusable workflow (.github/workflows/pr-auto-approve.yml — deprecated)"
     validations:
       required: true
 

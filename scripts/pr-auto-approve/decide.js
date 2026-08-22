@@ -91,11 +91,14 @@ const SUPPRESSED_IN_SUMMARY_RE = new RegExp(
   String.raw`<summary>\s*(?:\*\*)?\s*${SUPPRESSED_PHRASE}\s*(?:${COUNT})?\s*(?:\*\*)?\s*</summary>`,
   'i',
 );
-// Anchored at BOTH ends of the line. Without the trailing anchor the count is
-// not enough to separate a heading from prose that merely opens with the
-// phrase — "Suppressed comments (5) are documented below" would count as five.
+// Anchored at BOTH ends of the line. The anchors, not the count, are what
+// separate a heading from prose: "Suppressed comments (5) are documented below"
+// fails the trailing anchor, and "No suppressed comments were found" fails the
+// leading one. That lets the count stay OPTIONAL here, so a heading stripped of
+// both its <details> wrapper and its count still registers instead of going
+// silent. A whole line consisting of nothing but the phrase is a heading.
 const SUPPRESSED_HEADING_RE = new RegExp(
-  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*${COUNT}\s*(?:\*\*|__)?\s*$`,
+  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*(?:${COUNT})?\s*(?:\*\*|__)?\s*$`,
   'im',
 );
 

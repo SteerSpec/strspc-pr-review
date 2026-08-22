@@ -1342,6 +1342,13 @@ test('countSuppressedComments: parses the real Copilot markup', () => {
     1,
   );
   assert.equal(decide.countSuppressedComments('**Suppressed comments (N)**'), 1);
+  // ...and a heading stripped of BOTH its <details> wrapper and its count still
+  // registers. The line anchors, not the count, are what exclude prose.
+  assert.equal(decide.countSuppressedComments('**Suppressed comments**'), 1);
+  assert.equal(
+    decide.countSuppressedComments('Comments suppressed due to low confidence'),
+    1,
+  );
 
   // Fenced code is stripped before matching: Copilot quotes the offending lines
   // back, so a PR touching this very file must not trip its own gate.

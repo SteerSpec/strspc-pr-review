@@ -66,12 +66,37 @@ test('every action.yml output has a row in the README Outputs table', () => {
   assert.deepEqual(missing, [], `undocumented outputs: ${missing.join(', ')}`);
 });
 
-// The specific claim that sent people down the 403: the PAT is for approving,
-// not for reading, and it does not need repo scope.
-test('the README does not tell anyone to give the bot PAT `repo` scope', () => {
-  assert.doesNotMatch(
-    read('README.md'),
-    /`repo` scope/,
-    'the bot PAT needs Pull requests: write; recommending repo scope is what broke private repos',
+// The claim that sent people into a 403: what the bot PAT actually needs.
+//
+// Asserted POSITIVELY, on the one section that misled people, rather than by
+// banning the string "`repo` scope" anywhere in the file. A ban is stricter than
+// the intent -- it would reject a troubleshooting entry that warns against repo
+// scope, i.e. exactly the text you would want to write -- and prose-policing is
+// outside what this file claims to do.
+test('Prerequisites states the permission the bot PAT actually needs', () => {
+  const src = read('README.md');
+  const start = src.indexOf('## Prerequisites');
+  const end = src.indexOf('## Quick start');
+  assert.ok(start !== -1 && end > start, 'README must have ## Prerequisites then ## Quick start');
+  assert.match(
+    src.slice(start, end),
+    /`Pull requests: write`/,
+    'Prerequisites must say the bot PAT needs Pull requests: write -- describing it as repo-scoped is what sent people into a 403 on private repos',
+  );
+});
+
+// The test count in Development drifted twice in two days: 62 was stale for
+// several releases, and 87 went stale inside the very PR that corrected it.
+test('the README test count matches the suite', () => {
+  const declared = fs
+    .readdirSync(__dirname)
+    .filter((f) => f.endsWith('.test.js'))
+    .reduce((n, f) => n + (fs.readFileSync(path.join(__dirname, f), 'utf8').match(/^test\(/gm) || []).length, 0);
+  const stated = /(\d+) unit tests/.exec(read('README.md'));
+  assert.ok(stated, 'README Development section must state a test count');
+  assert.equal(
+    Number(stated[1]),
+    declared,
+    `README says ${stated[1]} unit tests; the suite declares ${declared}`,
   );
 });

@@ -1,0 +1,98 @@
+name: Bug report
+description: The action misbehaves — wrong decision, an error, or nothing happening at all
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every run logs a `reason` (also exposed as the `reason` output), and the
+        [Troubleshooting table](https://github.com/SteerSpec/strspc-pr-review#troubleshooting)
+        is keyed to it — most reports are already answered there. If you use Claude Code, the
+        `pr-auto-approve-diagnose` skill walks the same ground interactively.
+
+        Please fill in the `reason` field below even when it looks self-explanatory. It is the
+        single most useful thing in this form.
+
+  - type: input
+    id: version
+    attributes:
+      label: Action version
+      description: The exact ref you pin. `@v1` and a pinned `@vX.Y.Z` can behave differently.
+      placeholder: SteerSpec/strspc-pr-review@v1.7.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: invocation
+    attributes:
+      label: How do you call it?
+      options:
+        - Composite action (uses: SteerSpec/strspc-pr-review@v1)
+        - Reusable workflow (.github/workflows/pr-auto-approve.yml — deprecated)
+    validations:
+      required: true
+
+  - type: input
+    id: reason
+    attributes:
+      label: The `reason` the run logged
+      description: Copy it verbatim from the step summary or the `reason` output.
+      placeholder: latest Copilot review has 2 comments
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Your caller workflow
+      description: >-
+        The whole file if you can — the `on:` triggers and any `if:` guard are the usual culprits.
+        Redact token values; secret and variable *names* are fine, and helpful.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: visibility
+    attributes:
+      label: Repository visibility
+      description: >-
+        Private and internal repositories take different permission paths — a 403 from the Checks
+        API means something different depending on this answer.
+      options:
+        - Public
+        - Private
+        - Internal
+    validations:
+      required: true
+
+  - type: input
+    id: run-url
+    attributes:
+      label: Workflow run URL
+      description: Public repositories only. Otherwise leave this blank and paste the log excerpt above.
+      placeholder: https://github.com/owner/repo/actions/runs/1234567890
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      description: These four account for most "nothing runs at all" reports.
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true
+        - label: Automatic Copilot code review is enabled on the repository
+          required: true
+        - label: "`bot-github-token` is a PAT belonging to `bot-login`, and that account has write access to the repository"
+          required: true
+        - label: "`vars.PR_AUTO_APPROVE_BOT_LOGIN` is set, so the review-loop guard can identify the bot"
+          required: true

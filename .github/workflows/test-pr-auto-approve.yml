@@ -11,6 +11,8 @@ on:
     branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
+      - 'scripts/validate-issue-forms.py'
+      - '.github/ISSUE_TEMPLATE/**'
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
       - 'package.json'
@@ -32,7 +34,7 @@ jobs:
         run: npm run test:coverage
 
   lint:
-    name: actionlint + shellcheck
+    name: actionlint + shellcheck + issue forms
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,3 +50,9 @@ jobs:
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: './e2e'
+      - name: Validate issue forms
+        # GitHub drops a malformed issue form from /issues/new/choose silently —
+        # no error, no banner — so a broken template looks identical to a missing
+        # one. actionlint does not cover .github/ISSUE_TEMPLATE, hence this step.
+        # Runs on the runner's preinstalled python3 + PyYAML, no install step.
+        run: python3 scripts/validate-issue-forms.py

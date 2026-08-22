@@ -8,7 +8,7 @@
     "test": "node --test scripts/pr-auto-approve/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/*.test.js\" --test-coverage-lines=80 --test-coverage-branches=70 scripts/pr-auto-approve/*.test.js",
     "lint:workflows": "actionlint .github/workflows/*.yml",
-    "lint:shell": "shellcheck e2e/pr-auto-approve/run.sh",
+    "lint:shell": "shellcheck -x e2e/pr-auto-approve/*.sh",
     "lint:issue-forms": "python3 scripts/validate-issue-forms.py",
     "lint": "npm run lint:workflows && npm run lint:shell && npm run lint:issue-forms",
     "prepare": "husky"

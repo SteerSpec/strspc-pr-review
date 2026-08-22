@@ -2,6 +2,17 @@
 
 End-to-end tests for the reusable `pr-auto-approve.yml` workflow.
 
+## Layout
+
+| File | Role |
+|---|---|
+| `lib.sh` | Shared helpers — PR lifecycle, CI polling, approval polling. Sourced, not executed. |
+| `run.sh` | **Synthetic tier.** Fakes Copilot via `test-copilot-logins`. Deterministic and fast. |
+
+The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so
+every scenario is reproducible and can gate CI. It cannot tell you whether Copilot's own output
+format has changed underneath the action.
+
 ## How it works
 
 - Uses a sandbox repository with a default branch and a base branch.
@@ -57,7 +68,8 @@ E2E_APPROVER_LOGIN=your-bot-login \
 
 | Variable | Default | Description |
 |---|---|---|
-| `E2E_SANDBOX_REPO` | `owner/sandbox-repo` | Full name of the sandbox repo |
+| `E2E_REPO` | — | Full name of the repo under test. Preferred over `E2E_SANDBOX_REPO`. |
+| `E2E_SANDBOX_REPO` | `owner/sandbox-repo` | Fallback for `E2E_REPO`, kept for existing invocations |
 | `E2E_REVIEWER_LOGIN` | `my-bot` | `gh` auth identity posting synthetic reviews |
 | `E2E_APPROVER_LOGIN` | `my-bot` | Login expected to post the APPROVED review |
 | `E2E_BASE_BRANCH` | `main` | Base branch PRs target |

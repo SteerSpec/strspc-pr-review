@@ -31,7 +31,24 @@ updates:
     commit-message:
       prefix: fix
     groups:
+      commitlint:
+        # @commitlint/cli and @commitlint/config-conventional are released in
+        # lockstep and both edit package.json and package-lock.json, so separate
+        # PRs conflict the instant one of them merges. That is not theoretical:
+        # #64 and #66 both bumped 19.8.1 -> 21.2.2, #64 merged, and #66 went
+        # CONFLICTING immediately.
+        #
+        # Deliberately no update-types filter, unlike the group below. These
+        # arrived as MAJORS, which is precisely why they escaped the
+        # minor/patch group and collided. A family that must move together has
+        # to be grouped for every update type or the grouping does not hold
+        # when it matters.
+        patterns: ['@commitlint/*']
+
       dev-dependencies:
+        # Excluded rather than relying on group ordering, so this stays correct
+        # regardless of how Dependabot resolves a dependency matching two groups.
+        exclude-patterns: ['@commitlint/*']
         # dependency-type, not just a name: this repo has no production
         # dependencies today, so patterns: ['*'] happens to match only dev ones
         # and the group name is accurate by accident. Add a production dep and

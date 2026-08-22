@@ -56,37 +56,46 @@ const COPILOT_CHECK_NAMES = new Set(
 const SUPPRESSED_PHRASE =
   String.raw`(?:Comments? suppressed due to low confidence|Suppressed comments?)`;
 
-// Matched in two passes, because the phrase alone is too weak to key on. Bodies
-// discuss their own diffs, and Copilot quotes offending snippets back — in THIS
-// repo a review body routinely contains the words "suppressed comments" as
-// ordinary prose. Keying on the bare phrase made "no suppressed comments were
-// found" count as one and blocked the PR.
+// The phrase alone is too weak to key on. Review bodies discuss their own
+// diffs and Copilot quotes the offending snippet back, so in THIS repo — whose
+// code and tests are full of the words and of counted fixtures like
+// "SUPPRESSED COMMENTS (5)" — a body routinely contains the phrase as ordinary
+// text. Counting those blocks a PR that has no hidden findings at all.
 //
-//   1. the phrase as the collapsed block's <summary> heading — the real thing,
-//      count optional so a heading that stops printing "(N)" still matches;
-//   2. failing that, the phrase carrying an explicit "(N)" anywhere, which
-//      survives GitHub moving the block out of <details>/<summary> while prose
-//      (which has no count) does not reach it.
+// Three defences, narrowest first:
 //
-// Deliberately NOT anchored to <summary> alone: pass 2 keeps a markup change
-// degrading to a false SKIP rather than to silence. Silence is the failure that
-// auto-approves a PR with hidden findings, and it is the one that already
-// shipped once.
+//   0. drop fenced code blocks before matching. This is the realistic vector:
+//      Copilot quotes the offending lines back inside ``` fences, so a PR that
+//      merely touches this file would otherwise fail its own gate.
+//   1. the phrase as the collapsed block's <summary> heading — the real thing.
+//      The count is optional, so a heading that stops printing "(N)" still
+//      matches.
+//   2. failing that, the phrase at the START OF A LINE carrying an explicit
+//      "(N)". That is the shape a heading takes if GitHub drops
+//      <details>/<summary> ("**Suppressed comments (2)**"), while mid-sentence
+//      prose — "no suppressed comments (3) were found" — never reaches it.
+//
+// Pass 2 is deliberately kept rather than anchoring to <summary> alone: it
+// makes a future markup change degrade to a false SKIP rather than to silence.
+// Silence is the failure that auto-approves a PR with hidden findings, and it
+// is the one that already shipped once. A false skip is visible and a human
+// clears it; silence is not.
+const FENCED_CODE_RE = /```[\s\S]*?```/g;
 const SUPPRESSED_IN_SUMMARY_RE = new RegExp(
-  String.raw`<summary>\s*${SUPPRESSED_PHRASE}\s*(?:\((\d+)\))?\s*</summary>`,
+  String.raw`<summary>\s*(?:\*\*)?\s*${SUPPRESSED_PHRASE}\s*(?:\((\d+)\))?\s*(?:\*\*)?\s*</summary>`,
   'i',
 );
-const SUPPRESSED_WITH_COUNT_RE = new RegExp(
-  String.raw`${SUPPRESSED_PHRASE}\s*\((\d+)\)`,
-  'i',
+const SUPPRESSED_HEADING_RE = new RegExp(
+  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*\((\d+)\)`,
+  'im',
 );
 
 // Number of suppressed comments in a review body; 0 when there is no such block.
 // A matched block with an unparseable count still returns 1 — presence is what
 // gates the approval, the number is only for the human-readable reason string.
 function countSuppressedComments(body) {
-  const text = body || '';
-  const m = SUPPRESSED_IN_SUMMARY_RE.exec(text) || SUPPRESSED_WITH_COUNT_RE.exec(text);
+  const text = String(body || '').replace(FENCED_CODE_RE, '');
+  const m = SUPPRESSED_IN_SUMMARY_RE.exec(text) || SUPPRESSED_HEADING_RE.exec(text);
   if (!m) return 0;
   return parseInt(m[1], 10) || 1;
 }

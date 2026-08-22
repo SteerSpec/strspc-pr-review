@@ -1307,17 +1307,50 @@ test('countSuppressedComments: parses the real Copilot markup', () => {
     5,
   );
   assert.equal(decide.countSuppressedComments('<summary>Suppressed comment</summary>'), 1);
-  // Second pass: an explicit count outside <summary>, so the gate survives
-  // GitHub moving the block out of <details>/<summary> rather than going silent.
+  // Second pass: a counted heading outside <summary>, so the gate survives
+  // GitHub dropping <details>/<summary> rather than going silent.
   assert.equal(decide.countSuppressedComments('COMMENTS SUPPRESSED DUE TO LOW CONFIDENCE (3)'), 3);
+  assert.equal(decide.countSuppressedComments('**Suppressed comments (2)**'), 2);
+  assert.equal(decide.countSuppressedComments('### Suppressed comments (4)'), 4);
 
-  // The bare phrase must NOT count. Review bodies discuss their own diffs and
-  // Copilot quotes offending snippets back, so in this repo especially the words
-  // "suppressed comments" show up as ordinary prose. Counting those blocks a PR
+  // Ordinary prose must NOT count. Review bodies discuss their own diffs, so in
+  // this repo especially the words show up as text. Counting those blocks a PR
   // that has no hidden findings at all.
   assert.equal(decide.countSuppressedComments('No suppressed comments were found'), 0);
   assert.equal(decide.countSuppressedComments('Copilot found no suppressed comments'), 0);
   assert.equal(decide.countSuppressedComments('a test for suppressed comment handling'), 0);
+  // Counted prose mid-sentence: a count alone is not enough, the phrase has to
+  // lead a line the way a heading does.
+  assert.equal(decide.countSuppressedComments('No suppressed comments (3) were found'), 0);
+  assert.equal(
+    decide.countSuppressedComments('We assert Suppressed comments (5) is detected'),
+    0,
+  );
+
+  // Fenced code is stripped before matching: Copilot quotes the offending lines
+  // back, so a PR touching this very file must not trip its own gate.
+  assert.equal(
+    decide.countSuppressedComments(
+      ['Here is the snippet under discussion:', '```', '<summary>Suppressed comments (9)</summary>', '```'].join('\n'),
+    ),
+    0,
+  );
+  // ...but a real block alongside a quoted one still counts, and reports the
+  // REAL count rather than the quoted one.
+  assert.equal(
+    decide.countSuppressedComments(
+      [
+        '<details>',
+        '<summary>Suppressed comments (1)</summary>',
+        '',
+        '```',
+        '<summary>Suppressed comments (9)</summary>',
+        '```',
+        '</details>',
+      ].join('\n'),
+    ),
+    1,
+  );
   // Clean bodies and missing bodies must read as zero.
   assert.equal(
     decide.countSuppressedComments(

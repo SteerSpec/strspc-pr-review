@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.7.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.6.0...v1.7.0) (2026-08-22)
+
+
+### Features
+
+* use github-script v9's getOctokit, drop the hand-rolled client ([a83950f](https://github.com/SteerSpec/strspc-pr-review/commit/a83950f1297978b7757d33f4c45c42777570aca8))
+
+
+### Bug Fixes
+
+* constrain the npm group so its name stays true ([1985593](https://github.com/SteerSpec/strspc-pr-review/commit/19855936e168a9dcee6c969fb1bbc81e58942b8c))
+* give the SHA pins someone to maintain them ([84636ff](https://github.com/SteerSpec/strspc-pr-review/commit/84636ff41a3b4be2b4b3bfd0650c58a7e3ed7124))
+
+## [1.6.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.5.0...v1.6.0) (2026-08-21)
+
+
+### Features
+
+* read with GITHUB_TOKEN so private repos work, and explain 403s ([2ef061c](https://github.com/SteerSpec/strspc-pr-review/commit/2ef061c6ab0796f6a14331e976bfca2f4de51c25))
+
+
+### Bug Fixes
+
+* **ci:** sync-marketplace-pin could never fire on a release ([3cb8247](https://github.com/SteerSpec/strspc-pr-review/commit/3cb824734ac23640beaacb7fa892101d78d81502))
+* **ci:** use github.event.inputs, and stop swallowing gh errors ([7c7bc86](https://github.com/SteerSpec/strspc-pr-review/commit/7c7bc868b7e9381fb1f28f3d2e3859f2a14e807e))
+* make the one-call token contract true, and honour GITHUB_API_URL ([0a3e087](https://github.com/SteerSpec/strspc-pr-review/commit/0a3e0878de80e67d1284e3a58fefe9ed20049093))
+* strip a trailing slash, and stop overstating the permissions needed ([7709a4a](https://github.com/SteerSpec/strspc-pr-review/commit/7709a4a0c88114e8376085cbb29a92770cbd6481))
+
+## [1.5.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.4.0...v1.5.0) (2026-08-20)
+
+
+### Features
+
+* **ci:** open the marketplace pin-update PR on release ([063a55e](https://github.com/SteerSpec/strspc-pr-review/commit/063a55e5076e15e387ee50081fab9071c73338e2))
+* ship the rollout's lessons, and automate the pin that delivers them ([27a1628](https://github.com/SteerSpec/strspc-pr-review/commit/27a1628cccc65a2c67aa0e623ee3a68c52685cec))
+* **skills:** cover a red Copilot check over a clean Copilot review ([452fe1d](https://github.com/SteerSpec/strspc-pr-review/commit/452fe1d17482ac8f51d6218bf8f9b1fd4e72d25e))
+* **skills:** tell people how to find their gating workflows ([19eff3d](https://github.com/SteerSpec/strspc-pr-review/commit/19eff3dd35fe71f601ac5c38970627e848702ef3))
+
+
+### Bug Fixes
+
+* address Copilot review on [#53](https://github.com/SteerSpec/strspc-pr-review/issues/53) ([028cf96](https://github.com/SteerSpec/strspc-pr-review/commit/028cf9617252058b15fa140a7afbcfb5e6169c5d))
+
 ## [1.4.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.3.0...v1.4.0) (2026-08-19)
 
 

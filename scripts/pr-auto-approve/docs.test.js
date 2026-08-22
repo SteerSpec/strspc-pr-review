@@ -78,9 +78,13 @@ test('Prerequisites states the permission the bot PAT actually needs', () => {
   const start = src.indexOf('## Prerequisites');
   const end = src.indexOf('## Quick start');
   assert.ok(start !== -1 && end > start, 'README must have ## Prerequisites then ## Quick start');
+  // Matched without the backticks: the requirement is that Prerequisites names
+  // the permission, not that it is formatted as code. Requiring the markup
+  // would fail a purely cosmetic edit while the meaning still held -- the same
+  // over-strictness as the string ban this replaced, one level down.
   assert.match(
     src.slice(start, end),
-    /`Pull requests: write`/,
+    /Pull requests:\s*write/i,
     'Prerequisites must say the bot PAT needs Pull requests: write -- describing it as repo-scoped is what sent people into a 403 on private repos',
   );
 });

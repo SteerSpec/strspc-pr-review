@@ -392,8 +392,11 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 npm install
 npm test            # 92 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
-npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
+npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
+
+`npm run lint` shells out to `actionlint`, `shellcheck` and `python3` — install those
+separately. The unit tests need none of them.
 
 ### Project layout
 
@@ -404,10 +407,13 @@ scripts/pr-auto-approve/
   decide.test.js   # unit tests (Node native test runner)
   skills.test.js   # guards skills/ against drifting from action.yml
   docs.test.js     # guards this README against drifting from action.yml
+scripts/
+  validate-issue-forms.py      # GitHub drops a malformed issue form silently
+.github/ISSUE_TEMPLATE/        # bug report + feature request forms, and config.yml
 .github/workflows/
   auto-approve.yml             # this repo running the action on itself
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
-  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck
+  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck + issue forms
   release-please.yml           # semver tagging on main
   sync-marketplace-pin.yml     # moves the skills pin in SteerSpec/.claude on release
   dependabot.yml               # keeps the SHA-pinned actions and dev deps current

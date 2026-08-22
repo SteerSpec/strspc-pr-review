@@ -1295,11 +1295,29 @@ test('countSuppressedComments: parses the real Copilot markup', () => {
     ),
     1,
   );
-  // Wording drift tolerance: singular noun, no parenthesised count, odd casing.
-  assert.equal(decide.countSuppressedComments('Comment suppressed due to low confidence'), 1);
+  // Wording drift tolerance: singular noun, odd casing, and a heading that
+  // stops printing the count. These are summary headings, not bare phrases —
+  // the bare phrase is deliberately not enough on its own (see below).
+  assert.equal(
+    decide.countSuppressedComments('<summary>Comment suppressed due to low confidence</summary>'),
+    1,
+  );
+  assert.equal(
+    decide.countSuppressedComments('<summary>SUPPRESSED COMMENTS (5)</summary>'),
+    5,
+  );
+  assert.equal(decide.countSuppressedComments('<summary>Suppressed comment</summary>'), 1);
+  // Second pass: an explicit count outside <summary>, so the gate survives
+  // GitHub moving the block out of <details>/<summary> rather than going silent.
   assert.equal(decide.countSuppressedComments('COMMENTS SUPPRESSED DUE TO LOW CONFIDENCE (3)'), 3);
-  assert.equal(decide.countSuppressedComments('Suppressed comment'), 1);
-  assert.equal(decide.countSuppressedComments('SUPPRESSED COMMENTS (5)'), 5);
+
+  // The bare phrase must NOT count. Review bodies discuss their own diffs and
+  // Copilot quotes offending snippets back, so in this repo especially the words
+  // "suppressed comments" show up as ordinary prose. Counting those blocks a PR
+  // that has no hidden findings at all.
+  assert.equal(decide.countSuppressedComments('No suppressed comments were found'), 0);
+  assert.equal(decide.countSuppressedComments('Copilot found no suppressed comments'), 0);
+  assert.equal(decide.countSuppressedComments('a test for suppressed comment handling'), 0);
   // Clean bodies and missing bodies must read as zero.
   assert.equal(
     decide.countSuppressedComments(

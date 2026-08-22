@@ -49,20 +49,44 @@ const COPILOT_CHECK_NAMES = new Set(
 // is a different reason for withholding. The gate does not care why — it exists
 // to catch findings the comments API hides, whatever the stated cause.
 //
-// Treat this as unstable and expect a third wording. The parenthesised count and
-// the plural "s" stay optional so the next tweak degrades to "suppressed
-// comments present" rather than to silence. Nothing here re-checks the markup
-// against live reviews yet — the unit tests only assert these two fixtures, so
-// a third wording would again pass CI and fail in production. A real-Copilot
+// Treat this as unstable and expect a third wording. Nothing here re-checks the
+// markup against live reviews yet — the unit tests only assert these fixtures,
+// so a third wording would again pass CI and fail in production. A real-Copilot
 // e2e tier that catches that is planned but not yet built.
-const SUPPRESSED_RE =
-  /(?:Comments? suppressed due to low confidence|Suppressed comments?)(?:\s*\((\d+)\))?/i;
+const SUPPRESSED_PHRASE =
+  String.raw`(?:Comments? suppressed due to low confidence|Suppressed comments?)`;
+
+// Matched in two passes, because the phrase alone is too weak to key on. Bodies
+// discuss their own diffs, and Copilot quotes offending snippets back — in THIS
+// repo a review body routinely contains the words "suppressed comments" as
+// ordinary prose. Keying on the bare phrase made "no suppressed comments were
+// found" count as one and blocked the PR.
+//
+//   1. the phrase as the collapsed block's <summary> heading — the real thing,
+//      count optional so a heading that stops printing "(N)" still matches;
+//   2. failing that, the phrase carrying an explicit "(N)" anywhere, which
+//      survives GitHub moving the block out of <details>/<summary> while prose
+//      (which has no count) does not reach it.
+//
+// Deliberately NOT anchored to <summary> alone: pass 2 keeps a markup change
+// degrading to a false SKIP rather than to silence. Silence is the failure that
+// auto-approves a PR with hidden findings, and it is the one that already
+// shipped once.
+const SUPPRESSED_IN_SUMMARY_RE = new RegExp(
+  String.raw`<summary>\s*${SUPPRESSED_PHRASE}\s*(?:\((\d+)\))?\s*</summary>`,
+  'i',
+);
+const SUPPRESSED_WITH_COUNT_RE = new RegExp(
+  String.raw`${SUPPRESSED_PHRASE}\s*\((\d+)\)`,
+  'i',
+);
 
 // Number of suppressed comments in a review body; 0 when there is no such block.
 // A matched block with an unparseable count still returns 1 — presence is what
 // gates the approval, the number is only for the human-readable reason string.
 function countSuppressedComments(body) {
-  const m = SUPPRESSED_RE.exec(body || '');
+  const text = body || '';
+  const m = SUPPRESSED_IN_SUMMARY_RE.exec(text) || SUPPRESSED_WITH_COUNT_RE.exec(text);
   if (!m) return 0;
   return parseInt(m[1], 10) || 1;
 }

@@ -386,6 +386,11 @@ See [`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md).
 ## Contributing
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/) — the commit hook enforces it.
+Branch from `develop` and open your PR against `develop`; `main` only receives release promotions.
+
+- [Contribution guide](https://github.com/SteerSpec/.github/blob/main/CONTRIBUTING.md)
+- [Code of conduct](https://github.com/SteerSpec/.github/blob/main/CODE_OF_CONDUCT.md)
+- [Security policy](https://github.com/SteerSpec/strspc-pr-review/security/policy) — report vulnerabilities privately, never as a public issue
 
 ## License
 

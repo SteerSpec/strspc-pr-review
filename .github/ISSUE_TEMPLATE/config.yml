@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting — start here
+    url: https://github.com/SteerSpec/strspc-pr-review#troubleshooting
+    about: Every run logs a `reason`, and the table is keyed to it. Most questions are answered there.
+  - name: Setup and diagnosis skills for Claude Code
+    url: https://github.com/SteerSpec/strspc-pr-review#claude-code-skills
+    about: pr-auto-approve-setup walks the wiring; pr-auto-approve-diagnose finds the reason a PR is not approved.
+  - name: Report a security vulnerability
+    url: https://github.com/SteerSpec/strspc-pr-review/security/advisories/new
+    about: Report privately through GitHub. Never file a security report as a public issue.

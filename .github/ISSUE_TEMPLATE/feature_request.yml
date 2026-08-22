@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a new input, a decision rule, or a documentation change
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The action deliberately stays small: it rubber-stamps Copilot's verdict and nothing else.
+        Proposals that keep the decision logic explainable in one table have the best odds.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the situation, not the solution — what happens today that you want to change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: >-
+        What should the action do instead? If it needs a new input, name it and give its default,
+        and say what happens for callers who never set it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part does this touch?
+      options:
+        - An action input or output (action.yml)
+        - The approval decision logic (scripts/pr-auto-approve/decide.js)
+        - A Claude Code skill (skills/)
+        - The caller starter workflow (templates/pr-auto-approve.yml)
+        - Documentation only
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including anything you can already do today with the existing inputs.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true

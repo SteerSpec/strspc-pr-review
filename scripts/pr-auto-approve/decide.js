@@ -31,15 +31,30 @@ const COPILOT_CHECK_NAMES = new Set(
   [...COPILOT_LOGINS].map((login) => login.replace(/\[bot\]$/, '')),
 );
 
-// Copilot reports low-confidence findings in a collapsed block inside the review
-// BODY instead of as inline review comments, while its summary line still reads
-// "generated no new comments". Those comments are absent from
-// pulls.listCommentsForReview (verified 0 against real reviews), so scanning the
-// body is the only way to see them. Observed markup, stable across production
-// reviews: "<summary>Comments suppressed due to low confidence (N)</summary>".
-// The parenthesised count and the plural "s" are optional so a wording tweak on
-// GitHub's side degrades to "suppressed comments present" rather than to silence.
-const SUPPRESSED_RE = /Comments? suppressed due to low confidence(?:\s*\((\d+)\))?/i;
+// Copilot withholds some findings into a collapsed block inside the review BODY
+// instead of posting them as inline review comments. Those comments are absent
+// from pulls.listCommentsForReview (verified 0 against real reviews), so
+// scanning the body is the only way to see them.
+//
+// GitHub has shipped two wordings for that block, and BOTH must match — the
+// first replacement went undetected here and silently disabled this gate:
+//
+//   pre-2026-08  "<summary>Comments suppressed due to low confidence (N)</summary>"
+//   2026-08      "<summary>Suppressed comments (N)</summary>", with the findings
+//                subtitled by why they were withheld, e.g.
+//                "**Previously missed (N)** — in code that hasn't changed since
+//                the last review."
+//
+// Note the second wording drops "low confidence" entirely: "previously missed"
+// is a different reason for withholding. The gate does not care why — it exists
+// to catch findings the comments API hides, whatever the stated cause.
+//
+// Treat this as unstable and expect a third wording. The parenthesised count and
+// the plural "s" stay optional so the next tweak degrades to "suppressed
+// comments present" rather than to silence, and e2e/pr-auto-approve/copilot.sh
+// re-checks the live markup against real reviews.
+const SUPPRESSED_RE =
+  /(?:Comments? suppressed due to low confidence|Suppressed comments?)(?:\s*\((\d+)\))?/i;
 
 // Number of suppressed comments in a review body; 0 when there is no such block.
 // A matched block with an unparseable count still returns 1 — presence is what
@@ -544,16 +559,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         `latest Copilot review has ${comments.length} comments`,
       );
     }
-    // "generated no new comments" + a suppressed low-confidence block means
-    // Copilot DID produce feedback, just below its own confidence bar. Treat it
-    // exactly like inline comments and leave the PR for a human. Note this gate
-    // is deliberately absent from the rounds-threshold branch above: that branch
-    // is the escape hatch, so a block that never clears can't wedge the PR.
+    // A clean-looking summary plus a suppressed block means Copilot DID produce
+    // feedback, it just withheld it from the inline comments. Treat it exactly
+    // like inline comments and leave the PR for a human. Note this gate is
+    // deliberately absent from the rounds-threshold branch above: that branch is
+    // the escape hatch, so a block that never clears can't wedge the PR.
     const suppressed = countSuppressedComments(latest.body);
     if (suppressed !== 0) {
       return setDecision(
         'skip',
-        `latest Copilot review has ${suppressed} suppressed low-confidence comment(s)`,
+        `latest Copilot review has ${suppressed} suppressed comment(s)`,
       );
     }
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;

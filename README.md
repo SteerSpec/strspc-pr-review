@@ -65,7 +65,9 @@ Copilot reviewed?  ──No──▶  skip
                                                       (default N = 3)
 ```
 
-A review is only "clean" when Copilot left no inline comments **and** its body carries no `Comments suppressed due to low confidence` block. Copilot writes "generated no new comments" in its summary even when it has tucked findings into that collapsed block, and those comments are absent from the review-comments API — so a body scan is the only way to see them.
+A review is only "clean" when Copilot left no inline comments **and** its body carries no suppressed-comments block. Copilot's summary can read as clean while findings sit in a collapsed block, and those comments are absent from the review-comments API — so a body scan is the only way to see them.
+
+GitHub has changed that block's wording at least once (`Comments suppressed due to low confidence (N)` became `Suppressed comments (N)`), so the action matches both. Treat the markup as unstable rather than as a contract.
 
 The review must also name the **current head commit**. A push dismisses the bot's approval under branch protection, but leaves Copilot's `COMMENTED` review in place — those aren't dismissed — so without this check the new commit would inherit a verdict on the old one. A review that carries no commit at all can't prove freshness either, and is treated the same way.
 
@@ -362,7 +364,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `no Copilot review yet` | Copilot hasn't reviewed the PR. Enable **automatic Copilot code review** (see [Prerequisites](#prerequisites)). |
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED` — this always blocks. Address the feedback and push. |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue. |
-| `latest Copilot review has N suppressed low-confidence comment(s)` | Copilot said "generated no new comments" but hid findings in a `Comments suppressed due to low confidence` block in the review body. Open the review, read the collapsed section, and act on it (or let more rounds accrue). |
+| `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the collapsed section, and act on it (or let more rounds accrue). |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit — no action needed. |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. Unexpected from real Copilot reviews — check the reviewer really is Copilot and not a synthetic review posted without a `commit_id`. |
 | `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.6.0...v1.7.0) (2026-08-22)
+
+
+### Features
+
+* use github-script v9's getOctokit, drop the hand-rolled client ([a83950f](https://github.com/SteerSpec/strspc-pr-review/commit/a83950f1297978b7757d33f4c45c42777570aca8))
+
+
+### Bug Fixes
+
+* constrain the npm group so its name stays true ([1985593](https://github.com/SteerSpec/strspc-pr-review/commit/19855936e168a9dcee6c969fb1bbc81e58942b8c))
+* give the SHA pins someone to maintain them ([84636ff](https://github.com/SteerSpec/strspc-pr-review/commit/84636ff41a3b4be2b4b3bfd0650c58a7e3ed7124))
+
 ## [1.6.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.5.0...v1.6.0) (2026-08-21)
 
 

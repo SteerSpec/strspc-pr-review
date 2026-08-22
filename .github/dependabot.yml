@@ -1,0 +1,36 @@
+# Every action in this repo is pinned to a commit SHA, which is the right call
+# for a repo whose action is handed an org-wide PAT -- but a pin nothing bumps
+# is worse than a floating tag: it looks deliberate while silently ageing, and
+# nothing tells you it has. Until now these pins were maintained by nobody.
+#
+# The resulting PRs land in a repo whose auto-approve works, so they should go
+# through Copilot review and approve themselves.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      # Conventional, so release-please files these under Bug Fixes rather than
+      # dropping them from the changelog.
+      prefix: fix
+    groups:
+      # One PR for the routine bumps: reviewing six near-identical SHA changes
+      # separately is how they stop being read at all. Majors stay separate,
+      # since those are the ones that need a human to think.
+      actions:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: fix
+    groups:
+      dev-dependencies:
+        patterns: ['*']
+        update-types: [minor, patch]

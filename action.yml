@@ -114,7 +114,7 @@ runs:
       if: >-
         github.event_name == 'pull_request' &&
         (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
       with:
         # The workflow token, not the PAT. Requesting a review FROM the bot does
         # not have to be done BY the bot -- any token with pull-requests: write
@@ -151,7 +151,7 @@ runs:
 
     - name: Evaluate and approve
       id: evaluate
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
       env:
         AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot-login }}
         AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base-branch }}
@@ -162,23 +162,20 @@ runs:
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}
         AUTO_APPROVE_BOT_TOKEN: ${{ inputs.bot-github-token }}
-        # GITHUB_API_URL is already in the runner env, but naming it here keeps
-        # the dependency visible: bot-client posts with fetch, not Octokit, so
-        # nothing else would resolve the API host on GHES/GHEC.
-        GITHUB_API_URL: ${{ github.api_url }}
       with:
-        # The READ token. github-script authenticates exactly one client from
-        # this input, and a second Octokit cannot be built in-script: v7's
-        # `require` proxy resolves paths (which is how decide.js loads below)
-        # but not github-script's own bundled deps, so require('@actions/github')
-        # fails with "Cannot find module". Verified on a runner. The approval is
-        # therefore posted through a small fetch-backed client instead.
+        # The READ token: this authenticates `github`, which every read goes
+        # through. The approval needs the bot instead, so a second client is
+        # built below from the PAT.
         github-token: ${{ inputs.github-token }}
         script: |
-          const base = `${process.env.ACTION_PATH}/scripts/pr-auto-approve`;
-          const decide = require(`${base}/decide.js`);
-          const createBotClient = require(`${base}/bot-client.js`);
-          const botGithub = createBotClient(process.env.AUTO_APPROVE_BOT_TOKEN);
+          // getOctokit is injected by github-script v9. Do NOT write
+          // `const getOctokit = ...` -- v9 passes it as a function parameter and
+          // redeclaring one is a SyntaxError. On v7 this was impossible
+          // altogether (require('@actions/github') fails with "Cannot find
+          // module"), which is why v1.6.0 shipped a hand-rolled fetch client;
+          // that client is gone, and with it three bugs Octokit does not have.
+          const decide = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+          const botGithub = getOctokit(process.env.AUTO_APPROVE_BOT_TOKEN);
           await decide({ github, botGithub, context, core });
 
     - name: Notify Slack (approved)

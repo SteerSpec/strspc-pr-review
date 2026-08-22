@@ -40,8 +40,8 @@ it should not be your only gate. The rounds-threshold escape hatch below is deli
 worth understanding before you rely on it.
 
 The reason to trust it with the cases above is that it is specific about when it **won't** approve —
-stale reviews, hidden low-confidence findings, a failing check, a changed commit. Those rules are
-next.
+stale reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
+Those rules are next.
 
 ---
 

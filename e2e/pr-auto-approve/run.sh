@@ -99,13 +99,19 @@ scenario_suppressed_comments() {
   wait_for_ci "$pr_num"
   # Zero inline comments, but the body carries Copilot's real collapsed block —
   # the shape that reads as "generated no new comments" via the comments API.
-  body='Reviewed 1 out of 1 changed files and generated no new comments.
+  # Transcribed from the 2026-08 production format; the pre-2026-08 wording is
+  # covered by the unit tests, and the action matches both.
+  body='## Pull request overview
+
+Copilot reviewed 1 out of 1 changed files in this pull request and generated no new comments.
 
 <details>
-<summary>Comments suppressed due to low confidence (1)</summary>
+<summary>Suppressed comments (1)</summary>
+
+**Previously missed (1)** — in code that hasn'"'"'t changed since the last review.
 
 **e2e-marker.txt:1**
-* e2e synthetic low-confidence finding
+* e2e synthetic suppressed finding
 </details>'
   log "PR #$pr_num — CI done, posting clean review with a suppressed-comments block"
   post_review "$pr" COMMENT "$body"

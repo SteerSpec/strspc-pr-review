@@ -31,21 +31,83 @@ const COPILOT_CHECK_NAMES = new Set(
   [...COPILOT_LOGINS].map((login) => login.replace(/\[bot\]$/, '')),
 );
 
-// Copilot reports low-confidence findings in a collapsed block inside the review
-// BODY instead of as inline review comments, while its summary line still reads
-// "generated no new comments". Those comments are absent from
-// pulls.listCommentsForReview (verified 0 against real reviews), so scanning the
-// body is the only way to see them. Observed markup, stable across production
-// reviews: "<summary>Comments suppressed due to low confidence (N)</summary>".
-// The parenthesised count and the plural "s" are optional so a wording tweak on
-// GitHub's side degrades to "suppressed comments present" rather than to silence.
-const SUPPRESSED_RE = /Comments? suppressed due to low confidence(?:\s*\((\d+)\))?/i;
+// Copilot withholds some findings into a collapsed block inside the review BODY
+// instead of posting them as inline review comments. Those comments are absent
+// from pulls.listCommentsForReview (verified 0 against real reviews), so
+// scanning the body is the only way to see them.
+//
+// GitHub has shipped two wordings for that block, and BOTH must match — the
+// first replacement went undetected here and silently disabled this gate:
+//
+//   pre-2026-08  "<summary>Comments suppressed due to low confidence (N)</summary>"
+//   2026-08      "<summary>Suppressed comments (N)</summary>", with the findings
+//                subtitled by why they were withheld, e.g.
+//                "**Previously missed (N)** — in code that hasn't changed since
+//                the last review."
+//
+// Note the second wording drops "low confidence" entirely: "previously missed"
+// is a different reason for withholding. The gate does not care why — it exists
+// to catch findings the comments API hides, whatever the stated cause.
+//
+// Treat this as unstable and expect a third wording. Nothing here re-checks the
+// markup against live reviews yet — the unit tests only assert these fixtures,
+// so a third wording would again pass CI and fail in production. A real-Copilot
+// e2e tier that catches that is planned but not yet built.
+const SUPPRESSED_PHRASE =
+  String.raw`(?:Comments? suppressed due to low confidence|Suppressed comments?)`;
+
+// The phrase alone is too weak to key on. Review bodies discuss their own
+// diffs and Copilot quotes the offending snippet back, so in THIS repo — whose
+// code and tests are full of the words and of counted fixtures like
+// "SUPPRESSED COMMENTS (5)" — a body routinely contains the phrase as ordinary
+// text. Counting those blocks a PR that has no hidden findings at all.
+//
+// Three defences, narrowest first:
+//
+//   0. drop fenced code blocks before matching. This is the realistic vector:
+//      Copilot quotes the offending lines back inside ``` fences, so a PR that
+//      merely touches this file would otherwise fail its own gate.
+//   1. the phrase as the collapsed block's <summary> heading — the real thing.
+//      The count is optional, so a heading that stops printing "(N)" still
+//      matches.
+//   2. failing that, the phrase at the START OF A LINE carrying an explicit
+//      "(N)". That is the shape a heading takes if GitHub drops
+//      <details>/<summary> ("**Suppressed comments (2)**"), while mid-sentence
+//      prose — "no suppressed comments (3) were found" — never reaches it.
+//
+// Pass 2 is deliberately kept rather than anchoring to <summary> alone: it
+// makes a future markup change degrade to a false SKIP rather than to silence.
+// Silence is the failure that auto-approves a PR with hidden findings, and it
+// is the one that already shipped once. A false skip is visible and a human
+// clears it; silence is not.
+// The count is captured only when it is numeric, but a NON-numeric one still
+// has to match: presence is what gates the approval, and parseInt's failure
+// falls through to `|| 1`. Requiring digits would make "(N)" or "(many)" read
+// as no block at all — silence, the one failure direction this gate exists to
+// prevent.
+const COUNT = String.raw`\((?:(\d+)|[^)]*)\)`;
+const FENCED_CODE_RE = /```[\s\S]*?```/g;
+const SUPPRESSED_IN_SUMMARY_RE = new RegExp(
+  String.raw`<summary>\s*(?:\*\*)?\s*${SUPPRESSED_PHRASE}\s*(?:${COUNT})?\s*(?:\*\*)?\s*</summary>`,
+  'i',
+);
+// Anchored at BOTH ends of the line. The anchors, not the count, are what
+// separate a heading from prose: "Suppressed comments (5) are documented below"
+// fails the trailing anchor, and "No suppressed comments were found" fails the
+// leading one. That lets the count stay OPTIONAL here, so a heading stripped of
+// both its <details> wrapper and its count still registers instead of going
+// silent. A whole line consisting of nothing but the phrase is a heading.
+const SUPPRESSED_HEADING_RE = new RegExp(
+  String.raw`^[>\s]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*${SUPPRESSED_PHRASE}\s*(?:${COUNT})?\s*(?:\*\*|__)?\s*$`,
+  'im',
+);
 
 // Number of suppressed comments in a review body; 0 when there is no such block.
 // A matched block with an unparseable count still returns 1 — presence is what
 // gates the approval, the number is only for the human-readable reason string.
 function countSuppressedComments(body) {
-  const m = SUPPRESSED_RE.exec(body || '');
+  const text = String(body || '').replace(FENCED_CODE_RE, '');
+  const m = SUPPRESSED_IN_SUMMARY_RE.exec(text) || SUPPRESSED_HEADING_RE.exec(text);
   if (!m) return 0;
   return parseInt(m[1], 10) || 1;
 }
@@ -544,16 +606,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         `latest Copilot review has ${comments.length} comments`,
       );
     }
-    // "generated no new comments" + a suppressed low-confidence block means
-    // Copilot DID produce feedback, just below its own confidence bar. Treat it
-    // exactly like inline comments and leave the PR for a human. Note this gate
-    // is deliberately absent from the rounds-threshold branch above: that branch
-    // is the escape hatch, so a block that never clears can't wedge the PR.
+    // A clean-looking summary plus a suppressed block means Copilot DID produce
+    // feedback, it just withheld it from the inline comments. Treat it exactly
+    // like inline comments and leave the PR for a human. Note this gate is
+    // deliberately absent from the rounds-threshold branch above: that branch is
+    // the escape hatch, so a block that never clears can't wedge the PR.
     const suppressed = countSuppressedComments(latest.body);
     if (suppressed !== 0) {
       return setDecision(
         'skip',
-        `latest Copilot review has ${suppressed} suppressed low-confidence comment(s)`,
+        `latest Copilot review has ${suppressed} suppressed comment(s)`,
       );
     }
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;

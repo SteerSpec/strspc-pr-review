@@ -48,6 +48,13 @@ jobs:
           actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml templates/pr-auto-approve.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        env:
+          # -x makes shellcheck follow the `source lib.sh` directive in the
+          # harnesses. Without it every entrypoint reports SC1091 (cannot
+          # follow source) and the shared helpers are never analysed in
+          # context. The action has no flag input, but shellcheck itself
+          # reads SHELLCHECK_OPTS.
+          SHELLCHECK_OPTS: -x
         with:
           scandir: './e2e'
       - name: Validate issue forms

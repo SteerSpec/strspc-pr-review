@@ -86,18 +86,48 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
+Node 22 (`.nvmrc`). The unit tests use the native test runner and need no external tools.
 
 ```bash
-# Example:
-# npm install
-# npm test
+npm install
+npm test               # unit tests: scripts/pr-auto-approve/*.test.js
+npm run test:coverage  # same tests + coverage gate (80% line / 70% branch); this is what CI runs
+npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
+
+`npm run lint` shells out to `actionlint`, `shellcheck` and `python3` — install them separately.
+End-to-end tests run against a sandbox repo; see `e2e/pr-auto-approve/README.md`.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+A composite GitHub Action (`action.yml`) that approves a PR, as a bot account, once GitHub
+Copilot's review is clean or after N review rounds (default 3). Everything is API calls; the action
+never checks out PR code.
+
+- `action.yml` — the composite entry point: inputs, outputs, and the steps that gather PR state.
+- `scripts/pr-auto-approve/decide.js` — all approval rules. CI passed, Copilot reviewed the current
+  head, zero inline comments and no suppressed-comments block, or the rounds threshold reached;
+  `CHANGES_REQUESTED` always blocks. Every run emits a one-line `reason`.
+- `templates/pr-auto-approve.yml` — the caller workflow repos copy. The base-branch, draft and fork
+  gates live in its `if:`, so changes to the trigger set must be mirrored there and in callers.
+- `.github/workflows/pr-auto-approve.yml` — the older reusable workflow, deprecated but kept for
+  compatibility.
+- `skills/` — Claude Code skills (setup, diagnose, caller-sync), published through the
+  `SteerSpec/.claude` marketplace at this repo's release tag.
+- `.github/workflows/sync-marketplace-pin.yml` — after a release, opens the PR in `SteerSpec/.claude`
+  that moves that pin. It selects the marketplace entry by `source.url`, not by name.
+- `e2e/pr-auto-approve/` — synthetic end-to-end harness (`run.sh`, `lib.sh`) against a sandbox repo.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- Branch from `develop` and open PRs against `develop`; `main` only receives release promotions.
+  release-please tags `vX.Y.Z` on merge to `main` and moves the `@v1` tag.
+- Conventional Commits (`@commitlint/config-conventional`), enforced by the husky `commit-msg`
+  hook. Use `docs:`/`chore:` for non-code changes so release-please does not cut a release for them.
+- Docs are tested against the code: `docs.test.js` fails if `README.md`'s Inputs/Outputs tables
+  drift from `action.yml`, and `skills.test.js` does the same for `skills/*/SKILL.md`. When you
+  change an input or output, update all three in the same PR.
+- `CLAUDE.md` is a symlink to this file; edit `AGENTS.md`.
+- Workflow files carry long comments explaining non-obvious choices (why `pull_request_target`,
+  why `workflow_run` is the re-entry point, why BOT_TOKEN rather than GITHUB_TOKEN). Read them
+  before changing a trigger, and keep the comment true when you do.

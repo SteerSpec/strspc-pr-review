@@ -66,9 +66,11 @@ inputs:
     required: false
     default: '0'
     description: >-
-      Seconds to wait for Copilot's review check to finish when it is the LAST
-      check still running, instead of skipping immediately. 0 (default) keeps
-      the previous behaviour. Needed because Copilot cannot re-trigger the
+      Seconds to wait for Copilot's review instead of skipping immediately:
+      for its check run when that is the LAST check still running, and, once
+      every check has completed, for the review itself (Copilot no longer
+      registers a check run on the head). 0 (default) keeps the previous
+      behaviour. Needed because Copilot cannot re-trigger the
       workflow itself: its check run is created with GITHUB_TOKEN, and
       GITHUB_TOKEN-generated events never start a new workflow run (the
       recursion guard — the check_run event is emitted, it just cannot start

@@ -290,19 +290,21 @@ async function waitForCopilotReview({
   core, headSha, threshold, deadline, sleep, initial, load,
 }) {
   let current = initial;
+  let polled = false;
   while (!copilotHasReviewedHead(current, headSha, threshold)) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       core.warning(
         `pr-auto-approve: gave up waiting for a Copilot review of ${headSha} after the wait budget`,
       );
-      return current;
+      return { reviews: current, polled };
     }
     core.info(`pr-auto-approve: waiting for Copilot to review ${headSha} (${Math.ceil(remaining / 1000)}s left)`);
     await sleep(Math.min(getCopilotPollMs(), remaining));
     current = await load();
+    polled = true;
   }
-  return current;
+  return { reviews: current, polled };
 }
 
 async function decide(args) {
@@ -492,17 +494,24 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
   }
 
-  const badCheck = checkRuns.find(isFailedCheck);
-  if (badCheck) {
-    return setDecision(
-      'skip',
-      `failing check: ${badCheck.name} (${badCheck.conclusion})`,
-    );
-  }
-  const pending = checkRuns.find((cr) => cr.status !== 'completed');
-  if (pending) {
-    return setDecision('skip', `check still running: ${pending.name}`);
-  }
+  // The CI gates, applied here and again after any review wait below: a
+  // rerun or a late-registered check can change the picture while we poll.
+  const checkGate = (runs) => {
+    const badCheck = runs.find(isFailedCheck);
+    if (badCheck) {
+      return setDecision(
+        'skip',
+        `failing check: ${badCheck.name} (${badCheck.conclusion})`,
+      );
+    }
+    const pending = runs.find((cr) => cr.status !== 'completed');
+    if (pending) {
+      return setDecision('skip', `check still running: ${pending.name}`);
+    }
+    return null;
+  };
+  const gated = checkGate(checkRuns);
+  if (gated) return gated;
 
   // GraphQL reviewDecision gate: GitHub's authoritative "is this PR already
   // approved overall?" signal. It reflects branch-protection dismissals — a
@@ -602,7 +611,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // same budget polling the reviews themselves until Copilot has reviewed
   // this head (or enough rounds exist for the threshold to decide).
   if (waitSeconds > 0) {
-    copilotReviews = await waitForCopilotReview({
+    const waited = await waitForCopilotReview({
       core,
       headSha,
       threshold,
@@ -611,6 +620,14 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       initial: copilotReviews,
       load: async () => selectCopilotReviews(await loadReviews()),
     });
+    copilotReviews = waited.reviews;
+    if (waited.polled) {
+      // Minutes may have passed: a rerun on this head or a check registered
+      // late must still block approval.
+      checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
+      const regated = checkGate(checkRuns);
+      if (regated) return regated;
+    }
   }
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);

@@ -1906,6 +1906,44 @@ test('wait on: a stale Copilot review is re-polled until one names the head', as
   }
 });
 
+test('wait on: a check failing while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], [{ ...CI_OK, conclusion: 'failure' }]],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /failing check: ci \(failure\)/);
+    assert.equal(calls.createReview.length, 0, 'must not approve on stale CI results');
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: a check going pending while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], [CI_OK, { ...CI_OK, name: 'late-check', status: 'in_progress', conclusion: null }]],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /check still running: late-check/);
+    assert.equal(calls.createReview.length, 0);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
 test('wait on: another check still pending → no wait, CI will re-trigger us', async () => {
   process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '300';
   try {

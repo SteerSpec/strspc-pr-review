@@ -297,7 +297,8 @@ Since 2026-10 Copilot no longer registers a check run on the head SHA at all: it
 posts its review from its own workflow. The same budget therefore also polls the
 PR's reviews until Copilot has reviewed the current head (or enough rounds exist for
 `rounds-threshold`), so a run that starts seconds before the review lands waits for
-it instead of skipping with `no Copilot review yet`.
+it instead of skipping with `no Copilot review yet`. After a wait the check runs are
+fetched again and the CI gates re-applied, so a rerun or a late check still blocks.
 
 It is opt-in (`0` by default) because waiting consumes billable Actions minutes on
 private repos — it is free on public ones. Copilot typically reports within ~3
@@ -398,7 +399,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 96 unit tests, no external dependencies
+npm test            # 98 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

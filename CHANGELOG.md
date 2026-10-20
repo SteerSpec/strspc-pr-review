@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.7.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.0...v1.7.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* bump @commitlint/cli from 19.8.1 to 21.2.2 ([0dd7012](https://github.com/SteerSpec/strspc-pr-review/commit/0dd70124b67342eacc9b3bcf1e7b6af2a730af08))
+* bump @commitlint/cli from 19.8.1 to 21.2.2 ([4f45003](https://github.com/SteerSpec/strspc-pr-review/commit/4f4500377bc245af5241d3fa38332b6562182f86))
+* bump @commitlint/config-conventional from 19.8.1 to 21.2.2 ([2b1fd5f](https://github.com/SteerSpec/strspc-pr-review/commit/2b1fd5f6e3939e11934b48a5901895b4450b41c8))
+* bump actions/checkout from 4.4.0 to 7.0.1 ([2f981e2](https://github.com/SteerSpec/strspc-pr-review/commit/2f981e20d0015d4dedd3c985cd95efb31726a010))
+* bump actions/checkout from 4.4.0 to 7.0.1 ([ae53430](https://github.com/SteerSpec/strspc-pr-review/commit/ae53430354ae158f12b737c72258d0fb8fa28da4))
+* bump actions/setup-node from 4.4.0 to 7.0.0 ([9b2d664](https://github.com/SteerSpec/strspc-pr-review/commit/9b2d6640c1414bfa1c2697418dd1004fb7d71abc))
+* bump googleapis/release-please-action from 4.4.1 to 5.0.0 ([5806f6c](https://github.com/SteerSpec/strspc-pr-review/commit/5806f6c67b01ad06e9613c359f3caf60da65355a))
+* bump reviewdog/action-actionlint from 1.73.0 to 1.73.2 in the actions group ([9a5acd5](https://github.com/SteerSpec/strspc-pr-review/commit/9a5acd5fd184e20d164812a0f802cb32b95af68e))
+* bump the actions group across 1 directory with 2 updates ([#79](https://github.com/SteerSpec/strspc-pr-review/issues/79)) ([d119db2](https://github.com/SteerSpec/strspc-pr-review/commit/d119db2a280c270396076834ed68098fc49f99f6))
+* bump the commitlint group with 2 updates ([#78](https://github.com/SteerSpec/strspc-pr-review/issues/78)) ([49cc472](https://github.com/SteerSpec/strspc-pr-review/commit/49cc47270525107c0131ace3c9495f170b4986fb))
+* group the commitlint family so its bumps stop colliding ([b02e67b](https://github.com/SteerSpec/strspc-pr-review/commit/b02e67b778c076eacf7123ba9aefbcd954270455))
+* match Copilot's 2026-08 suppressed-comments markup ([#76](https://github.com/SteerSpec/strspc-pr-review/issues/76)) ([52554b2](https://github.com/SteerSpec/strspc-pr-review/commit/52554b2bd7abd92038f2e0f8a5b66fc0692e4dd2))
+* quote the bug-report dropdown options so the form loads ([b27dca3](https://github.com/SteerSpec/strspc-pr-review/commit/b27dca30bce45ce26dddd0c6f29c1c8fcd18a09d))
+* quote the bug-report dropdown options so the form loads ([4ab3c20](https://github.com/SteerSpec/strspc-pr-review/commit/4ab3c20a338d444027a89d5b922eb1c82dbe7003))
+* say fine-grained, and stop the guard policing markup ([840d93c](https://github.com/SteerSpec/strspc-pr-review/commit/840d93c1a1a2ca1a736014bfff0dbe71336f2fff))
+* the drift-guard PR drifted, and the guard was prose-policing ([15f02cf](https://github.com/SteerSpec/strspc-pr-review/commit/15f02cf73f4d835519948137bbe9ea2fa591163d))
+
 ## [1.7.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.6.0...v1.7.0) (2026-08-22)
 
 

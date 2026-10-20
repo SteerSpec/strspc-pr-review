@@ -293,6 +293,12 @@ Copilot's check finishes rather than skipping with `check still running`:
           wait-for-copilot-seconds: '300'
 ```
 
+Since 2026-10 Copilot no longer registers a check run on the head SHA at all: it
+posts its review from its own workflow. The same budget therefore also polls the
+PR's reviews until Copilot has reviewed the current head (or enough rounds exist for
+`rounds-threshold`), so a run that starts seconds before the review lands waits for
+it instead of skipping with `no Copilot review yet`.
+
 It is opt-in (`0` by default) because waiting consumes billable Actions minutes on
 private repos — it is free on public ones. Copilot typically reports within ~3
 minutes, so `300` leaves headroom. The wait is deliberately narrow: it only runs
@@ -340,7 +346,7 @@ They're a convenience, not a requirement — everything they do is documented on
 | `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
-| `wait-for-copilot-seconds` | No | `0` | Seconds to wait for Copilot's review check when it is the **last** check still running, instead of skipping. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow). `0` disables |
+| `wait-for-copilot-seconds` | No | `0` | Seconds to wait for Copilot's review (its check run when it is the **last** check still running, or the review itself when no check run exists) instead of skipping. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow). `0` disables |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
 | `test-copilot-logins` | No | `''` | Extra logins treated as Copilot in sandbox repos (e2e only) |
 | `slack-channel` | No | `alert-pr-notifications` | Slack channel for notifications |
@@ -392,7 +398,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 93 unit tests, no external dependencies
+npm test            # 96 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

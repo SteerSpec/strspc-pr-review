@@ -274,6 +274,37 @@ async function waitForCopilotCheck({
   }
 }
 
+// A Copilot review "covers" the head when it names the head commit, or when
+// enough rounds exist for the threshold rule to decide without freshness.
+function copilotHasReviewedHead(copilotReviews, headSha, threshold) {
+  if (copilotReviews.length === 0) return false;
+  if (copilotReviews.length >= threshold) return true;
+  const latest = copilotReviews[copilotReviews.length - 1];
+  return latest.commit_id === headSha;
+}
+
+// Poll the PR's reviews until Copilot has reviewed the head or the deadline
+// passes. Returns the latest Copilot review list either way; the caller then
+// applies the usual rules to it.
+async function waitForCopilotReview({
+  core, headSha, threshold, deadline, sleep, initial, load,
+}) {
+  let current = initial;
+  while (!copilotHasReviewedHead(current, headSha, threshold)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      core.warning(
+        `pr-auto-approve: gave up waiting for a Copilot review of ${headSha} after the wait budget`,
+      );
+      return current;
+    }
+    core.info(`pr-auto-approve: waiting for Copilot to review ${headSha} (${Math.ceil(remaining / 1000)}s left)`);
+    await sleep(Math.min(getCopilotPollMs(), remaining));
+    current = await load();
+  }
+  return current;
+}
+
 async function decide(args) {
   try {
     return await decideInner(args);
@@ -445,6 +476,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // leaves this run — started by CI completing, so owned by an ungated actor —
   // as the only place the wait can happen. Opt-in: see getCopilotWaitSeconds.
   const waitSeconds = getCopilotWaitSeconds();
+  // One budget for both waits below: the check-run wait (when Copilot still
+  // registers a check) and the review wait (when it does not).
+  const waitDeadline = Date.now() + waitSeconds * 1000;
   if (waitSeconds > 0) {
     checkRuns = await waitForCopilotCheck({
       github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
@@ -497,12 +531,13 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
   }
 
-  const reviews = await github.paginate(github.rest.pulls.listReviews, {
+  const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
+  const reviews = await loadReviews();
 
   // Idempotency: only skip if the bot's LATEST non-dismissed review is APPROVED.
   // A historical approval superseded by COMMENT/CHANGES_REQUESTED must NOT block
@@ -543,7 +578,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     typeof core.warning === 'function' ? core.warning.bind(core) : undefined,
   );
   const copilotMatches = makeIsCopilot(testLogins);
-  const copilotReviews = reviews
+  const selectCopilotReviews = (rs) => rs
     .filter(
       (r) =>
         copilotMatches(r.user) &&
@@ -556,6 +591,27 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
       return at - bt;
     });
+  let copilotReviews = selectCopilotReviews(reviews);
+  const threshold = getRoundsThreshold();
+
+  // Copilot stopped registering a check run on the head SHA (verified
+  // 2026-10-20: the head's check-runs list holds only the repo's own jobs
+  // while Copilot posts its review from a `dynamic` workflow), so the wait
+  // above never engages and the run started by CI completing used to skip
+  // with "no Copilot review yet" seconds before the review landed. Spend the
+  // same budget polling the reviews themselves until Copilot has reviewed
+  // this head (or enough rounds exist for the threshold to decide).
+  if (waitSeconds > 0) {
+    copilotReviews = await waitForCopilotReview({
+      core,
+      headSha,
+      threshold,
+      deadline: waitDeadline,
+      sleep,
+      initial: copilotReviews,
+      load: async () => selectCopilotReviews(await loadReviews()),
+    });
+  }
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
@@ -572,7 +628,6 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
 
   let reason = '';
-  const threshold = getRoundsThreshold();
   if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
   } else {

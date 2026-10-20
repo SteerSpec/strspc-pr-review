@@ -11,6 +11,40 @@ A GitHub Action that automatically approves pull requests once GitHub Copilot si
 
 ---
 
+## Why
+
+Requiring an approving review on every PR is good policy. The trouble is that a lot of PRs have
+nobody meaningful to ask.
+
+A Dependabot bump. A one-line docs fix in an internal tooling repo. Any PR at all in a repository
+with one maintainer, who cannot approve their own work because GitHub blocks self-approval. In each
+case the rule is doing its job — nothing merges unreviewed — while the review itself is a click
+somebody performs without reading, or worse, a PR that sits for days waiting for one.
+
+This action fills that review slot with something that actually looked at the diff: it approves as
+`bot-login` once **CI is green and Copilot's review is clean**, and refuses otherwise.
+
+**Where it earns its place**
+
+- **Bot PRs** — Dependabot, Renovate, release automation. High volume, low judgement, and the thing
+  most likely to make a required-review rule feel like tax.
+- **Solo-maintained repos** where a ruleset requires a review nobody is available to give.
+- **Internal repos** where the review requirement is org policy rather than a genuine second pair of
+  eyes.
+
+**Where it does not belong**
+
+This rubber-stamps *Copilot's* verdict, and Copilot is not a reviewer for anything that matters.
+Keep `CODEOWNERS` and required human reviewers on sensitive paths — the bot's approval fills a slot,
+it should not be your only gate. The rounds-threshold escape hatch below is deliberately blunt, and
+worth understanding before you rely on it.
+
+The reason to trust it with the cases above is that it is specific about when it **won't** approve —
+stale reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
+Those rules are next.
+
+---
+
 ## How it works
 
 When a PR opens, the action requests `bot-login` as a reviewer and lets GitHub Copilot's automatic review run. On every relevant event afterward — new commits, a submitted Copilot review, or a completed CI check — it re-evaluates:
@@ -31,7 +65,9 @@ Copilot reviewed?  ──No──▶  skip
                                                       (default N = 3)
 ```
 
-A review is only "clean" when Copilot left no inline comments **and** its body carries no `Comments suppressed due to low confidence` block. Copilot writes "generated no new comments" in its summary even when it has tucked findings into that collapsed block, and those comments are absent from the review-comments API — so a body scan is the only way to see them.
+A review is only "clean" when Copilot left no inline comments **and** its body carries no suppressed-comments block. Copilot's summary can read as clean while findings sit in a collapsed block, and those comments are absent from the review-comments API — so a body scan is the only way to see them.
+
+GitHub has changed that block's wording at least once (`Comments suppressed due to low confidence (N)` became `Suppressed comments (N)`), so the action matches both. Treat the markup as unstable rather than as a contract.
 
 The review must also name the **current head commit**. A push dismisses the bot's approval under branch protection, but leaves Copilot's `COMMENTED` review in place — those aren't dismissed — so without this check the new commit would inherit a verdict on the old one. A review that carries no commit at all can't prove freshness either, and is treated the same way.
 
@@ -51,7 +87,9 @@ Before the action can approve anything, three things must be in place:
 
 - **GitHub Copilot code review, set to review PRs automatically** for the repo (or org). The action reads Copilot's verdict — it does *not* trigger Copilot itself, so if Copilot never reviews, every run simply skips with `no Copilot review yet`. Enable it under **Settings → Code review → Copilot** (or an org/repo ruleset that requests Copilot on PRs).
 - **A dedicated bot GitHub account** — *not* your own. GitHub blocks self-approval, so the account that posts the approval must differ from PR authors. Add it to the repo as a **collaborator with write access**. Its login is what you pass as `bot-login`.
-- **A Personal Access Token for that bot account** with `repo` scope, stored as the `BOT_GITHUB_TOKEN` secret. The same token requests the review *and* posts the approval, so it must belong to `bot-login`.
+- **A fine-grained Personal Access Token for that bot account**, stored as the `BOT_GITHUB_TOKEN` secret. It needs **`Pull requests: write` and nothing else** — it is used for exactly one call, posting the approval, which has to come from an account that isn't the PR author. (`Pull requests: write` is a *fine-grained* permission; the classic-PAT equivalent is `repo`, which also works but grants far more than this action can use.)
+
+Everything the action *reads* — check runs, the PR, its reviews — goes through the workflow's own `GITHUB_TOKEN` instead, via the [`github-token`](#inputs) input that defaults to it. That split is not tidiness: listing check runs needs the **`Checks`** permission, and fine-grained PATs cannot be granted it at all. A PAT doing the reading therefore works on public repositories, where check runs are readable without it, and fails with `403` **forever** on private ones. See [Usage](#usage) for the full explanation, and keep `checks: read` in your caller's job permissions.
 
 You don't install anything on your side — the action runs on `github-script` (Node) inside the Action itself.
 
@@ -75,7 +113,7 @@ PR_AUTO_APPROVE_BOT_LOGIN = <your-bot-account-login>
 **3. Add a repository secret**
 
 ```
-BOT_GITHUB_TOKEN = <PAT for the bot with `repo` scope>
+BOT_GITHUB_TOKEN = <PAT for the bot — `Pull requests: write` is all it needs>
 ```
 
 **4. Optional: Slack notifications**
@@ -272,7 +310,11 @@ setup and the debugging:
 
 ```
 /plugin marketplace add SteerSpec/.claude
+/plugin install strspc-pr-review-skills@steerspec
 ```
+
+Both lines are needed: adding the marketplace registers it, and the skills live in their own
+cross-linked plugin resolved from this repository at its release tag.
 
 | Skill | Use it when |
 |---|---|
@@ -293,7 +335,8 @@ They're a convenience, not a requirement — everything they do is documented on
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `bot-login` | **Yes** | — | GitHub login of the bot that posts the approval |
-| `bot-github-token` | **Yes** | — | PAT for `bot-login` with `repo` scope |
+| `bot-github-token` | **Yes** | — | PAT for `bot-login`, used for one call: posting the approval. Needs `Pull requests: write` only |
+| `github-token` | No | `${{ github.token }}` | Token used for every **read** (check runs, PR, reviews). The default is what makes this work on private repos — see [Prerequisites](#prerequisites) |
 | `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
@@ -321,11 +364,12 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `no Copilot review yet` | Copilot hasn't reviewed the PR. Enable **automatic Copilot code review** (see [Prerequisites](#prerequisites)). |
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED` — this always blocks. Address the feedback and push. |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue. |
-| `latest Copilot review has N suppressed low-confidence comment(s)` | Copilot said "generated no new comments" but hid findings in a `Comments suppressed due to low confidence` block in the review body. Open the review, read the collapsed section, and act on it (or let more rounds accrue). |
+| `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the collapsed section, and act on it (or let more rounds accrue). |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit — no action needed. |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. Unexpected from real Copilot reviews — check the reviewer really is Copilot and not a synthetic review posted without a `commit_id`. |
 | `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI; approval requires all checks green. |
+| `evaluation failed: 403 … /check-runs` | The **read** token can't list check runs. Reads must use the workflow's `GITHUB_TOKEN` (the `github-token` input, default) and the caller must grant `checks: read` — a fine-grained PAT cannot be given the `Checks` permission at all. This fails **only on private repositories**: check runs are readable without that permission on public ones, so it works everywhere you'd think to test it. |
 | `PR author is the bot itself` | The bot can't approve its own PR (except in `sandbox-repos`). Expected. |
 | `check_run: PR base ref '...' not in [...]` | The PR targets a branch outside `base-branch`. Align the [3 base-branch sync points](#usage). |
 | Nothing runs at all | Confirm `BOT_GITHUB_TOKEN` belongs to `bot-login` (with write access), and that `vars.PR_AUTO_APPROVE_BOT_LOGIN` is set so the review-loop guard works. |
@@ -334,7 +378,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 
 ## Responsible use
 
-This action rubber-stamps **Copilot's** verdict — it is not a substitute for human judgment where that matters. Keep required human reviewers (branch protection, `CODEOWNERS`) on sensitive paths; the bot's approval fills a review slot but shouldn't be your only gate. Treat `BOT_GITHUB_TOKEN` like any write-scoped credential: keep it in secrets, scope it to `repo`, and rotate it periodically.
+This action rubber-stamps **Copilot's** verdict — it is not a substitute for human judgment where that matters. Keep required human reviewers (branch protection, `CODEOWNERS`) on sensitive paths; the bot's approval fills a review slot but shouldn't be your only gate. Treat `BOT_GITHUB_TOKEN` like any write-scoped credential: keep it in secrets, give it **`Pull requests: write` and nothing more** — that is genuinely all the action uses it for — and rotate it periodically.
 
 ---
 
@@ -348,10 +392,13 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 62 unit tests, no external dependencies
+npm test            # 93 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
-npm run lint        # actionlint (workflows) + shellcheck (e2e scripts)
+npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
+
+`npm run lint` shells out to `actionlint`, `shellcheck` and `python3` — install those
+separately. The unit tests need none of them.
 
 ### Project layout
 
@@ -361,11 +408,17 @@ scripts/pr-auto-approve/
   decide.js        # decision logic — all approval rules live here
   decide.test.js   # unit tests (Node native test runner)
   skills.test.js   # guards skills/ against drifting from action.yml
+  docs.test.js     # guards this README against drifting from action.yml
+scripts/
+  validate-issue-forms.py      # GitHub drops a malformed issue form silently
+.github/ISSUE_TEMPLATE/        # bug report + feature request forms, and config.yml
 .github/workflows/
   auto-approve.yml             # this repo running the action on itself
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
-  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck
+  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck + issue forms
   release-please.yml           # semver tagging on main
+  sync-marketplace-pin.yml     # moves the skills pin in SteerSpec/.claude on release
+  dependabot.yml               # keeps the SHA-pinned actions and dev deps current
 templates/
   pr-auto-approve.yml          # copy-paste starter for caller repos
 skills/
@@ -386,6 +439,11 @@ See [`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md).
 ## Contributing
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/) — the commit hook enforces it.
+Branch from `develop` and open your PR against `develop`; `main` only receives release promotions.
+
+- [Contribution guide](https://github.com/SteerSpec/.github/blob/main/CONTRIBUTING.md)
+- [Code of conduct](https://github.com/SteerSpec/.github/blob/main/CODE_OF_CONDUCT.md)
+- [Security policy](https://github.com/SteerSpec/strspc-pr-review/security/policy) — report vulnerabilities privately, never as a public issue
 
 ## License
 

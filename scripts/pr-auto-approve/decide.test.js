@@ -706,6 +706,49 @@ function suppressedBody(count, summaryLine = 'generated no new comments') {
   ].join('\n');
 }
 
+// The 2026-08 body, transcribed from testbed-multi-org/strspc-pr-review-testbed
+// PR#1 review 4999980534. GitHub renamed the collapsed block and dropped the
+// "low confidence" framing; keep both shapes covered so a fix for one wording
+// can't silently regress the other.
+function suppressedBodyV2(count) {
+  return [
+    '## Pull request overview',
+    '',
+    `Copilot reviewed 1 out of 1 changed files in this pull request and generated ${count} comment.`,
+    '',
+    '<details>',
+    `<summary>Suppressed comments (${count})</summary>`,
+    '',
+    `**Previously missed (${count})** — in code that hasn't changed since the last review.`,
+    '',
+    '**src/stats.js:47**',
+    '* Interpolating `userId` directly into the path lets `/`, `?`, or `#` alter the request route.',
+    '</details>',
+  ].join('\n');
+}
+
+test('skip: 2026-08 "Suppressed comments" block blocks approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-08-22T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body: suppressedBodyV2(1),
+      },
+    ],
+    // Empty, exactly as the real API behaves: listCommentsForReview does not
+    // return suppressed findings, which is why the body scan exists.
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /1 suppressed comment/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('skip: latest Copilot review suppressed low-confidence comments', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
@@ -722,7 +765,7 @@ test('skip: latest Copilot review suppressed low-confidence comments', async () 
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /1 suppressed low-confidence comment/);
+  assert.match(result.reason, /1 suppressed comment/);
   assert.equal(calls.createReview.length, 0);
 });
 
@@ -742,7 +785,7 @@ test('skip: suppressed count is reported (plural)', async () => {
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /2 suppressed low-confidence comment/);
+  assert.match(result.reason, /2 suppressed comment/);
   assert.equal(calls.createReview.length, 0);
 });
 
@@ -1221,9 +1264,116 @@ test('countSuppressedComments: parses the real Copilot markup', () => {
     ),
     2,
   );
-  // Wording drift tolerance: singular noun, no parenthesised count, odd casing.
-  assert.equal(decide.countSuppressedComments('Comment suppressed due to low confidence'), 1);
+  // 2026-08 wording, observed live on testbed-multi-org/strspc-pr-review-testbed
+  // PR#1 review 4999980534. GitHub replaced the phrase outright — the old
+  // wording no longer appears at all, so matching only it reads every real
+  // suppressed block as zero and auto-approves the PR.
+  assert.equal(
+    decide.countSuppressedComments('<summary>Suppressed comments (1)</summary>'),
+    1,
+  );
+  assert.equal(
+    decide.countSuppressedComments('<summary>Suppressed comments (4)</summary>'),
+    4,
+  );
+  // The 2026-08 block subtitles the findings by *why* they were withheld, and
+  // "previously missed" is not low confidence. The gate exists to catch
+  // findings that listCommentsForReview hides, whatever the stated reason, so
+  // this must still count.
+  assert.equal(
+    decide.countSuppressedComments(
+      [
+        '<details>',
+        '<summary>Suppressed comments (1)</summary>',
+        '',
+        "**Previously missed (1)** — in code that hasn't changed since the last review.",
+        '',
+        '**src/stats.js:47**',
+        '* interpolating userId into the path lets callers alter the route',
+        '</details>',
+      ].join('\n'),
+    ),
+    1,
+  );
+  // Wording drift tolerance: singular noun, odd casing, and a heading that
+  // stops printing the count. These are summary headings, not bare phrases —
+  // the bare phrase is deliberately not enough on its own (see below).
+  assert.equal(
+    decide.countSuppressedComments('<summary>Comment suppressed due to low confidence</summary>'),
+    1,
+  );
+  assert.equal(
+    decide.countSuppressedComments('<summary>SUPPRESSED COMMENTS (5)</summary>'),
+    5,
+  );
+  assert.equal(decide.countSuppressedComments('<summary>Suppressed comment</summary>'), 1);
+  // Second pass: a counted heading outside <summary>, so the gate survives
+  // GitHub dropping <details>/<summary> rather than going silent.
   assert.equal(decide.countSuppressedComments('COMMENTS SUPPRESSED DUE TO LOW CONFIDENCE (3)'), 3);
+  assert.equal(decide.countSuppressedComments('**Suppressed comments (2)**'), 2);
+  assert.equal(decide.countSuppressedComments('### Suppressed comments (4)'), 4);
+
+  // Ordinary prose must NOT count. Review bodies discuss their own diffs, so in
+  // this repo especially the words show up as text. Counting those blocks a PR
+  // that has no hidden findings at all.
+  assert.equal(decide.countSuppressedComments('No suppressed comments were found'), 0);
+  assert.equal(decide.countSuppressedComments('Copilot found no suppressed comments'), 0);
+  assert.equal(decide.countSuppressedComments('a test for suppressed comment handling'), 0);
+  // Counted prose mid-sentence: a count alone is not enough, the phrase has to
+  // lead a line the way a heading does.
+  assert.equal(decide.countSuppressedComments('No suppressed comments (3) were found'), 0);
+  assert.equal(
+    decide.countSuppressedComments('We assert Suppressed comments (5) is detected'),
+    0,
+  );
+  // ...and it has to END the line too. A count on its own does not separate a
+  // heading from a sentence that merely opens with the phrase.
+  assert.equal(
+    decide.countSuppressedComments('Suppressed comments (5) are documented below'),
+    0,
+  );
+
+  // Fail-safe on the count itself: a block whose count is not a number is still
+  // a block. Requiring digits would read it as no block at all — silence, which
+  // is the failure direction that auto-approves hidden findings.
+  assert.equal(decide.countSuppressedComments('<summary>Suppressed comments (N)</summary>'), 1);
+  assert.equal(
+    decide.countSuppressedComments('<summary>Suppressed comments (many)</summary>'),
+    1,
+  );
+  assert.equal(decide.countSuppressedComments('**Suppressed comments (N)**'), 1);
+  // ...and a heading stripped of BOTH its <details> wrapper and its count still
+  // registers. The line anchors, not the count, are what exclude prose.
+  assert.equal(decide.countSuppressedComments('**Suppressed comments**'), 1);
+  assert.equal(
+    decide.countSuppressedComments('Comments suppressed due to low confidence'),
+    1,
+  );
+
+  // Fenced code is stripped before matching: Copilot quotes the offending lines
+  // back, so a PR touching this very file must not trip its own gate.
+  assert.equal(
+    decide.countSuppressedComments(
+      ['Here is the snippet under discussion:', '```', '<summary>Suppressed comments (9)</summary>', '```'].join('\n'),
+    ),
+    0,
+  );
+  // ...but a real block alongside a quoted one still counts, and reports the
+  // REAL count rather than the quoted one.
+  assert.equal(
+    decide.countSuppressedComments(
+      [
+        '<details>',
+        '<summary>Suppressed comments (1)</summary>',
+        '',
+        '```',
+        '<summary>Suppressed comments (9)</summary>',
+        '```',
+        '</details>',
+      ].join('\n'),
+    ),
+    1,
+  );
   // Clean bodies and missing bodies must read as zero.
   assert.equal(
     decide.countSuppressedComments(

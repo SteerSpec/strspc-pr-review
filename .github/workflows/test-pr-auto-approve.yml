@@ -11,6 +11,8 @@ on:
     branches: [develop]
     paths:
       - 'scripts/pr-auto-approve/**'
+      - 'scripts/validate-issue-forms.py'
+      - '.github/ISSUE_TEMPLATE/**'
       - '.github/workflows/pr-auto-approve.yml'
       - '.github/workflows/test-pr-auto-approve.yml'
       - 'package.json'
@@ -24,20 +26,20 @@ jobs:
     name: node --test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Run unit tests (with coverage gate)
         run: npm run test:coverage
 
   lint:
-    name: actionlint + shellcheck
+    name: actionlint + shellcheck + issue forms
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run actionlint
-        uses: reviewdog/action-actionlint@50842263c20a7c46bd0065b9e624d3c569db061e # v1
+        uses: reviewdog/action-actionlint@1758727be30241166609dad4c97588b6ad411f32 # v1
         with:
           fail_level: error
           # Files are named explicitly, so anything omitted is never linted.
@@ -46,5 +48,18 @@ jobs:
           actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml templates/pr-auto-approve.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        env:
+          # -x makes shellcheck follow the `source lib.sh` directive in the
+          # harnesses. Without it every entrypoint reports SC1091 (cannot
+          # follow source) and the shared helpers are never analysed in
+          # context. The action has no flag input, but shellcheck itself
+          # reads SHELLCHECK_OPTS.
+          SHELLCHECK_OPTS: -x
         with:
           scandir: './e2e'
+      - name: Validate issue forms
+        # GitHub drops a malformed issue form from /issues/new/choose silently —
+        # no error, no banner — so a broken template looks identical to a missing
+        # one. actionlint does not cover .github/ISSUE_TEMPLATE, hence this step.
+        # Runs on the runner's preinstalled python3 + PyYAML, no install step.
+        run: python3 scripts/validate-issue-forms.py

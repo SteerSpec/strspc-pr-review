@@ -40,7 +40,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green. If `<name>` is `copilot-pull-request-reviewer`, see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) — the review can be clean and the check still red |
 | `latest Copilot review requested changes` | `CHANGES_REQUESTED` always blocks, regardless of round count |
 | `latest Copilot review has N comments` | Inline comments present and round count below `rounds-threshold` |
-| `latest Copilot review has N suppressed low-confidence comment(s)` | Copilot said "no new comments" but hid findings in a collapsed block in the review **body**. Open the review and expand it |
+| `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed block in the review **body**. Open the review and expand it |
 | `latest Copilot review is for an older commit (…)` | You pushed after Copilot reviewed. Wait for re-review — no action needed |
 | `latest Copilot review has no commit_id…` | Freshness can't be proven. Check the reviewer really is Copilot |
 | `PR author is the bot itself` | Self-approval is blocked by GitHub. Expected |

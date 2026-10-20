@@ -9,7 +9,7 @@
     }
   },
   "enabledPlugins": {
-    "strspc-pr-review@steerspec": true
+    "strspc-agents@steerspec": true
   },
   "hooks": {
     "PreCompact": [

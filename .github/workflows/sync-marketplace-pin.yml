@@ -68,7 +68,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.BOT_TOKEN }}
           SOURCE_REPO: ${{ github.repository }}
-          TARGET_REPO: SteerSpec/.claude
+          # Another org reusing this flow sets the MARKETPLACE_REPO repository
+          # variable; SteerSpec's own marketplace is the default.
+          TARGET_REPO: ${{ vars.MARKETPLACE_REPO || 'SteerSpec/.claude' }}
           TARGET_FILE: .claude-plugin/marketplace.json
           # github.event.inputs, not the inputs context: this workflow has two
           # triggers, and only one of them is workflow_dispatch. Dereferencing a

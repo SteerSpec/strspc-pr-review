@@ -1944,6 +1944,25 @@ test('wait on: a check going pending while polling for the review blocks approva
   }
 });
 
+test('wait on: check runs vanishing while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], []],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no checks on head SHA yet/);
+    assert.equal(calls.createReview.length, 0);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
 test('wait on: another check still pending → no wait, CI will re-trigger us', async () => {
   process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '300';
   try {

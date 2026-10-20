@@ -487,16 +487,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     });
   }
 
-  if (checkRuns.length === 0) {
-    if (!getAllowNoChecks()) {
-      return setDecision('skip', 'no checks on head SHA yet');
-    }
-    core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
-  }
-
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
   const checkGate = (runs) => {
+    if (runs.length === 0) {
+      if (!getAllowNoChecks()) {
+        return setDecision('skip', 'no checks on head SHA yet');
+      }
+      core.warning('pr-auto-approve: no external checks found; proceeding because allow-no-checks=true');
+    }
     const badCheck = runs.find(isFailedCheck);
     if (badCheck) {
       return setDecision(

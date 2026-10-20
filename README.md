@@ -302,11 +302,13 @@ fetched again and the CI gates re-applied, so a rerun or a late check still bloc
 
 It is opt-in (`0` by default) because waiting consumes billable Actions minutes on
 private repos — it is free on public ones. Copilot typically reports within ~3
-minutes, so `300` leaves headroom. The wait is deliberately narrow: it only runs
-while Copilot's check is the **last** one outstanding, so an unrelated slow or hung
-job can never consume the timeout, and on expiry the action skips as before, having
-logged a warning. A Copilot check that finishes red is still caught by the normal
-failing-check gate.
+minutes, so `300` leaves headroom. Both waits are deliberately narrow. The check-run
+wait only runs while Copilot's check is the **last** one outstanding, so an unrelated
+slow or hung job can never consume the timeout. The review wait only starts once every
+check has completed, and it ends as soon as Copilot has reviewed the current head. On
+expiry the action skips as before, having logged a warning. A Copilot check that
+finishes red is still caught by the normal failing-check gate, and the gates are
+re-applied after the review wait.
 
 ---
 
@@ -399,7 +401,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 98 unit tests, no external dependencies
+npm test            # 99 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

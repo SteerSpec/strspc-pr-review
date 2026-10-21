@@ -1768,13 +1768,21 @@ const CLEAN_COPILOT_REVIEW = {
 // Returns a github fake whose listForRef walks `sequence`, holding on the last
 // entry, plus a counter so tests can assert whether polling happened at all.
 function makePollingGithub(sequence, opts = {}) {
-  const { github, calls } = makeFakeGithub(opts);
-  const state = { calls: 0 };
+  const { reviewSequence, ...rest } = opts;
+  const { github, calls } = makeFakeGithub(rest);
+  const state = { calls: 0, reviewCalls: 0 };
   github.rest.checks.listForRef = async () => {
     const runs = sequence[Math.min(state.calls, sequence.length - 1)];
     state.calls++;
     return { data: { total_count: runs.length, check_runs: runs } };
   };
+  if (reviewSequence) {
+    github.rest.pulls.listReviews = async () => {
+      const rs = reviewSequence[Math.min(state.reviewCalls, reviewSequence.length - 1)];
+      state.reviewCalls++;
+      return { data: rs.map((r) => (r && !('commit_id' in r) ? { ...r, commit_id: 'deadbeef' } : r)) };
+    };
+  }
   return { github, calls, state };
 }
 
@@ -1828,6 +1836,127 @@ test('wait on: Copilot check never finishing skips after the timeout, with a war
       warnings.some((w) => /gave up waiting for copilot-pull-request-reviewer after 1s/.test(w)),
       `expected a give-up warning, got: ${JSON.stringify(warnings)}`,
     );
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+// Copilot no longer registers a check run on the head SHA, so the review
+// itself is the only thing to wait for (strspc-pr-review#86).
+test('wait on: Copilot review arriving on a later poll leads to approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls, state } = makePollingGithub([[CI_OK]], {
+      reviewSequence: [[], [], [CLEAN_COPILOT_REVIEW]],
+      reviewComments: { 1: [] },
+    });
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+    assert.ok(state.reviewCalls >= 3, `expected review polling, saw ${state.reviewCalls} fetches`);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: Copilot review never arriving skips after the timeout, with a warning', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '1';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '400';
+  try {
+    const core = makeCore();
+    const warnings = [];
+    core.warning = (m) => warnings.push(m);
+    const { github, state } = makePollingGithub([[CI_OK]], { reviewSequence: [[]] });
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no Copilot review yet/);
+    assert.ok(state.reviewCalls > 1, 'should have polled the reviews before giving up');
+    assert.ok(
+      warnings.some((w) => /gave up waiting for a Copilot review of deadbeef/.test(w)),
+      `expected a give-up warning, got: ${JSON.stringify(warnings)}`,
+    );
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: a stale Copilot review is re-polled until one names the head', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const stale = { ...CLEAN_COPILOT_REVIEW, commit_id: 'cafebabe' };
+    const fresh = { ...CLEAN_COPILOT_REVIEW, id: 2, submitted_at: '2026-04-16T10:05:00Z' };
+    const { github, calls, state } = makePollingGithub([[CI_OK]], {
+      reviewSequence: [[stale], [stale], [stale, fresh]],
+      reviewComments: { 1: [], 2: [] },
+    });
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+    assert.ok(state.reviewCalls >= 3, `expected review polling, saw ${state.reviewCalls} fetches`);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: a check failing while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], [{ ...CI_OK, conclusion: 'failure' }]],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /failing check: ci \(failure\)/);
+    assert.equal(calls.createReview.length, 0, 'must not approve on stale CI results');
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: a check going pending while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], [CI_OK, { ...CI_OK, name: 'late-check', status: 'in_progress', conclusion: null }]],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /check still running: late-check/);
+    assert.equal(calls.createReview.length, 0);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: check runs vanishing while polling for the review blocks approval', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '30';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '5';
+  try {
+    const core = makeCore();
+    const { github, calls } = makePollingGithub(
+      [[CI_OK], []],
+      { reviewSequence: [[], [CLEAN_COPILOT_REVIEW]], reviewComments: { 1: [] } },
+    );
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no checks on head SHA yet/);
+    assert.equal(calls.createReview.length, 0);
   } finally {
     delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
     delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;

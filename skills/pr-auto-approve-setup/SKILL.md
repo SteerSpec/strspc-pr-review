@@ -136,8 +136,10 @@ unapproved forever.
 wait-for-copilot-seconds: '300'
 ```
 
-Makes the CI-triggered run wait for Copilot's check instead of skipping. Free on public repos;
-consumes billable Actions minutes on private ones, which is why it defaults to `0`.
+Makes the CI-triggered run wait for Copilot instead of skipping: for its check run while that is
+the last check outstanding, and, once every check has completed, for the review itself (Copilot
+no longer registers a check run on the head SHA). Free on public repos; consumes billable Actions
+minutes on private ones, which is why it defaults to `0`.
 
 ### The first PR cannot approve itself
 

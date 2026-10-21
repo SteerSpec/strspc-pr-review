@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.1...v1.7.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **decide:** poll for the Copilot review itself when no check run exists ([4a0239a](https://github.com/SteerSpec/strspc-pr-review/commit/4a0239ac63375a0a3ff4d727d9281470dd1aa43f))
+* **decide:** poll for the Copilot review itself when no check run exists ([14a5354](https://github.com/SteerSpec/strspc-pr-review/commit/14a5354c1de1e931bf6ecc8fb078baca1fd9d34a)), closes [#86](https://github.com/SteerSpec/strspc-pr-review/issues/86)
+* **decide:** re-apply the CI gates after waiting for the review ([2c479bc](https://github.com/SteerSpec/strspc-pr-review/commit/2c479bcfb290497544c84cbdb37bd25a71747023))
+* **decide:** re-apply the no-checks guard after the review wait; document both waits ([f433617](https://github.com/SteerSpec/strspc-pr-review/commit/f433617712104be5b3f7f4f94d3ffb394e8c84fa))
+
 ## [1.7.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.0...v1.7.1) (2026-10-20)
 
 

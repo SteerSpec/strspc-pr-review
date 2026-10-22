@@ -70,7 +70,9 @@ new_branch() {
 
 create_pr() {
   local branch="$1" title="$2"
-  local path="e2e-marker.txt"
+  # $3 is an extra `gh pr create` flag (e.g. --draft); $4 overrides the file the
+  # PR changes, which the rounds-by-type scenarios need to be docs-only.
+  local path="${4:-e2e-marker.txt}"
   local content
   content=$(printf 'e2e run: %s\n' "$branch" | b64_oneline)
   local base_sha
@@ -165,4 +167,17 @@ wait_not_approved() {
   sleep "$grace"
   if has_bot_approval "$pr_num"; then return 1; fi
   return 0
+}
+
+# Poll until the approver has NO live approval on the PR (it was dismissed).
+wait_approval_withdrawn() {
+  local pr_num="$1" deadline rc
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    rc=0
+    has_bot_approval "$pr_num" || rc=$?
+    [[ $rc -eq 1 ]] && return 0
+    sleep "$POLL_INTERVAL"
+  done
+  return 1
 }

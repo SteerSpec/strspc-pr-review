@@ -2428,3 +2428,41 @@ test('approval is withdrawn if the title changes right after it is posted', asyn
   assert.match(result.reason, /approval withdrawn/);
   assert.equal(dismissed[0].review_id, 999);
 });
+
+test('re-read failing after approving withdraws the approval as a precaution', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => {
+      if (gets++ > 0) throw new Error('boom');
+      return getPrWithTitle('')(num);
+    },
+  });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /approval withdrawn/);
+  assert.equal(dismissed[0].review_id, 999);
+});
+
+test('re-read and withdrawal both failing after approving is an error, not a skip', async () => {
+  const core = makeCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => {
+      if (gets++ > 0) throw new Error('boom');
+      return getPrWithTitle('')(num);
+    },
+  });
+  github.rest.pulls.dismissReview = async () => { throw new Error('forbidden'); };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'error');
+  assert.equal(failures.length, 1);
+});

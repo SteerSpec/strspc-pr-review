@@ -839,6 +839,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
   }
 
+  let created;
   try {
     // botGithub, not github: this is the ONE call that must come from the bot
     // account rather than the workflow. Everything above reads through
@@ -846,41 +847,53 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     // needs the `Checks` permission, and a fine-grained PAT cannot be granted
     // it, so PAT-based reads work on public repos and 403 forever on private
     // ones. Defaults to `github` so a caller passing one client still works.
-    const { data: created } = await botGithub.rest.pulls.createReview({
+    ({ data: created } = await botGithub.rest.pulls.createReview({
       owner,
       repo,
       pull_number: prNumber,
       commit_id: headSha,
       event: 'APPROVE',
       body: `Auto-approved: ${reason}.${copilotOptional ? `\n\n${COPILOT_OPTIONAL_MARKER}` : ''}`,
-    });
-    // The pre-approval re-read leaves a window: a retitle or push can land
-    // between it and the review. Look again and take the approval back.
-    const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    if (after.head.sha !== headSha || (after.title || '') !== (pr.title || '')) {
-      try {
-        await botGithub.rest.pulls.dismissReview({
-          owner,
-          repo,
-          pull_number: prNumber,
-          review_id: created.id,
-          message: 'Withdrawn: the PR head or title changed while approving.',
-        });
-      } catch (err) {
-        const failure = `approved, then the PR changed and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();
-        core.error(`pr-auto-approve ${failure}`);
-        if (typeof core.setFailed === 'function') core.setFailed(failure);
-        return setDecision('error', failure);
-      }
-      return setDecision('skip', 'PR head or title changed while approving; approval withdrawn');
-    }
-    return setDecision('approved', reason);
+    }));
   } catch (err) {
+    // No approval exists, so an ordinary skip is accurate here.
     return setDecision(
       'skip',
       `approval API call failed: ${err.status || ''} ${err.message || err}`.trim(),
     );
   }
+
+  // From here an approval exists, so nothing below may fall back to a plain
+  // skip. The pre-approval re-read leaves a window: a retitle or push can land
+  // between it and the review. Look again and take the approval back; if the
+  // look itself fails, withdraw as a precaution.
+  let changedWhileApproving;
+  try {
+    const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    changedWhileApproving = after.head.sha !== headSha || (after.title || '') !== (pr.title || '')
+      ? 'PR head or title changed while approving'
+      : '';
+  } catch (err) {
+    changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
+  }
+  if (changedWhileApproving) {
+    try {
+      await botGithub.rest.pulls.dismissReview({
+        owner,
+        repo,
+        pull_number: prNumber,
+        review_id: created.id,
+        message: `Withdrawn: ${changedWhileApproving}.`,
+      });
+    } catch (err) {
+      const failure = `approved, then ${changedWhileApproving}, and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();
+      core.error(`pr-auto-approve ${failure}`);
+      if (typeof core.setFailed === 'function') core.setFailed(failure);
+      return setDecision('error', failure);
+    }
+    return setDecision('skip', `${changedWhileApproving}; approval withdrawn`);
+  }
+  return setDecision('approved', reason);
 }
 
 module.exports = decide;

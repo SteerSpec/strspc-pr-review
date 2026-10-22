@@ -87,13 +87,25 @@ E2E_APPROVER_LOGIN=your-bot-login \
 | `three-rounds` | Approved (3+ Copilot reviews regardless of comments) |
 | `changes-requested` | Skip (latest review is CHANGES_REQUESTED, even with 3 rounds) |
 | `draft` | Skip (workflow is skipped by `if:` guard on draft PRs) |
+| `type-zero-docs` | Approved with **no** Copilot review (`chore:` title, docs-only diff) |
+| `type-zero-code` | Skip (`chore:` title, but the diff touches a file outside `copilot-optional-paths`) |
+| `retitle-approves` | Approved only after `feat:` → `chore:` retitle (proves the `edited` trigger) |
+| `retitle-withdraws` | Approval dismissed after `chore:` → `feat:` retitle (proves the bot can dismiss) |
+
+The last four are **opt-in** (not in the default run) because they need extra sandbox setup: the
+caller must set `rounds-by-type: 'chore:0'` and list `edited` in `pull_request_target.types`, and CI
+must run on a docs-only change (a path-filtered workflow would leave `wait_for_ci` with no checks).
+`retitle-withdraws` also needs a bot token that may dismiss reviews.
 
 ```bash
-# Run all scenarios
+# Run the default six scenarios
 ./e2e/pr-auto-approve/run.sh
 
 # Run a single scenario
 ./e2e/pr-auto-approve/run.sh copilot-clean
+
+# Run the per-type scenarios
+./e2e/pr-auto-approve/run.sh type-zero-docs type-zero-code retitle-approves retitle-withdraws
 ```
 
 ## Notes

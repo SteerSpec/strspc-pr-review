@@ -144,7 +144,8 @@ jobs:
           # replace with a literal string.
           bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
 
-          # Required: PAT for bot-login with `repo` scope so it can post reviews.
+          # Required: PAT for bot-login. A fine-grained token with `Pull requests: write`
+          # is enough (it only posts the approval); a classic token needs `repo`.
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
 
           # Optional: base branch(es) PRs must target (default: main). Accepts a

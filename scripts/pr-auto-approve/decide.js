@@ -299,8 +299,13 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // only when followed by `/` (job path) or end-of-string.
   const selfRunRe = new RegExp(`/runs/${selfRunId}(/|$)`);
   const validCheckRuns = allCheckRuns.filter((cr) => cr != null);
+  // Sibling runs of this same job (an earlier pull_request_target run being
+  // cancelled by the concurrency group, say) report a check with the job's name
+  // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
+  // e.g. a type-0 PR, which posts no review to wake the workflow again.
+  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
   const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)),
+    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) && !selfJobNames.has(cr.name),
   );
   // Dedupe by (name, app.id) keeping the most-recently-started run.
   const latestByKey = new Map();

@@ -2491,3 +2491,19 @@ test('a still-running Copilot check still holds a type that requires review', as
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /check still running/);
 });
+
+test("a sibling run's in-progress auto-approve check is not treated as CI", async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'auto-approve', status: 'in_progress', conclusion: null,
+        details_url: 'https://github.com/x/y/actions/runs/888/job/1' },
+    ],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'approved');
+  assert.equal(calls.createReview.length, 1);
+});

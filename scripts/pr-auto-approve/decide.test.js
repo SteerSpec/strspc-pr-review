@@ -36,6 +36,7 @@ function makeFakeGithub({
   getPrImpl,
   reviewDecision = null,
   graphqlImpl,
+  changedFiles = ['README.md'],
 } = {}) {
   const calls = { createReview: [], graphql: [] };
 
@@ -82,6 +83,7 @@ function makeFakeGithub({
               : r,
           ),
         }),
+        listFiles: async () => ({ data: changedFiles.map((filename) => ({ filename })) }),
         listCommentsForReview: async ({ review_id }) => ({
           data: reviewComments[review_id] || [],
         }),
@@ -2227,6 +2229,27 @@ test('rounds-by-type: threshold 0 is blocked by a Copilot CHANGES_REQUESTED revi
     });
     assert.equal(result.decision, 'skip');
     assert.match(result.reason, /requested changes/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('filesMatchPaths: globs, nesting, empty list', () => {
+  const g = ['**/*.md', 'docs/**'];
+  assert.equal(decide.filesMatchPaths(['README.md', 'a/b/c.md', 'docs/x/y.png'], g), true);
+  assert.equal(decide.filesMatchPaths(['README.md', 'src/a.js'], g), false);
+  assert.equal(decide.filesMatchPaths(['a.mdx'], g), false);
+  assert.equal(decide.filesMatchPaths([], g), false);
+});
+
+test('rounds-by-type: threshold 0 ignored when the PR touches code', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [], changedFiles: ['README.md', 'src/a.js'] });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'docs: sneaky' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no Copilot review yet/);
     assert.equal(calls.createReview.length, 0);
   });
 });

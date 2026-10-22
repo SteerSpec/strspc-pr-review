@@ -66,6 +66,14 @@ inputs:
       means Copilot is not required for that type: the PR is approved once CI is
       green (a Copilot CHANGES_REQUESTED review still blocks). Empty (default)
       uses rounds-threshold for every PR.
+  copilot-optional-paths:
+    required: false
+    default: '**/*.md,docs/**'
+    description: >-
+      Comma-separated globs. A type set to 0 in rounds-by-type only skips Copilot
+      when EVERY changed file matches one of these; otherwise the PR falls back
+      to rounds-threshold. The title is author-controlled, so this stops a code
+      change from borrowing a relaxed type.
   request-copilot-review:
     required: false
     default: 'false'
@@ -179,6 +187,7 @@ runs:
       env:
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
+        AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.github-token }}
@@ -187,10 +196,18 @@ runs:
           // a convenience and must never turn the check red. The title is read
           // from the event payload, never interpolated into this script.
           try {
-            const { resolveThreshold } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+            const { resolveThreshold, getOptionalPaths, filesMatchPaths } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
             const pr = context.payload.pull_request;
             const { threshold, type } = resolveThreshold(pr.title);
-            if (threshold === 0) {
+            let optional = threshold === 0;
+            if (optional) {
+              const changed = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number, per_page: 100,
+              });
+              const names = changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+              optional = filesMatchPaths(names, getOptionalPaths());
+            }
+            if (optional) {
               core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
               return;
             }
@@ -212,6 +229,7 @@ runs:
         AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base-branch }}
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
+        AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}

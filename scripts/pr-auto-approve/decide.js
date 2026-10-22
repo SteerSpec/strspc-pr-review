@@ -153,6 +153,38 @@ function resolveThreshold(title, env = process.env) {
   return { threshold: fallback, type };
 }
 
+// Paths a PR may touch for threshold 0 to apply. The title is author-controlled,
+// so on its own it must never remove the review gate: a `chore:0` PR that also
+// edits code falls back to the normal rules.
+function getOptionalPaths(env = process.env) {
+  const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  return list;
+}
+
+function globToRegExp(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+    } else if (c === '*') {
+      re += '[^/]*';
+    } else {
+      re += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+// True when every changed file matches one of the globs. An empty file list
+// proves nothing, so it does not qualify.
+function filesMatchPaths(filenames, globs) {
+  if (!filenames.length || !globs.length) return false;
+  const res = globs.map(globToRegExp);
+  return filenames.every((f) => res.some((re) => re.test(f)));
+}
+
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
@@ -498,7 +530,17 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // Threshold 0 means Copilot is not required for this PR's type: nothing to
   // wait for, and the review rules below are bypassed.
-  const { threshold, type: commitType } = resolveThreshold(pr.title);
+  let { threshold, type: commitType } = resolveThreshold(pr.title);
+  if (threshold === 0) {
+    const changed = await github.paginate(github.rest.pulls.listFiles, {
+      owner, repo, pull_number: prNumber, per_page: 100,
+    });
+    const names = changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+    if (!filesMatchPaths(names, getOptionalPaths())) {
+      core.info(`pr-auto-approve: type '${commitType}' allows no Copilot review, but the PR touches files outside copilot-optional-paths; using the normal rules`);
+      threshold = Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
+    }
+  }
   const copilotOptional = threshold === 0;
 
   const headSha = pr.head.sha;
@@ -763,3 +805,5 @@ module.exports.getBaseBranches = getBaseBranches;
 module.exports.parseCommitType = parseCommitType;
 module.exports.parseRoundsByType = parseRoundsByType;
 module.exports.resolveThreshold = resolveThreshold;
+module.exports.getOptionalPaths = getOptionalPaths;
+module.exports.filesMatchPaths = filesMatchPaths;

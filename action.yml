@@ -55,6 +55,25 @@ inputs:
     description: >-
       Number of Copilot review rounds after which the PR is approved regardless
       of inline comments (default: 3).
+  rounds-by-type:
+    required: false
+    default: ''
+    description: >-
+      Per-Conventional-Commit-type rounds, read from the PR title, e.g.
+      'docs:1,chore:0,fix:3,default:3'. Overrides rounds-threshold for the
+      listed types; 'default' covers every other type and non-conventional
+      titles; with no 'default' entry they use rounds-threshold. A value of 0
+      means Copilot is not required for that type: the PR is approved once CI is
+      green (a Copilot CHANGES_REQUESTED review still blocks). Empty (default)
+      uses rounds-threshold for every PR.
+  request-copilot-review:
+    required: false
+    default: 'false'
+    description: >-
+      When true, the action requests the Copilot review itself, skipping PRs
+      whose type is 0 in rounds-by-type. Turn off the ruleset's "Automatically
+      request Copilot code review" first, or Copilot reviews every PR anyway.
+      Needs pull_request_target (with the 'edited' type) in the caller.
   allow-no-checks:
     required: false
     default: 'false'
@@ -151,6 +170,40 @@ runs:
             );
           }
 
+    - name: Request Copilot review
+      if: >-
+        inputs.request-copilot-review == 'true' &&
+        github.event_name == 'pull_request_target' &&
+        contains(fromJSON('["opened","ready_for_review","reopened","synchronize","edited"]'), github.event.action)
+      uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+      env:
+        AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
+        AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          // Best-effort, like the bot-review step above: requesting a review is
+          // a convenience and must never turn the check red. The title is read
+          // from the event payload, never interpolated into this script.
+          try {
+            const { resolveThreshold } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+            const pr = context.payload.pull_request;
+            const { threshold, type } = resolveThreshold(pr.title);
+            if (threshold === 0) {
+              core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
+              return;
+            }
+            await github.rest.pulls.requestReviewers({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number,
+              reviewers: ['copilot-pull-request-reviewer[bot]'],
+            });
+          } catch (err) {
+            core.warning(
+              `pr-auto-approve: could not request a Copilot review: ${err.status || ''} ${err.message || err}`.trim(),
+            );
+          }
+
     - name: Evaluate and approve
       id: evaluate
       uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
@@ -158,6 +211,7 @@ runs:
         AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot-login }}
         AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base-branch }}
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
+        AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}

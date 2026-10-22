@@ -121,7 +121,38 @@ function getBaseBranches(env = process.env) {
   const branches = raw.split(',').map((s) => s.trim()).filter(Boolean);
   return new Set(branches.length ? branches : ['main']);
 }
-function getRoundsThreshold() { return Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3); }
+// Conventional Commit type of a PR title ("fix(api)!: x" -> "fix"), lowercased;
+// null when the title is not conventional. The title, not the commits, is the
+// source of truth: squash-merge uses it and release-please reads it.
+function parseCommitType(title) {
+  const m = /^\s*([A-Za-z]+)(?:\([^)]*\))?!?:/.exec(String(title || ''));
+  return m ? m[1].toLowerCase() : null;
+}
+
+// "docs:1,chore:1,default:3" -> Map(type -> rounds). Unlike rounds-threshold,
+// 0 is a valid value here: Copilot is not required for that type. Malformed
+// entries are dropped rather than throwing, so a typo never wedges every PR.
+function parseRoundsByType(raw) {
+  const map = new Map();
+  for (const entry of String(raw || '').split(',')) {
+    const [type, count] = entry.split(':').map((s) => s.trim());
+    if (!type || !/^\d+$/.test(count || '')) continue;
+    map.set(type.toLowerCase(), parseInt(count, 10));
+  }
+  return map;
+}
+
+// Rounds threshold for one PR title: the type's entry, else `default`, else
+// the plain rounds-threshold input. Accepts an env override for unit tests.
+function resolveThreshold(title, env = process.env) {
+  const type = parseCommitType(title);
+  const byType = parseRoundsByType(env.AUTO_APPROVE_ROUNDS_BY_TYPE);
+  const fallback = Math.max(1, parseInt(env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
+  if (type !== null && byType.has(type)) return { threshold: byType.get(type), type };
+  if (byType.has('default')) return { threshold: byType.get('default'), type };
+  return { threshold: fallback, type };
+}
+
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
@@ -465,6 +496,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR author is the bot itself');
   }
 
+  // Threshold 0 means Copilot is not required for this PR's type: nothing to
+  // wait for, and the review rules below are bypassed.
+  const { threshold, type: commitType } = resolveThreshold(pr.title);
+  const copilotOptional = threshold === 0;
+
   const headSha = pr.head.sha;
   let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
 
@@ -481,7 +517,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // One budget for both waits below: the check-run wait (when Copilot still
   // registers a check) and the review wait (when it does not).
   const waitDeadline = Date.now() + waitSeconds * 1000;
-  if (waitSeconds > 0) {
+  if (waitSeconds > 0 && !copilotOptional) {
     checkRuns = await waitForCopilotCheck({
       github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
     });
@@ -600,7 +636,6 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       return at - bt;
     });
   let copilotReviews = selectCopilotReviews(reviews);
-  const threshold = getRoundsThreshold();
 
   // Copilot stopped registering a check run on the head SHA (verified
   // 2026-10-20: the head's check-runs list holds only the repo's own jobs
@@ -609,7 +644,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // with "no Copilot review yet" seconds before the review landed. Spend the
   // same budget polling the reviews themselves until Copilot has reviewed
   // this head (or enough rounds exist for the threshold to decide).
-  if (waitSeconds > 0) {
+  if (waitSeconds > 0 && !copilotOptional) {
     const waited = await waitForCopilotReview({
       core,
       headSha,
@@ -631,20 +666,24 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
-  if (copilotReviews.length === 0) {
+  if (copilotReviews.length === 0 && !copilotOptional) {
     return setDecision('skip', 'no Copilot review yet');
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
   // review is CHANGES_REQUESTED, never approve — even under the 3-rounds rule.
   const latest = copilotReviews[copilotReviews.length - 1];
-  core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
-  if (latest.state === 'CHANGES_REQUESTED') {
-    return setDecision('skip', 'latest Copilot review requested changes');
+  if (latest) {
+    core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
+    if (latest.state === 'CHANGES_REQUESTED') {
+      return setDecision('skip', 'latest Copilot review requested changes');
+    }
   }
 
   let reason = '';
-  if (copilotReviews.length >= threshold) {
+  if (copilotOptional) {
+    reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
+  } else if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
   } else {
     // A COMMENTED review is NOT dismissed when a push invalidates approvals, so
@@ -721,3 +760,6 @@ module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
 module.exports.countSuppressedComments = countSuppressedComments;
 module.exports.getBaseBranches = getBaseBranches;
+module.exports.parseCommitType = parseCommitType;
+module.exports.parseRoundsByType = parseRoundsByType;
+module.exports.resolveThreshold = resolveThreshold;

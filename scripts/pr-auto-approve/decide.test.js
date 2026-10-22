@@ -2115,3 +2115,118 @@ test('an error with no request object still produces a usable reason', async () 
   assert.equal(result.decision, 'skip');
   assert.equal(result.reason, 'evaluation failed: socket hang up');
 });
+
+// -- Per-commit-type rounds (rounds-by-type) -------------------------------
+
+test('parseCommitType: scope, breaking marker, case, non-conventional', () => {
+  assert.equal(decide.parseCommitType('fix: x'), 'fix');
+  assert.equal(decide.parseCommitType('feat(api)!: x'), 'feat');
+  assert.equal(decide.parseCommitType('DOCS: x'), 'docs');
+  assert.equal(decide.parseCommitType('  chore(deps): x'), 'chore');
+  assert.equal(decide.parseCommitType('Update readme'), null);
+  assert.equal(decide.parseCommitType(''), null);
+  assert.equal(decide.parseCommitType(undefined), null);
+});
+
+test('parseRoundsByType: trims, lowercases, keeps 0, drops malformed entries', () => {
+  const map = decide.parseRoundsByType(' Docs : 1, chore:0 ,bogus,fix:x,:2,default:3');
+  assert.deepEqual([...map], [['docs', 1], ['chore', 0], ['default', 3]]);
+  assert.equal(decide.parseRoundsByType('').size, 0);
+});
+
+test('resolveThreshold: type, default, then rounds-threshold fallback', () => {
+  const env = { AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:1,default:2', AUTO_APPROVE_ROUNDS_THRESHOLD: '4' };
+  assert.deepEqual(decide.resolveThreshold('docs: x', env), { threshold: 1, type: 'docs' });
+  assert.deepEqual(decide.resolveThreshold('fix: x', env), { threshold: 2, type: 'fix' });
+  assert.deepEqual(decide.resolveThreshold('no type', env), { threshold: 2, type: null });
+  const noDefault = { AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:1', AUTO_APPROVE_ROUNDS_THRESHOLD: '4' };
+  assert.equal(decide.resolveThreshold('fix: x', noDefault).threshold, 4);
+  assert.equal(decide.resolveThreshold('fix: x', {}).threshold, 3);
+});
+
+async function withRoundsByType(value, fn) {
+  const original = process.env.AUTO_APPROVE_ROUNDS_BY_TYPE;
+  process.env.AUTO_APPROVE_ROUNDS_BY_TYPE = value;
+  try {
+    return await fn();
+  } finally {
+    if (original === undefined) delete process.env.AUTO_APPROVE_ROUNDS_BY_TYPE;
+    else process.env.AUTO_APPROVE_ROUNDS_BY_TYPE = original;
+  }
+}
+
+test('rounds-by-type: docs threshold 1 approves after a single commented review', async () => {
+  await withRoundsByType('docs:1', async () => {
+    const core = makeCore();
+    const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'docs: fix typo' } }),
+    });
+    assert.equal(result.decision, 'approved');
+    assert.match(result.reason, /1-rounds \(1 Copilot reviews\)/);
+    assert.equal(calls.createReview.length, 1);
+  });
+});
+
+test('rounds-by-type: unmapped type keeps the global threshold', async () => {
+  await withRoundsByType('docs:1', async () => {
+    const core = makeCore();
+    const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+    const { github } = makeFakeGithub({
+      reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+      reviewComments: { 1: [{ id: 10 }] },
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'fix: a bug' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /1 comments/);
+  });
+});
+
+test('rounds-by-type: threshold 0 approves with no Copilot review once CI is green', async () => {
+  await withRoundsByType('chore:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [] });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'chore(deps): bump x' } }),
+    });
+    assert.equal(result.decision, 'approved');
+    assert.match(result.reason, /copilot-optional \(type chore/);
+    assert.equal(calls.createReview.length, 1);
+  });
+});
+
+test('rounds-by-type: threshold 0 still requires green CI', async () => {
+  await withRoundsByType('chore:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      checkRuns: [{ ...DEFAULT_CHECK_RUNS[0], conclusion: 'failure' }],
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'chore: x' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /failing check/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('rounds-by-type: threshold 0 is blocked by a Copilot CHANGES_REQUESTED review', async () => {
+  await withRoundsByType('chore:0', async () => {
+    const core = makeCore();
+    const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 1, state: 'CHANGES_REQUESTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'chore: x' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /requested changes/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});

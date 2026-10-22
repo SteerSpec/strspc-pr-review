@@ -82,6 +82,8 @@ inputs:
       whose type is 0 in rounds-by-type. Turn off the ruleset's "Automatically
       request Copilot code review" first, or Copilot reviews every PR anyway.
       Needs pull_request_target (with the 'edited' type) in the caller.
+      EXPERIMENTAL: requesting the Copilot bot through the REST API has not been
+      verified against real GitHub; failures only log a warning.
   allow-no-checks:
     required: false
     default: 'false'

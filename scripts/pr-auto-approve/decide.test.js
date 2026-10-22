@@ -2466,3 +2466,28 @@ test('re-read and withdrawal both failing after approving is an error, not a ski
   assert.equal(result.decision, 'error');
   assert.equal(failures.length, 1);
 });
+
+test('rounds-by-type: threshold 0 ignores a still-running Copilot check', async () => {
+  await withRoundsByType('chore:0', async () => {
+    const core = makeCore();
+    const copilotName = 'copilot-pull-request-reviewer';
+    const { github, calls } = makeFakeGithub({
+      checkRuns: [...DEFAULT_CHECK_RUNS, { ...DEFAULT_CHECK_RUNS[0], name: copilotName, status: 'in_progress', conclusion: null }],
+      getPrImpl: getPrWithTitle('chore: x'),
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'chore: x' } }) });
+    assert.equal(result.decision, 'approved');
+    assert.equal(calls.createReview.length, 1);
+  });
+});
+
+test('a still-running Copilot check still holds a type that requires review', async () => {
+  const core = makeCore();
+  const copilotName = 'copilot-pull-request-reviewer';
+  const { github } = makeFakeGithub({
+    checkRuns: [...DEFAULT_CHECK_RUNS, { ...DEFAULT_CHECK_RUNS[0], name: copilotName, status: 'in_progress', conclusion: null }],
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /check still running/);
+});

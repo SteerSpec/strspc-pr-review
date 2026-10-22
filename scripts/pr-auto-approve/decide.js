@@ -625,7 +625,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
-  const checkGate = (runs) => {
+  const checkGate = (allRuns) => {
+    // When Copilot is not required, its own check run (pending while an automatic
+    // review is still running, or non-success) is not CI and must not hold the PR.
+    const runs = copilotOptional ? allRuns.filter((cr) => !COPILOT_CHECK_NAMES.has(cr.name)) : allRuns;
     if (runs.length === 0) {
       if (!getAllowNoChecks()) {
         return setDecision('skip', 'no checks on head SHA yet');

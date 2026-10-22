@@ -2253,3 +2253,38 @@ test('rounds-by-type: threshold 0 ignored when the PR touches code', async () =>
     assert.equal(calls.createReview.length, 0);
   });
 });
+
+test('rounds-by-type: threshold 0 aborts when the head moved during evaluation', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [],
+      getPrImpl: (num) => ({
+        data: {
+          number: num, draft: false, user: { login: 'someone' }, base: { ref: 'develop' },
+          head: { sha: 'cafef00d', repo: { full_name: 'axeptio/test-only-repo' } },
+        },
+      }),
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /head moved/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('approval is pinned to the evaluated head commit', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', user: cp },
+      { id: 3, state: 'COMMENTED', submitted_at: '2026-04-15T10:00:00Z', user: cp },
+    ],
+  });
+  await decide({ github, core, context: makeContext() });
+  assert.equal(calls.createReview[0].commit_id, 'deadbeef');
+});

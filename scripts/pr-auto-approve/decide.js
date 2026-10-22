@@ -773,6 +773,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
+  // The path allowlist was read from the live PR while headSha came from the
+  // event, so a push in between would leave them describing different commits.
+  // Only the no-review path rests on that list, so only it pays for the re-read.
+  if (copilotOptional) {
+    const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    if (current.head.sha !== headSha) {
+      return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
+    }
+  }
+
   try {
     // botGithub, not github: this is the ONE call that must come from the bot
     // account rather than the workflow. Everything above reads through
@@ -784,6 +794,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       owner,
       repo,
       pull_number: prNumber,
+      commit_id: headSha,
       event: 'APPROVE',
       body: `Auto-approved: ${reason}.`,
     });

@@ -2146,6 +2146,16 @@ test('resolveThreshold: type, default, then rounds-threshold fallback', () => {
   assert.equal(decide.resolveThreshold('fix: x', {}).threshold, 3);
 });
 
+// pulls.get answering with the same title the event carried, as GitHub would.
+function getPrWithTitle(title, sha = 'deadbeef') {
+  return (num) => ({
+    data: {
+      number: num, draft: false, title, user: { login: 'someone' }, base: { ref: 'develop' },
+      head: { sha, repo: { full_name: 'axeptio/test-only-repo' } },
+    },
+  });
+}
+
 async function withRoundsByType(value, fn) {
   const original = process.env.AUTO_APPROVE_ROUNDS_BY_TYPE;
   process.env.AUTO_APPROVE_ROUNDS_BY_TYPE = value;
@@ -2163,6 +2173,7 @@ test('rounds-by-type: docs threshold 1 approves after a single commented review'
     const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
     const { github, calls } = makeFakeGithub({
       reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+      getPrImpl: getPrWithTitle('docs: fix typo'),
     });
     const result = await decide({
       github, core, context: makeContext({ prOverrides: { title: 'docs: fix typo' } }),
@@ -2192,12 +2203,15 @@ test('rounds-by-type: unmapped type keeps the global threshold', async () => {
 test('rounds-by-type: threshold 0 approves with no Copilot review once CI is green', async () => {
   await withRoundsByType('chore:0', async () => {
     const core = makeCore();
-    const { github, calls } = makeFakeGithub({ reviews: [] });
+    const { github, calls } = makeFakeGithub({
+      reviews: [], getPrImpl: getPrWithTitle('chore(deps): bump x'),
+    });
     const result = await decide({
       github, core, context: makeContext({ prOverrides: { title: 'chore(deps): bump x' } }),
     });
     assert.equal(result.decision, 'approved');
     assert.match(result.reason, /copilot-optional \(type chore/);
+    assert.match(calls.createReview[0].body, /pr-auto-approve:copilot-optional/);
     assert.equal(calls.createReview.length, 1);
   });
 });
@@ -2287,4 +2301,76 @@ test('approval is pinned to the evaluated head commit', async () => {
   });
   await decide({ github, core, context: makeContext() });
   assert.equal(calls.createReview[0].commit_id, 'deadbeef');
+});
+
+test('parseRoundsByType: rejects entries with extra fields', () => {
+  const map = decide.parseRoundsByType('docs:0:oops,chore:1');
+  assert.deepEqual([...map], [['chore', 1]]);
+});
+
+test('changedFileNames: a list at the 3000-file API cap cannot prove docs-only', () => {
+  const big = Array.from({ length: 3000 }, (_, i) => ({ filename: `docs/${i}.md` }));
+  assert.equal(decide.changedFileNames(big), null);
+  assert.equal(decide.filesMatchPaths(decide.changedFileNames(big), ['docs/**']), false);
+  assert.deepEqual(decide.changedFileNames([{ filename: 'b.md', previous_filename: 'a.md' }]), ['b.md', 'a.md']);
+});
+
+test('title edited mid-run: approval is skipped, not granted under the old type', async () => {
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  await withRoundsByType('docs:1', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+      getPrImpl: getPrWithTitle('fix: now a fix'),
+    });
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }),
+    });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /title changed/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('retitled to a stricter type: the earlier no-Copilot approval is withdrawn', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const reviews = [{
+      id: 77, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z',
+      user: { login: 'axeptio-bot' },
+      body: 'Auto-approved: copilot-optional.\n\n<!-- pr-auto-approve:copilot-optional -->',
+    }];
+    const { github, calls } = makeFakeGithub({
+      reviewDecision: 'APPROVED',
+      reviews,
+      getPrImpl: getPrWithTitle('fix: really code'),
+    });
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => {
+      dismissed.push(a);
+      reviews[0].state = 'DISMISSED';
+      return { data: {} };
+    };
+    const result = await decide({
+      github, core, context: makeContext({ prOverrides: { title: 'fix: really code' } }),
+    });
+    assert.equal(dismissed.length, 1);
+    assert.equal(dismissed[0].review_id, 77);
+    // Re-evaluated under the fix rules: no Copilot review yet, so no new approval.
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no Copilot review yet/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('an ordinary bot approval (no marker) is never withdrawn', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    reviewDecision: 'APPROVED',
+    reviews: [{ id: 5, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login: 'axeptio-bot' }, body: 'Auto-approved: copilot-clean.' }],
+  });
+  github.rest.pulls.dismissReview = async () => { throw new Error('must not dismiss'); };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /already approved/);
 });

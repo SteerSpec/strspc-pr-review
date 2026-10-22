@@ -134,7 +134,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 on:
   pull_request_target:   # NOT pull_request — see the security note below
     branches: [main]
-    types: [opened, ready_for_review, synchronize, reopened]
+    types: [opened, ready_for_review, synchronize, reopened, edited]
   pull_request_review:
     types: [submitted]
   check_run:            # third-party app checks only — see the note below
@@ -420,7 +420,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 111 unit tests, no external dependencies
+npm test            # 116 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

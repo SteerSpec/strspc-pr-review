@@ -135,8 +135,10 @@ function parseCommitType(title) {
 function parseRoundsByType(raw) {
   const map = new Map();
   for (const entry of String(raw || '').split(',')) {
-    const [type, count] = entry.split(':').map((s) => s.trim());
-    if (!type || !/^\d+$/.test(count || '')) continue;
+    const parts = entry.split(':').map((s) => s.trim());
+    // Exactly two fields: "docs:0:oops" must not quietly select the no-Copilot path.
+    if (parts.length !== 2 || !parts[0] || !/^\d+$/.test(parts[1])) continue;
+    const [type, count] = parts;
     map.set(type.toLowerCase(), parseInt(count, 10));
   }
   return map;
@@ -156,6 +158,18 @@ function resolveThreshold(title, env = process.env) {
 // Paths a PR may touch for threshold 0 to apply. The title is author-controlled,
 // so on its own it must never remove the review gate: a `chore:0` PR that also
 // edits code falls back to the normal rules.
+// GitHub's list-files endpoint stops at 3000 files, so a list that long may be
+// truncated and cannot prove the PR is docs-only. null means "cannot tell".
+const MAX_LISTED_FILES = 3000;
+function changedFileNames(changed) {
+  if (changed.length >= MAX_LISTED_FILES) return null;
+  return changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+}
+
+// Marks a bot approval granted without a Copilot review, so a later run can
+// find it and withdraw it if the PR's title stops earning that.
+const COPILOT_OPTIONAL_MARKER = '<!-- pr-auto-approve:copilot-optional -->';
+
 function getOptionalPaths(env = process.env) {
   const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**')
     .split(',').map((x) => x.trim()).filter(Boolean);
@@ -180,7 +194,7 @@ function globToRegExp(glob) {
 // True when every changed file matches one of the globs. An empty file list
 // proves nothing, so it does not qualify.
 function filesMatchPaths(filenames, globs) {
-  if (!filenames.length || !globs.length) return false;
+  if (!filenames || !filenames.length || !globs.length) return false;
   const res = globs.map(globToRegExp);
   return filenames.every((f) => res.some((re) => re.test(f)));
 }
@@ -535,7 +549,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     const changed = await github.paginate(github.rest.pulls.listFiles, {
       owner, repo, pull_number: prNumber, per_page: 100,
     });
-    const names = changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+    const names = changedFileNames(changed);
     if (!filesMatchPaths(names, getOptionalPaths())) {
       core.info(`pr-auto-approve: type '${commitType}' allows no Copilot review, but the PR touches files outside copilot-optional-paths; using the normal rules`);
       threshold = Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
@@ -613,17 +627,41 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       `pr-auto-approve: reviewDecision query failed, falling through to REST: ${err.status || ''} ${err.message || err}`.trim(),
     );
   }
-  if (reviewDecision === 'APPROVED') {
-    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
-  }
-
   const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
-  const reviews = await loadReviews();
+  let reviews = await loadReviews();
+
+  // A no-Copilot approval was earned by the title at the time. If the title has
+  // since changed to a type that needs a review, the approval no longer stands:
+  // withdraw it and evaluate the PR under the current rules. This has to run
+  // before the reviewDecision gate below, which would otherwise short-circuit.
+  let withdrew = false;
+  if (BOT_LOGIN && !copilotOptional) {
+    const stale = reviews.filter(
+      (r) =>
+        r.user && r.user.login === BOT_LOGIN &&
+        r.state === 'APPROVED' &&
+        String(r.body || '').includes(COPILOT_OPTIONAL_MARKER),
+    );
+    for (const r of stale) {
+      await botGithub.rest.pulls.dismissReview({
+        owner,
+        repo,
+        pull_number: prNumber,
+        review_id: r.id,
+        message: `Withdrawn: the PR title (type ${commitType || 'none'}) now requires a Copilot review.`,
+      });
+      withdrew = true;
+    }
+    if (withdrew) reviews = await loadReviews();
+  }
+  if (reviewDecision === 'APPROVED' && !withdrew) {
+    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
+  }
 
   // Idempotency: only skip if the bot's LATEST non-dismissed review is APPROVED.
   // A historical approval superseded by COMMENT/CHANGES_REQUESTED must NOT block
@@ -776,11 +814,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // The path allowlist was read from the live PR while headSha came from the
   // event, so a push in between would leave them describing different commits.
   // Only the no-review path rests on that list, so only it pays for the re-read.
-  if (copilotOptional) {
-    const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    if (current.head.sha !== headSha) {
-      return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
-    }
+  // Also compared: the title, which chose the threshold. A retitle that lands
+  // while this run is in flight would otherwise be approved under the old type
+  // (cancel-in-progress is not atomic).
+  const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  if (current.head.sha !== headSha) {
+    return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
+  }
+  if ((current.title || '') !== (pr.title || '')) {
+    return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
   }
 
   try {
@@ -796,7 +838,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       pull_number: prNumber,
       commit_id: headSha,
       event: 'APPROVE',
-      body: `Auto-approved: ${reason}.`,
+      body: `Auto-approved: ${reason}.${copilotOptional ? `\n\n${COPILOT_OPTIONAL_MARKER}` : ''}`,
     });
     return setDecision('approved', reason);
   } catch (err) {
@@ -818,3 +860,4 @@ module.exports.parseRoundsByType = parseRoundsByType;
 module.exports.resolveThreshold = resolveThreshold;
 module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
+module.exports.changedFileNames = changedFileNames;

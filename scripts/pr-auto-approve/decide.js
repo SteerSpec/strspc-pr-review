@@ -557,6 +557,50 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
   const copilotOptional = threshold === 0;
 
+  const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  let reviews = null;
+
+  // A no-Copilot approval was earned by the title at the time. If the title has
+  // since changed to a type that needs a review, the approval no longer stands:
+  // withdraw it and evaluate the PR under the current rules. This runs before
+  // every other gate (CI, the Copilot waits, reviewDecision), because those
+  // return early and would otherwise leave the stale approval in place.
+  let withdrew = false;
+  if (BOT_LOGIN && !copilotOptional) {
+    reviews = await loadReviews();
+    const stale = reviews.filter(
+      (r) =>
+        r.user && r.user.login === BOT_LOGIN &&
+        r.state === 'APPROVED' &&
+        String(r.body || '').includes(COPILOT_OPTIONAL_MARKER),
+    );
+    for (const r of stale) {
+      try {
+        await botGithub.rest.pulls.dismissReview({
+          owner,
+          repo,
+          pull_number: prNumber,
+          review_id: r.id,
+          message: `Withdrawn: the PR title (type ${commitType || 'none'}) now requires a Copilot review.`,
+        });
+        withdrew = true;
+      } catch (err) {
+        // Fail closed and loudly: the stale approval still stands, so this must
+        // not read as an ordinary skip. Needs a bot token that may dismiss reviews.
+        const reason = `could not withdraw the no-Copilot approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
+        core.error(`pr-auto-approve ${reason}`);
+        if (typeof core.setFailed === 'function') core.setFailed(reason);
+        return setDecision('error', reason);
+      }
+    }
+    if (withdrew) reviews = null;
+  }
+
   const headSha = pr.head.sha;
   let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
 
@@ -604,6 +648,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const gated = checkGate(checkRuns);
   if (gated) return gated;
 
+  reviews = reviews || await loadReviews();
+
   // GraphQL reviewDecision gate: GitHub's authoritative "is this PR already
   // approved overall?" signal. It reflects branch-protection dismissals — a
   // stale approval invalidated by a new push reads as REVIEW_REQUIRED, not
@@ -626,38 +672,6 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     core.warning(
       `pr-auto-approve: reviewDecision query failed, falling through to REST: ${err.status || ''} ${err.message || err}`.trim(),
     );
-  }
-  const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
-  let reviews = await loadReviews();
-
-  // A no-Copilot approval was earned by the title at the time. If the title has
-  // since changed to a type that needs a review, the approval no longer stands:
-  // withdraw it and evaluate the PR under the current rules. This has to run
-  // before the reviewDecision gate below, which would otherwise short-circuit.
-  let withdrew = false;
-  if (BOT_LOGIN && !copilotOptional) {
-    const stale = reviews.filter(
-      (r) =>
-        r.user && r.user.login === BOT_LOGIN &&
-        r.state === 'APPROVED' &&
-        String(r.body || '').includes(COPILOT_OPTIONAL_MARKER),
-    );
-    for (const r of stale) {
-      await botGithub.rest.pulls.dismissReview({
-        owner,
-        repo,
-        pull_number: prNumber,
-        review_id: r.id,
-        message: `Withdrawn: the PR title (type ${commitType || 'none'}) now requires a Copilot review.`,
-      });
-      withdrew = true;
-    }
-    if (withdrew) reviews = await loadReviews();
   }
   if (reviewDecision === 'APPROVED' && !withdrew) {
     return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
@@ -832,7 +846,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     // needs the `Checks` permission, and a fine-grained PAT cannot be granted
     // it, so PAT-based reads work on public repos and 403 forever on private
     // ones. Defaults to `github` so a caller passing one client still works.
-    await botGithub.rest.pulls.createReview({
+    const { data: created } = await botGithub.rest.pulls.createReview({
       owner,
       repo,
       pull_number: prNumber,
@@ -840,6 +854,26 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       event: 'APPROVE',
       body: `Auto-approved: ${reason}.${copilotOptional ? `\n\n${COPILOT_OPTIONAL_MARKER}` : ''}`,
     });
+    // The pre-approval re-read leaves a window: a retitle or push can land
+    // between it and the review. Look again and take the approval back.
+    const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    if (after.head.sha !== headSha || (after.title || '') !== (pr.title || '')) {
+      try {
+        await botGithub.rest.pulls.dismissReview({
+          owner,
+          repo,
+          pull_number: prNumber,
+          review_id: created.id,
+          message: 'Withdrawn: the PR head or title changed while approving.',
+        });
+      } catch (err) {
+        const failure = `approved, then the PR changed and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();
+        core.error(`pr-auto-approve ${failure}`);
+        if (typeof core.setFailed === 'function') core.setFailed(failure);
+        return setDecision('error', failure);
+      }
+      return setDecision('skip', 'PR head or title changed while approving; approval withdrawn');
+    }
     return setDecision('approved', reason);
   } catch (err) {
     return setDecision(

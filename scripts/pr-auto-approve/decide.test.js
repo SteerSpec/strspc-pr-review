@@ -2374,3 +2374,57 @@ test('an ordinary bot approval (no marker) is never withdrawn', async () => {
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /already approved/);
 });
+
+const MARKED_APPROVAL = () => [{
+  id: 77, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z',
+  user: { login: 'axeptio-bot' },
+  body: 'Auto-approved: copilot-optional.\n\n<!-- pr-auto-approve:copilot-optional -->',
+}];
+
+test('stale no-Copilot approval is withdrawn even when CI is failing', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const reviews = MARKED_APPROVAL();
+    const { github } = makeFakeGithub({
+      reviews,
+      checkRuns: [{ ...DEFAULT_CHECK_RUNS[0], conclusion: 'failure' }],
+      getPrImpl: getPrWithTitle('fix: code'),
+    });
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
+    assert.equal(dismissed.length, 1);
+    assert.match(result.reason, /failing check/);
+  });
+});
+
+test('withdrawal failure fails closed with an error decision', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github, calls } = makeFakeGithub({ reviews: MARKED_APPROVAL(), getPrImpl: getPrWithTitle('fix: code') });
+    github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('forbidden'), { status: 403 }); };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
+    assert.equal(result.decision, 'error');
+    assert.match(result.reason, /could not withdraw/);
+    assert.equal(failures.length, 1);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('approval is withdrawn if the title changes right after it is posted', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => getPrWithTitle(gets++ === 0 ? 'docs: x' : 'fix: y')(num),
+  });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /approval withdrawn/);
+  assert.equal(dismissed[0].review_id, 999);
+});

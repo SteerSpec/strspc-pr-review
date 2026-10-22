@@ -379,6 +379,7 @@ rounds-by-type: 'docs:1,chore:0,fix:3,default:3'
 - `0` means Copilot is not required: the PR is approved once CI is green, **provided every changed file matches `copilot-optional-paths`** (default `**/*.md,docs/**`). The title is author-controlled, so a code change titled `chore:` still gets the normal review. A Copilot `CHANGES_REQUESTED` review still blocks.
 - Unlisted types and non-conventional titles use `default`, else `rounds-threshold`.
 - To also stop Copilot from reviewing those PRs, disable the ruleset's "Automatically request Copilot code review" and set `request-copilot-review: 'true'`. GitHub cannot filter automatic reviews by title.
+- The bot token must be allowed to **dismiss reviews**: when a retitle makes an earlier no-Copilot approval invalid, the action withdraws it, and fails the run (`decision=error`) if it cannot.
 - Add `edited` to `pull_request_target.types` in your caller so a retitle re-evaluates the PR; otherwise a `feat:` PR renamed `docs:` keeps its old decision until the next push.
 
 ---
@@ -420,7 +421,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 116 unit tests, no external dependencies
+npm test            # 119 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

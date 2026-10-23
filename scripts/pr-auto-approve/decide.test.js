@@ -2642,3 +2642,57 @@ test('an approval stamped with the legacy copilot-optional marker is still withd
     assert.equal(dismissed.length, 1);
   });
 });
+
+// -- bot-login misconfiguration and self-triggered runs ------------------
+
+async function withBotLogin(value, fn) {
+  const original = process.env.AUTO_APPROVE_BOT_LOGIN;
+  if (value === undefined) delete process.env.AUTO_APPROVE_BOT_LOGIN;
+  else process.env.AUTO_APPROVE_BOT_LOGIN = value;
+  try {
+    return await fn();
+  } finally {
+    process.env.AUTO_APPROVE_BOT_LOGIN = original;
+  }
+}
+
+test('error: empty bot-login fails the job and names the variable', async () => {
+  for (const value of ['', '   ', undefined]) {
+    await withBotLogin(value, async () => {
+      const core = makeCore();
+      const failures = [];
+      core.setFailed = (msg) => failures.push(msg);
+      const { github, calls } = makeFakeGithub();
+      const result = await decide({ github, context: makeContext(), core });
+      assert.equal(result.decision, 'error');
+      assert.match(result.reason, /PR_AUTO_APPROVE_BOT_LOGIN/);
+      assert.equal(failures.length, 1);
+      assert.equal(calls.createReview.length, 0);
+    });
+  }
+});
+
+test('skip: run triggered by the bot\'s own review', async () => {
+  const core = makeCore();
+  const ctx = makeContext();
+  ctx.payload.review = { user: { login: 'axeptio-bot' }, state: 'approved' };
+  const { github, calls } = makeFakeGithub();
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /bot's own review/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('a review by someone else still gets evaluated', async () => {
+  const core = makeCore();
+  const ctx = makeContext();
+  ctx.payload.review = { user: { login: 'copilot-pull-request-reviewer[bot]' }, state: 'commented' };
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-16T10:00:00Z', user: cp }],
+    reviewComments: { 1: [] },
+  });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
+});

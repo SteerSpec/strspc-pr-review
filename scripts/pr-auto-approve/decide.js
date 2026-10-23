@@ -112,7 +112,8 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
-function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
+// Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
+function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
 // Comma-separated set of base branches a PR must target to be eligible.
 // Whitespace-only/empty falls back to the default so a blank input never makes
 // every PR ineligible. Accepts an env override for direct unit testing.
@@ -483,6 +484,25 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     return { decision, reason };
   };
+
+  // An empty bot login is a misconfiguration, not a skip: the caller's loop
+  // guard (`github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN`) is then always
+  // true too, so each approval re-triggers this workflow. That ran away to 17
+  // approvals in three minutes once. Fail the job so it cannot pass unnoticed.
+  if (!BOT_LOGIN) {
+    const reason = 'bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable ' +
+      '(the caller passes it as bot-login and uses it in the job `if:` loop guard)';
+    core.error(`pr-auto-approve ${reason}`);
+    if (typeof core.setFailed === 'function') core.setFailed(reason);
+    return setDecision('error', reason);
+  }
+
+  // Backstop for a loop guard that does not match bot-login (e.g. a literal
+  // hard-coded in one place only): never evaluate in response to our own review.
+  const triggeringReview = context.payload.review;
+  if (triggeringReview && triggeringReview.user && triggeringReview.user.login === BOT_LOGIN) {
+    return setDecision('skip', 'triggered by the bot\'s own review');
+  }
 
   // check_run events don't carry pull_request directly; extract from associated PRs.
   if (!pr && context.payload.check_run) {

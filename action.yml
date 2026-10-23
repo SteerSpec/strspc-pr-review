@@ -66,16 +66,18 @@ inputs:
       listed types; 'default' covers every other type and non-conventional
       titles; with no 'default' entry they use rounds-threshold. A value of 0
       means Copilot is not required for that type: the PR is approved once CI is
-      green (a Copilot CHANGES_REQUESTED review still blocks). Empty (default)
-      uses rounds-threshold for every PR.
+      green (a Copilot CHANGES_REQUESTED review still blocks). A type mapped
+      below the default applies only when every changed file matches
+      copilot-optional-paths. Empty (default) uses rounds-threshold for every PR.
   copilot-optional-paths:
     required: false
     default: '**/*.md,docs/**'
     description: >-
-      Comma-separated globs. A type set to 0 in rounds-by-type only skips Copilot
-      when EVERY changed file matches one of these; otherwise the PR falls back
-      to rounds-threshold. The title is author-controlled, so this stops a code
-      change from borrowing a relaxed type.
+      Comma-separated globs. A type mapped below the default in rounds-by-type
+      (0 included) applies only when EVERY changed file matches one of these;
+      otherwise the PR gets the default threshold (the 'default' entry, else
+      rounds-threshold) and the reason says so. The title is author-controlled,
+      so this stops a code change from borrowing a relaxed type.
   request-copilot-review:
     required: false
     default: 'false'

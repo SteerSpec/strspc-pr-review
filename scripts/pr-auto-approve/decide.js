@@ -146,25 +146,55 @@ function parseRoundsByType(raw) {
 }
 
 // Rounds threshold for one PR title: the type's entry, else `default`, else
-// the plain rounds-threshold input. Accepts an env override for unit tests.
+// the plain rounds-threshold input. `defaultThreshold` is what a PR of any
+// other type gets (`default`, else rounds-threshold): the bar a relaxed type is
+// measured against. Accepts an env override for unit tests.
 function resolveThreshold(title, env = process.env) {
   const type = parseCommitType(title);
   const byType = parseRoundsByType(env.AUTO_APPROVE_ROUNDS_BY_TYPE);
   const fallback = Math.max(1, parseInt(env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
-  if (type !== null && byType.has(type)) return { threshold: byType.get(type), type };
-  if (byType.has('default')) return { threshold: byType.get('default'), type };
-  return { threshold: fallback, type };
+  const defaultThreshold = byType.has('default') ? byType.get('default') : fallback;
+  const threshold = type !== null && byType.has(type) ? byType.get(type) : defaultThreshold;
+  return { threshold, type, defaultThreshold };
 }
 
-// Paths a PR may touch for threshold 0 to apply. The title is author-controlled,
-// so on its own it must never remove the review gate: a `chore:0` PR that also
-// edits code falls back to the normal rules.
+// Paths a PR may touch for a RELAXED type (one mapped below the default) to
+// apply. The title is author-controlled, so on its own it must never lower the
+// review gate: a `chore:0` or `docs:1` PR that also edits code gets the default
+// rules. Threshold 0 was gated from the start; a type set to 1 is the same
+// hole one notch up (a single commented review approves code), so the gate
+// covers every type below the default. Types at or above it are not relaxed
+// and are never gated.
 // GitHub's list-files endpoint stops at 3000 files, so a list that long may be
 // truncated and cannot prove the PR is docs-only. null means "cannot tell".
 const MAX_LISTED_FILES = 3000;
 function changedFileNames(changed) {
   if (changed.length >= MAX_LISTED_FILES) return null;
   return changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+}
+
+// Changed files of the PR, as the names filesMatchPaths expects.
+async function listChangedFileNames({ github, owner, repo, prNumber }) {
+  const changed = await github.paginate(github.rest.pulls.listFiles, {
+    owner, repo, pull_number: prNumber, per_page: 100,
+  });
+  return changedFileNames(changed);
+}
+
+// Threshold a PR actually gets once the path gate is applied, plus a note for
+// the reason string when the gate changed it. Only a relaxed type pays for the
+// file listing; the default rules need no file list.
+async function applyPathGate({ github, owner, repo, prNumber, title, env = process.env }) {
+  const { threshold, type, defaultThreshold } = resolveThreshold(title, env);
+  if (threshold >= defaultThreshold) return { threshold, type, note: '' };
+  const names = await listChangedFileNames({ github, owner, repo, prNumber });
+  if (filesMatchPaths(names, getOptionalPaths(env))) return { threshold, type, note: '' };
+  return {
+    threshold: defaultThreshold,
+    type,
+    note: `type '${type}' is relaxed to ${threshold} round(s) but the PR touches files outside ` +
+      `copilot-optional-paths, so the default ${defaultThreshold} applies`,
+  };
 }
 
 // Stamps the threshold an approval relied on (0 = no Copilot review; N = the
@@ -421,15 +451,17 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   try {
     const { owner, repo } = context.repo;
     const pr = context.payload.pull_request;
-    const { threshold, type } = resolveThreshold(pr.title, env);
+    // Only a 0 can make the review unnecessary; any other relaxed type still
+    // needs Copilot, so the file listing is spent on 0 alone.
+    let { threshold, type } = resolveThreshold(pr.title, env);
     if (threshold === 0) {
-      const changed = await github.paginate(github.rest.pulls.listFiles, {
-        owner, repo, pull_number: pr.number, per_page: 100,
-      });
-      if (filesMatchPaths(changedFileNames(changed), getOptionalPaths(env))) {
-        core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
-        return 'skipped';
-      }
+      ({ threshold } = await applyPathGate({
+        github, owner, repo, prNumber: pr.number, title: pr.title, env,
+      }));
+    }
+    if (threshold === 0) {
+      core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
+      return 'skipped';
     }
     await github.rest.pulls.requestReviewers({
       owner, repo, pull_number: pr.number, reviewers: [COPILOT_REVIEWER],
@@ -492,7 +524,14 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   let pr = context.payload.pull_request;
 
-  const setDecision = async (decision, reason) => {
+  // Set when the path gate replaced a relaxed threshold with the default, and
+  // appended to every reason from then on: "latest Copilot review has 2
+  // comments" alone would send a `docs:1` author looking for a bug in the
+  // mapping, when the answer is the code file in the diff.
+  let thresholdNote = '';
+
+  const setDecision = async (decision, bareReason) => {
+    const reason = thresholdNote ? `${bareReason}; ${thresholdNote}` : bareReason;
     core.info(`pr-auto-approve decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
@@ -620,18 +659,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR author is the bot itself');
   }
 
-  // Threshold 0 means Copilot is not required for this PR's type: nothing to
-  // wait for, and the review rules below are bypassed.
-  let { threshold, type: commitType } = resolveThreshold(pr.title);
-  if (threshold === 0) {
-    const changed = await github.paginate(github.rest.pulls.listFiles, {
-      owner, repo, pull_number: prNumber, per_page: 100,
-    });
-    const names = changedFileNames(changed);
-    if (!filesMatchPaths(names, getOptionalPaths())) {
-      core.info(`pr-auto-approve: type '${commitType}' allows no Copilot review, but the PR touches files outside copilot-optional-paths; using the normal rules`);
-      threshold = Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
-    }
+  // The type's threshold, unless the type is relaxed and the diff reaches
+  // outside copilot-optional-paths, in which case the default applies. 0 means
+  // Copilot is not required: nothing to wait for, and the review rules below
+  // are bypassed.
+  const gate = await applyPathGate({ github, owner, repo, prNumber, title: pr.title });
+  const { threshold, type: commitType } = gate;
+  if (gate.note) {
+    thresholdNote = gate.note;
+    core.info(`pr-auto-approve: ${gate.note}`);
   }
   const copilotOptional = threshold === 0;
 

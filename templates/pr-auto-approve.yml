@@ -145,9 +145,9 @@ jobs:
           bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
 
           # Required: PAT for bot-login. A fine-grained token with `Pull requests: write`
-          # is enough (it posts the approval and, after a retitle that raises the
-          # required rounds, dismisses the bot's own earlier approval); a classic token
-          # needs `repo`.
+          # is enough to post the approval; a classic token needs `repo`. After a
+          # retitle that raises the required rounds the earlier approval is dismissed
+          # with this token, falling back to the job's GITHUB_TOKEN if it is refused.
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
 
           # Optional: base branch(es) PRs must target (default: main). Accepts a

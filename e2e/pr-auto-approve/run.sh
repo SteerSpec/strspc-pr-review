@@ -198,7 +198,7 @@ scenario_type_zero_docs() {
   pr=$(create_pr "$branch" "chore: e2e type-zero docs" "" "docs/e2e-marker.md")
   pr_num=$(basename "$pr")
   wait_for_ci "$pr_num"
-  if wait_for_approval "$pr_num"; then
+  if wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
     ok "type-zero-docs → approved without a Copilot review"
   else
     close_pr "$pr_num"
@@ -208,18 +208,18 @@ scenario_type_zero_docs() {
 }
 
 scenario_type_zero_code() {
-  log "scenario: type-zero-code (chore: title but touches a non-docs file → expect NOT approved)"
+  log "scenario: type-zero-code (chore: title but touches a non-docs file → expect no type-0 approval)"
   local branch pr pr_num
   branch=$(new_branch "type-zero-code")
   # e2e-marker.txt is outside copilot-optional-paths, so the title must not help.
   pr=$(create_pr "$branch" "chore: e2e type-zero code")
   pr_num=$(basename "$pr")
   wait_for_ci "$pr_num"
-  if wait_not_approved "$pr_num"; then
-    ok "type-zero-code → not approved (allowlist fell back to the normal rules)"
+  if wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
+    ok "type-zero-code → no type-0 approval (allowlist fell back to the normal rules)"
   else
     close_pr "$pr_num"
-    fail "type-zero-code: unexpectedly approved"
+    fail "type-zero-code: unexpectedly got a type-0 approval"
   fi
   close_pr "$pr_num"
 }
@@ -231,16 +231,26 @@ scenario_retitle_approves() {
   pr=$(create_pr "$branch" "feat: e2e retitle" "" "docs/e2e-marker.md")
   pr_num=$(basename "$pr")
   wait_for_ci "$pr_num"
-  if ! wait_not_approved "$pr_num"; then
+  if ! wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
     close_pr "$pr_num"
     fail "retitle-approves: approved before the retitle"
   fi
+  local since
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   gh pr edit -R "$REPO" "$pr_num" --title "chore: e2e retitle" >/dev/null
-  if wait_for_approval "$pr_num"; then
+  # The ruleset's Copilot review may already have approved the PR, in which
+  # case the re-evaluation is a no-op ("bot already approved head"). So assert
+  # the edited event ran the workflow, and, when no approval stands yet, that
+  # it ends up type-0 approved.
+  if ! wait_caller_run "$branch" pull_request_target "$since"; then
+    close_pr "$pr_num"
+    fail "retitle-approves: no workflow run after the retitle (is 'edited' in the caller's triggers?)"
+  fi
+  if has_bot_approval "$pr_num" || wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
     ok "retitle-approves → the edited event re-evaluated the PR"
   else
     close_pr "$pr_num"
-    fail "retitle-approves: no approval after the retitle (is 'edited' in the caller's triggers?)"
+    fail "retitle-approves: the retitle run left the PR unapproved"
   fi
   close_pr "$pr_num"
 }
@@ -252,12 +262,12 @@ scenario_retitle_withdraws() {
   pr=$(create_pr "$branch" "chore: e2e retitle withdraw" "" "docs/e2e-marker.md")
   pr_num=$(basename "$pr")
   wait_for_ci "$pr_num"
-  if ! wait_for_approval "$pr_num"; then
+  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
     close_pr "$pr_num"
     fail "retitle-withdraws: no initial approval within ${TIMEOUT}s"
   fi
   gh pr edit -R "$REPO" "$pr_num" --title "feat: e2e retitle withdraw" >/dev/null
-  if wait_approval_withdrawn "$pr_num"; then
+  if wait_approval_withdrawn "$pr_num" "$ZERO_APPROVAL_RE"; then
     ok "retitle-withdraws → the no-Copilot approval was dismissed"
   else
     close_pr "$pr_num"

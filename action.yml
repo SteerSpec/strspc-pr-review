@@ -17,8 +17,9 @@ inputs:
     required: true
     description: >-
       PAT for bot-login, used to post the APPROVE review and, when a retitle
-      raises the required rounds, to dismiss that bot's own earlier approval.
-      Both need only `Pull requests: write` — NOT repo-wide scope. Everything
+      raises the required rounds, to dismiss that bot's own earlier approval
+      (if the PAT is refused, the dismissal is retried with github-token).
+      It needs only `Pull requests: write` — NOT repo-wide scope. Everything
       else is read with github-token below, because listing check runs requires
       the `Checks` permission, which fine-grained PATs cannot be granted at all;
       a PAT-based read therefore works on public repos (where check runs are

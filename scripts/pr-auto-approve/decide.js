@@ -364,6 +364,18 @@ async function waitForCopilotCheck({
 
 // A Copilot review "covers" the head when it names the head commit, or when
 // enough rounds exist for the threshold rule to decide without freshness.
+// Dismissing needs write access, not the bot's identity. The bot PAT that can
+// post an approval is refused (403) on some setups, so retry once with the
+// workflow's own token, which carries the caller job's `pull-requests: write`.
+async function dismissReview({ github, botGithub, params }) {
+  try {
+    return await botGithub.rest.pulls.dismissReview(params);
+  } catch (err) {
+    if (botGithub === github || ![401, 403].includes(err.status)) throw err;
+    return github.rest.pulls.dismissReview(params);
+  }
+}
+
 function copilotHasReviewedHead(copilotReviews, headSha, threshold) {
   if (copilotReviews.length === 0) return false;
   if (copilotReviews.length >= threshold) return true;
@@ -594,17 +606,21 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     });
     for (const r of stale) {
       try {
-        await botGithub.rest.pulls.dismissReview({
-          owner,
-          repo,
-          pull_number: prNumber,
-          review_id: r.id,
-          message: `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
+        await dismissReview({
+          github,
+          botGithub,
+          params: {
+            owner,
+            repo,
+            pull_number: prNumber,
+            review_id: r.id,
+            message: `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
+          },
         });
         withdrew = true;
       } catch (err) {
         // Fail closed and loudly: the stale approval still stands, so this must
-        // not read as an ordinary skip. Needs a bot token that may dismiss reviews.
+        // not read as an ordinary skip. Neither the bot token nor the workflow token could dismiss.
         const reason = `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
         core.error(`pr-auto-approve ${reason}`);
         if (typeof core.setFailed === 'function') core.setFailed(reason);
@@ -904,12 +920,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
   if (changedWhileApproving) {
     try {
-      await botGithub.rest.pulls.dismissReview({
-        owner,
-        repo,
-        pull_number: prNumber,
-        review_id: created.id,
-        message: `Withdrawn: ${changedWhileApproving}.`,
+      await dismissReview({
+        github,
+        botGithub,
+        params: {
+          owner,
+          repo,
+          pull_number: prNumber,
+          review_id: created.id,
+          message: `Withdrawn: ${changedWhileApproving}.`,
+        },
       });
     } catch (err) {
       const failure = `approved, then ${changedWhileApproving}, and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();

@@ -2413,6 +2413,39 @@ test('withdrawal failure fails closed with an error decision', async () => {
   });
 });
 
+test('withdrawal falls back to the workflow token when the bot token is refused', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github } = makeFakeGithub({ reviews: MARKED_APPROVAL(), getPrImpl: getPrWithTitle('fix: code') });
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+    const botTried = [];
+    const botGithub = { rest: { pulls: {
+      dismissReview: async (a) => { botTried.push(a); throw Object.assign(new Error('forbidden'), { status: 403 }); },
+      createReview: async () => { throw new Error('must not approve'); },
+    } } };
+    const result = await decide({ github, botGithub, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
+    assert.equal(botTried.length, 1);
+    assert.equal(dismissed.length, 1);
+    assert.notEqual(result.decision, 'error');
+  });
+});
+
+test('withdrawal does not fall back on a non-permission error', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    core.setFailed = () => {};
+    const { github } = makeFakeGithub({ reviews: MARKED_APPROVAL(), getPrImpl: getPrWithTitle('fix: code') });
+    github.rest.pulls.dismissReview = async () => { throw new Error('must not be retried'); };
+    const botGithub = { rest: { pulls: {
+      dismissReview: async () => { throw Object.assign(new Error('boom'), { status: 500 }); },
+    } } };
+    const result = await decide({ github, botGithub, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
+    assert.equal(result.decision, 'error');
+    assert.match(result.reason, /could not withdraw/);
+  });
+});
+
 test('approval is withdrawn if the title changes right after it is posted', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };

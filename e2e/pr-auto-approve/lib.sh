@@ -37,6 +37,10 @@ TIMEOUT="${E2E_TIMEOUT:-180}"
 POLL_INTERVAL=10
 APPROVE_CHECK_PATTERN="${E2E_APPROVE_CHECK_PATTERN:-Auto-approve if Copilot conditions met}"
 
+# Body stamp of an approval that rests on rounds-by-type 0 (or the legacy marker).
+# shellcheck disable=SC2034  # read by run.sh, which sources this file
+ZERO_APPROVAL_RE='pr-auto-approve:(threshold=0|copilot-optional)'
+
 log()  { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -130,26 +134,31 @@ wait_for_ci() {
   fail "wait_for_ci: timed out waiting for CI on PR #$pr_num"
 }
 
+# The optional second argument is a regex the approval's body must match. The
+# type-0 scenarios pass $ZERO_APPROVAL_RE: the testbed's ruleset also gets a
+# real Copilot review, so a bare "approved" cannot tell a type-0 approval from
+# a legitimate copilot-clean one.
+#
 # Exit codes:
 #   0 — APPROVED review by $APPROVER_LOGIN found
 #   1 — reviews fetched, no matching approval yet
 #   2 — `gh api` errored (network, auth, rate limit)
 has_bot_approval() {
-  local pr_num="$1" reviews
+  local pr_num="$1" body_re="${2:-}" reviews
   if ! reviews=$(gh api "repos/$REPO/pulls/$pr_num/reviews" 2>&1); then
     warn "gh api failed while polling PR #$pr_num: $reviews"
     return 2
   fi
-  printf '%s' "$reviews" | jq -e --arg login "$APPROVER_LOGIN" \
-    '[.[] | select(.user.login == $login and .state == "APPROVED")] | length > 0' \
+  printf '%s' "$reviews" | jq -e --arg login "$APPROVER_LOGIN" --arg re "$body_re" \
+    '[.[] | select(.user.login == $login and .state == "APPROVED" and ((.body // "") | test($re)))] | length > 0' \
     >/dev/null
 }
 
 wait_for_approval() {
-  local pr_num="$1" deadline rc
+  local pr_num="$1" body_re="${2:-}" deadline rc
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
-    has_bot_approval "$pr_num"
+    has_bot_approval "$pr_num" "$body_re"
     rc=$?
     case $rc in
       0) return 0 ;;
@@ -162,20 +171,47 @@ wait_for_approval() {
 }
 
 wait_not_approved() {
-  local pr_num="$1"
+  local pr_num="$1" body_re="${2:-}"
   local grace="${E2E_GRACE:-60}"
+  local rc attempt
   sleep "$grace"
-  if has_bot_approval "$pr_num"; then return 1; fi
-  return 0
+  # rc 2 is an API error, not "no approval": retry rather than pass on it.
+  for attempt in 1 2 3; do
+    rc=0
+    has_bot_approval "$pr_num" "$body_re" || rc=$?
+    [[ $rc -ne 2 ]] && break
+    [[ $attempt -lt 3 ]] && sleep "$POLL_INTERVAL"
+  done
+  [[ $rc -eq 1 ]]
+}
+
+# Poll until the caller workflow has a successful run of $event on $branch that
+# started after $since (ISO-8601 UTC). Proves a trigger fired, independent of
+# who approved: the testbed's ruleset also gets a real Copilot review, so an
+# approval alone cannot show that a retitle re-evaluated the PR.
+wait_caller_run() {
+  local branch="$1" event="$2" since="$3" deadline runs
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    if runs=$(gh run list -R "$REPO" --workflow pr-auto-approve.yml --limit 30 \
+      --json headBranch,event,status,conclusion,createdAt 2>/dev/null) &&
+      printf '%s' "$runs" | jq -e --arg b "$branch" --arg e "$event" --arg s "$since" \
+        '[.[] | select(.headBranch == $b and .event == $e and .createdAt > $s and .status == "completed" and .conclusion == "success")] | length > 0' \
+        >/dev/null; then
+      return 0
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  return 1
 }
 
 # Poll until the approver has NO live approval on the PR (it was dismissed).
 wait_approval_withdrawn() {
-  local pr_num="$1" deadline rc
+  local pr_num="$1" body_re="${2:-}" deadline rc
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
     rc=0
-    has_bot_approval "$pr_num" || rc=$?
+    has_bot_approval "$pr_num" "$body_re" || rc=$?
     [[ $rc -eq 1 ]] && return 0
     sleep "$POLL_INTERVAL"
   done

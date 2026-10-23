@@ -166,9 +166,11 @@ function changedFileNames(changed) {
   return changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
 }
 
-// Marks a bot approval granted without a Copilot review, so a later run can
-// find it and withdraw it if the PR's title stops earning that.
-const COPILOT_OPTIONAL_MARKER = '<!-- pr-auto-approve:copilot-optional -->';
+// Stamps the threshold an approval relied on (0 = no Copilot review; N = the
+// rounds rule), so a later run can withdraw it if a retitle raises the bar. A
+// copilot-clean approval is threshold-independent and carries no stamp.
+const THRESHOLD_MARKER_RE = /<!-- pr-auto-approve:threshold=(\d+) -->/;
+const thresholdMarker = (n) => `<!-- pr-auto-approve:threshold=${n} -->`;
 
 function getOptionalPaths(env = process.env) {
   const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**')
@@ -305,7 +307,10 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // e.g. a type-0 PR, which posts no review to wake the workflow again.
   const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
   const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) && !selfJobNames.has(cr.name),
+    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) &&
+      // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
+      // happens to share the name is still a real result and keeps counting.
+      !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
   );
   // Dedupe by (name, app.id) keeping the most-recently-started run.
   const latestByKey = new Map();
@@ -578,12 +583,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   let withdrew = false;
   if (BOT_LOGIN && !copilotOptional) {
     reviews = await loadReviews();
-    const stale = reviews.filter(
-      (r) =>
-        r.user && r.user.login === BOT_LOGIN &&
-        r.state === 'APPROVED' &&
-        String(r.body || '').includes(COPILOT_OPTIONAL_MARKER),
-    );
+    const stale = reviews.filter((r) => {
+      if (!r.user || r.user.login !== BOT_LOGIN || r.state !== 'APPROVED') return false;
+      const m = THRESHOLD_MARKER_RE.exec(String(r.body || ''));
+      return m !== null && parseInt(m[1], 10) < threshold;
+    });
     for (const r of stale) {
       try {
         await botGithub.rest.pulls.dismissReview({
@@ -591,13 +595,13 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
           repo,
           pull_number: prNumber,
           review_id: r.id,
-          message: `Withdrawn: the PR title (type ${commitType || 'none'}) now requires a Copilot review.`,
+          message: `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
         });
         withdrew = true;
       } catch (err) {
         // Fail closed and loudly: the stale approval still stands, so this must
         // not read as an ordinary skip. Needs a bot token that may dismiss reviews.
-        const reason = `could not withdraw the no-Copilot approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
+        const reason = `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
         core.error(`pr-auto-approve ${reason}`);
         if (typeof core.setFailed === 'function') core.setFailed(reason);
         return setDecision('error', reason);
@@ -633,7 +637,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const checkGate = (allRuns) => {
     // When Copilot is not required, its own check run (pending while an automatic
     // review is still running, or non-success) is not CI and must not hold the PR.
-    const runs = copilotOptional ? allRuns.filter((cr) => !COPILOT_CHECK_NAMES.has(cr.name)) : allRuns;
+    // Unfinished only: Copilot's check is a github-actions check like any CI job
+    // (verified: same app id), so the name cannot prove it is Copilot's, and a
+    // completed check with that name must keep counting.
+    const runs = copilotOptional
+      ? allRuns.filter((cr) => !(COPILOT_CHECK_NAMES.has(cr.name) && cr.status !== 'completed'))
+      : allRuns;
     if (runs.length === 0) {
       if (!getAllowNoChecks()) {
         return setDecision('skip', 'no checks on head SHA yet');
@@ -847,6 +856,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
   }
 
+  // Only approvals that lean on the threshold are stamped: the optional (0) path
+  // and the rounds rule. A clean current-head review holds under any threshold.
+  const approvalStamp = copilotOptional || reason.includes('-rounds ')
+    ? `\n\n${thresholdMarker(threshold)}`
+    : '';
   let created;
   try {
     // botGithub, not github: this is the ONE call that must come from the bot
@@ -861,7 +875,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       pull_number: prNumber,
       commit_id: headSha,
       event: 'APPROVE',
-      body: `Auto-approved: ${reason}.${copilotOptional ? `\n\n${COPILOT_OPTIONAL_MARKER}` : ''}`,
+      body: `Auto-approved: ${reason}.${approvalStamp}`,
     }));
   } catch (err) {
     // No approval exists, so an ordinary skip is accurate here.

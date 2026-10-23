@@ -112,7 +112,8 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
-function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
+// Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
+function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
 // Comma-separated set of base branches a PR must target to be eligible.
 // Whitespace-only/empty falls back to the default so a blank input never makes
 // every PR ineligible. Accepts an env override for direct unit testing.
@@ -121,7 +122,87 @@ function getBaseBranches(env = process.env) {
   const branches = raw.split(',').map((s) => s.trim()).filter(Boolean);
   return new Set(branches.length ? branches : ['main']);
 }
-function getRoundsThreshold() { return Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3); }
+// Conventional Commit type of a PR title ("fix(api)!: x" -> "fix"), lowercased;
+// null when the title is not conventional. The title, not the commits, is the
+// source of truth: squash-merge uses it and release-please reads it.
+function parseCommitType(title) {
+  const m = /^\s*([A-Za-z]+)(?:\([^)]*\))?!?:/.exec(String(title || ''));
+  return m ? m[1].toLowerCase() : null;
+}
+
+// "docs:1,chore:1,default:3" -> Map(type -> rounds). Unlike rounds-threshold,
+// 0 is a valid value here: Copilot is not required for that type. Malformed
+// entries are dropped rather than throwing, so a typo never wedges every PR.
+function parseRoundsByType(raw) {
+  const map = new Map();
+  for (const entry of String(raw || '').split(',')) {
+    const parts = entry.split(':').map((s) => s.trim());
+    // Exactly two fields: "docs:0:oops" must not quietly select the no-Copilot path.
+    if (parts.length !== 2 || !parts[0] || !/^\d+$/.test(parts[1])) continue;
+    const [type, count] = parts;
+    map.set(type.toLowerCase(), parseInt(count, 10));
+  }
+  return map;
+}
+
+// Rounds threshold for one PR title: the type's entry, else `default`, else
+// the plain rounds-threshold input. Accepts an env override for unit tests.
+function resolveThreshold(title, env = process.env) {
+  const type = parseCommitType(title);
+  const byType = parseRoundsByType(env.AUTO_APPROVE_ROUNDS_BY_TYPE);
+  const fallback = Math.max(1, parseInt(env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
+  if (type !== null && byType.has(type)) return { threshold: byType.get(type), type };
+  if (byType.has('default')) return { threshold: byType.get('default'), type };
+  return { threshold: fallback, type };
+}
+
+// Paths a PR may touch for threshold 0 to apply. The title is author-controlled,
+// so on its own it must never remove the review gate: a `chore:0` PR that also
+// edits code falls back to the normal rules.
+// GitHub's list-files endpoint stops at 3000 files, so a list that long may be
+// truncated and cannot prove the PR is docs-only. null means "cannot tell".
+const MAX_LISTED_FILES = 3000;
+function changedFileNames(changed) {
+  if (changed.length >= MAX_LISTED_FILES) return null;
+  return changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
+}
+
+// Stamps the threshold an approval relied on (0 = no Copilot review; N = the
+// rounds rule), so a later run can withdraw it if a retitle raises the bar. A
+// copilot-clean approval is threshold-independent and carries no stamp.
+const THRESHOLD_MARKER_RE = /<!-- pr-auto-approve:threshold=(\d+) -->/;
+const LEGACY_OPTIONAL_MARKER = '<!-- pr-auto-approve:copilot-optional -->';
+const thresholdMarker = (n) => `<!-- pr-auto-approve:threshold=${n} -->`;
+
+function getOptionalPaths(env = process.env) {
+  const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  return list;
+}
+
+function globToRegExp(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+    } else if (c === '*') {
+      re += '[^/]*';
+    } else {
+      re += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+// True when every changed file matches one of the globs. An empty file list
+// proves nothing, so it does not qualify.
+function filesMatchPaths(filenames, globs) {
+  if (!filenames || !filenames.length || !globs.length) return false;
+  const res = globs.map(globToRegExp);
+  return filenames.every((f) => res.some((re) => re.test(f)));
+}
+
 function getSandboxRepos() {
   const raw = process.env.AUTO_APPROVE_SANDBOX_REPOS || '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
@@ -222,8 +303,16 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // only when followed by `/` (job path) or end-of-string.
   const selfRunRe = new RegExp(`/runs/${selfRunId}(/|$)`);
   const validCheckRuns = allCheckRuns.filter((cr) => cr != null);
+  // Sibling runs of this same job (an earlier pull_request_target run being
+  // cancelled by the concurrency group, say) report a check with the job's name
+  // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
+  // e.g. a type-0 PR, which posts no review to wake the workflow again.
+  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
   const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)),
+    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) &&
+      // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
+      // happens to share the name is still a real result and keeps counting.
+      !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
   );
   // Dedupe by (name, app.id) keeping the most-recently-started run.
   const latestByKey = new Map();
@@ -276,6 +365,18 @@ async function waitForCopilotCheck({
 
 // A Copilot review "covers" the head when it names the head commit, or when
 // enough rounds exist for the threshold rule to decide without freshness.
+// Dismissing needs write access, not the bot's identity. The bot PAT that can
+// post an approval is refused (403) on some setups, so retry once with the
+// workflow's own token, which carries the caller job's `pull-requests: write`.
+async function dismissReview({ github, botGithub, params }) {
+  try {
+    return await botGithub.rest.pulls.dismissReview(params);
+  } catch (err) {
+    if (botGithub === github || ![401, 403].includes(err.status)) throw err;
+    return github.rest.pulls.dismissReview(params);
+  }
+}
+
 function copilotHasReviewedHead(copilotReviews, headSha, threshold) {
   if (copilotReviews.length === 0) return false;
   if (copilotReviews.length >= threshold) return true;
@@ -305,6 +406,41 @@ async function waitForCopilotReview({
     polled = true;
   }
   return { reviews: current, polled };
+}
+
+// Reviewer login accepted by the REST requested_reviewers endpoint; the review
+// then shows up as `Copilot` in the PR timeline. Verified on a ruleset-free repo.
+const COPILOT_REVIEWER = 'copilot-pull-request-reviewer[bot]';
+
+// Requests the Copilot review unless the PR's type needs none (threshold 0 and
+// every changed file optional). Best-effort: requesting is a convenience and
+// must never turn the check red, so errors only warn. The title is read from
+// the event payload, never interpolated into a script. Returns 'requested',
+// 'skipped' or 'error' so callers and tests can tell the outcomes apart.
+async function requestCopilotReview({ github, context, core, env = process.env }) {
+  try {
+    const { owner, repo } = context.repo;
+    const pr = context.payload.pull_request;
+    const { threshold, type } = resolveThreshold(pr.title, env);
+    if (threshold === 0) {
+      const changed = await github.paginate(github.rest.pulls.listFiles, {
+        owner, repo, pull_number: pr.number, per_page: 100,
+      });
+      if (filesMatchPaths(changedFileNames(changed), getOptionalPaths(env))) {
+        core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
+        return 'skipped';
+      }
+    }
+    await github.rest.pulls.requestReviewers({
+      owner, repo, pull_number: pr.number, reviewers: [COPILOT_REVIEWER],
+    });
+    return 'requested';
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: could not request a Copilot review: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+    return 'error';
+  }
 }
 
 async function decide(args) {
@@ -383,6 +519,25 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     return { decision, reason };
   };
+
+  // An empty bot login is a misconfiguration, not a skip: the caller's loop
+  // guard (`github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN`) is then always
+  // true too, so each approval re-triggers this workflow. That ran away to 17
+  // approvals in three minutes once. Fail the job so it cannot pass unnoticed.
+  if (!BOT_LOGIN) {
+    const reason = 'bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable ' +
+      '(the caller passes it as bot-login and uses it in the job `if:` loop guard)';
+    core.error(`pr-auto-approve ${reason}`);
+    if (typeof core.setFailed === 'function') core.setFailed(reason);
+    return setDecision('error', reason);
+  }
+
+  // Backstop for a loop guard that does not match bot-login (e.g. a literal
+  // hard-coded in one place only): never evaluate in response to our own review.
+  const triggeringReview = context.payload.review;
+  if (triggeringReview && triggeringReview.user && triggeringReview.user.login === BOT_LOGIN) {
+    return setDecision('skip', 'triggered by the bot\'s own review');
+  }
 
   // check_run events don't carry pull_request directly; extract from associated PRs.
   if (!pr && context.payload.check_run) {
@@ -465,6 +620,71 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR author is the bot itself');
   }
 
+  // Threshold 0 means Copilot is not required for this PR's type: nothing to
+  // wait for, and the review rules below are bypassed.
+  let { threshold, type: commitType } = resolveThreshold(pr.title);
+  if (threshold === 0) {
+    const changed = await github.paginate(github.rest.pulls.listFiles, {
+      owner, repo, pull_number: prNumber, per_page: 100,
+    });
+    const names = changedFileNames(changed);
+    if (!filesMatchPaths(names, getOptionalPaths())) {
+      core.info(`pr-auto-approve: type '${commitType}' allows no Copilot review, but the PR touches files outside copilot-optional-paths; using the normal rules`);
+      threshold = Math.max(1, parseInt(process.env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
+    }
+  }
+  const copilotOptional = threshold === 0;
+
+  const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  let reviews = null;
+
+  // A no-Copilot approval was earned by the title at the time. If the title has
+  // since changed to a type that needs a review, the approval no longer stands:
+  // withdraw it and evaluate the PR under the current rules. This runs before
+  // every other gate (CI, the Copilot waits, reviewDecision), because those
+  // return early and would otherwise leave the stale approval in place.
+  let withdrew = false;
+  if (BOT_LOGIN && !copilotOptional) {
+    reviews = await loadReviews();
+    const stale = reviews.filter((r) => {
+      if (!r.user || r.user.login !== BOT_LOGIN || r.state !== 'APPROVED') return false;
+      const body = String(r.body || '');
+      const m = THRESHOLD_MARKER_RE.exec(body);
+      // The first marker form (pre-3085536) meant "no Copilot review", i.e. 0.
+      const stamped = m ? parseInt(m[1], 10) : (body.includes(LEGACY_OPTIONAL_MARKER) ? 0 : null);
+      return stamped !== null && stamped < threshold;
+    });
+    for (const r of stale) {
+      try {
+        await dismissReview({
+          github,
+          botGithub,
+          params: {
+            owner,
+            repo,
+            pull_number: prNumber,
+            review_id: r.id,
+            message: `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
+          },
+        });
+        withdrew = true;
+      } catch (err) {
+        // Fail closed and loudly: the stale approval still stands, so this must
+        // not read as an ordinary skip. Neither the bot token nor the workflow token could dismiss.
+        const reason = `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
+        core.error(`pr-auto-approve ${reason}`);
+        if (typeof core.setFailed === 'function') core.setFailed(reason);
+        return setDecision('error', reason);
+      }
+    }
+    if (withdrew) reviews = null;
+  }
+
   const headSha = pr.head.sha;
   let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
 
@@ -481,7 +701,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // One budget for both waits below: the check-run wait (when Copilot still
   // registers a check) and the review wait (when it does not).
   const waitDeadline = Date.now() + waitSeconds * 1000;
-  if (waitSeconds > 0) {
+  if (waitSeconds > 0 && !copilotOptional) {
     checkRuns = await waitForCopilotCheck({
       github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
     });
@@ -489,7 +709,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
-  const checkGate = (runs) => {
+  const checkGate = (allRuns) => {
+    // When Copilot is not required, its own check run (pending while an automatic
+    // review is still running, or non-success) is not CI and must not hold the PR.
+    // Unfinished only: Copilot's check is a github-actions check like any CI job
+    // (verified: same app id), so the name cannot prove it is Copilot's, and a
+    // completed check with that name must keep counting.
+    const runs = copilotOptional
+      ? allRuns.filter((cr) => !(COPILOT_CHECK_NAMES.has(cr.name) && cr.status !== 'completed'))
+      : allRuns;
     if (runs.length === 0) {
       if (!getAllowNoChecks()) {
         return setDecision('skip', 'no checks on head SHA yet');
@@ -511,6 +739,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   };
   const gated = checkGate(checkRuns);
   if (gated) return gated;
+
+  reviews = reviews || await loadReviews();
 
   // GraphQL reviewDecision gate: GitHub's authoritative "is this PR already
   // approved overall?" signal. It reflects branch-protection dismissals — a
@@ -535,17 +765,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       `pr-auto-approve: reviewDecision query failed, falling through to REST: ${err.status || ''} ${err.message || err}`.trim(),
     );
   }
-  if (reviewDecision === 'APPROVED') {
+  if (reviewDecision === 'APPROVED' && !withdrew) {
     return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
   }
-
-  const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
-  const reviews = await loadReviews();
 
   // Idempotency: only skip if the bot's LATEST non-dismissed review is APPROVED.
   // A historical approval superseded by COMMENT/CHANGES_REQUESTED must NOT block
@@ -600,7 +822,6 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       return at - bt;
     });
   let copilotReviews = selectCopilotReviews(reviews);
-  const threshold = getRoundsThreshold();
 
   // Copilot stopped registering a check run on the head SHA (verified
   // 2026-10-20: the head's check-runs list holds only the repo's own jobs
@@ -609,7 +830,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // with "no Copilot review yet" seconds before the review landed. Spend the
   // same budget polling the reviews themselves until Copilot has reviewed
   // this head (or enough rounds exist for the threshold to decide).
-  if (waitSeconds > 0) {
+  if (waitSeconds > 0 && !copilotOptional) {
     const waited = await waitForCopilotReview({
       core,
       headSha,
@@ -631,20 +852,24 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
-  if (copilotReviews.length === 0) {
+  if (copilotReviews.length === 0 && !copilotOptional) {
     return setDecision('skip', 'no Copilot review yet');
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
   // review is CHANGES_REQUESTED, never approve — even under the 3-rounds rule.
   const latest = copilotReviews[copilotReviews.length - 1];
-  core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
-  if (latest.state === 'CHANGES_REQUESTED') {
-    return setDecision('skip', 'latest Copilot review requested changes');
+  if (latest) {
+    core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
+    if (latest.state === 'CHANGES_REQUESTED') {
+      return setDecision('skip', 'latest Copilot review requested changes');
+    }
   }
 
   let reason = '';
-  if (copilotReviews.length >= threshold) {
+  if (copilotOptional) {
+    reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
+  } else if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
   } else {
     // A COMMENTED review is NOT dismissed when a push invalidates approvals, so
@@ -692,6 +917,26 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
+  // The path allowlist was read from the live PR while headSha came from the
+  // event, so a push in between would leave them describing different commits.
+  // Only the no-review path rests on that list, so only it pays for the re-read.
+  // Also compared: the title, which chose the threshold. A retitle that lands
+  // while this run is in flight would otherwise be approved under the old type
+  // (cancel-in-progress is not atomic).
+  const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  if (current.head.sha !== headSha) {
+    return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
+  }
+  if ((current.title || '') !== (pr.title || '')) {
+    return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
+  }
+
+  // Only approvals that lean on the threshold are stamped: the optional (0) path
+  // and the rounds rule. A clean current-head review holds under any threshold.
+  const approvalStamp = copilotOptional || reason.includes('-rounds ')
+    ? `\n\n${thresholdMarker(threshold)}`
+    : '';
+  let created;
   try {
     // botGithub, not github: this is the ONE call that must come from the bot
     // account rather than the workflow. Everything above reads through
@@ -699,20 +944,57 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     // needs the `Checks` permission, and a fine-grained PAT cannot be granted
     // it, so PAT-based reads work on public repos and 403 forever on private
     // ones. Defaults to `github` so a caller passing one client still works.
-    await botGithub.rest.pulls.createReview({
+    ({ data: created } = await botGithub.rest.pulls.createReview({
       owner,
       repo,
       pull_number: prNumber,
+      commit_id: headSha,
       event: 'APPROVE',
-      body: `Auto-approved: ${reason}.`,
-    });
-    return setDecision('approved', reason);
+      body: `Auto-approved: ${reason}.${approvalStamp}`,
+    }));
   } catch (err) {
+    // No approval exists, so an ordinary skip is accurate here.
     return setDecision(
       'skip',
       `approval API call failed: ${err.status || ''} ${err.message || err}`.trim(),
     );
   }
+
+  // From here an approval exists, so nothing below may fall back to a plain
+  // skip. The pre-approval re-read leaves a window: a retitle or push can land
+  // between it and the review. Look again and take the approval back; if the
+  // look itself fails, withdraw as a precaution.
+  let changedWhileApproving;
+  try {
+    const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    changedWhileApproving = after.head.sha !== headSha || (after.title || '') !== (pr.title || '')
+      ? 'PR head or title changed while approving'
+      : '';
+  } catch (err) {
+    changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
+  }
+  if (changedWhileApproving) {
+    try {
+      await dismissReview({
+        github,
+        botGithub,
+        params: {
+          owner,
+          repo,
+          pull_number: prNumber,
+          review_id: created.id,
+          message: `Withdrawn: ${changedWhileApproving}.`,
+        },
+      });
+    } catch (err) {
+      const failure = `approved, then ${changedWhileApproving}, and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();
+      core.error(`pr-auto-approve ${failure}`);
+      if (typeof core.setFailed === 'function') core.setFailed(failure);
+      return setDecision('error', failure);
+    }
+    return setDecision('skip', `${changedWhileApproving}; approval withdrawn`);
+  }
+  return setDecision('approved', reason);
 }
 
 module.exports = decide;
@@ -721,3 +1003,10 @@ module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
 module.exports.countSuppressedComments = countSuppressedComments;
 module.exports.getBaseBranches = getBaseBranches;
+module.exports.parseCommitType = parseCommitType;
+module.exports.parseRoundsByType = parseRoundsByType;
+module.exports.resolveThreshold = resolveThreshold;
+module.exports.getOptionalPaths = getOptionalPaths;
+module.exports.filesMatchPaths = filesMatchPaths;
+module.exports.changedFileNames = changedFileNames;
+module.exports.requestCopilotReview = requestCopilotReview;

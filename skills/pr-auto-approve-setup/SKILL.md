@@ -85,6 +85,8 @@ contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)
 The `if:` compares `github.actor != '<bot-login>'` to stop the bot's own approval re-triggering the
 workflow. If you point that at an unset variable it becomes `actor != ''` — always true — and the
 guard is silently disabled. Hard-code the login, and keep it identical to the `bot-login` input.
+The action now fails the job with `bot-login is empty` when the input is blank, and ignores runs
+triggered by the bot's own review, but the `if:` guard is still what prevents the extra runs.
 
 ### `workflow_run` is required when CI is GitHub Actions
 
@@ -158,6 +160,14 @@ approval rests on Copilot alone, with no CI evidence behind it.
 Setting it to `1` makes *every* Copilot review satisfy the threshold immediately, which disables the
 clean-review, suppressed-comment and freshness rules entirely. The action degrades to "approve as
 soon as Copilot reviewed at all, on whatever commit".
+
+### Different rounds per commit type
+
+`rounds-by-type: 'docs:1,chore:0,fix:3,default:3'` reads the type from the PR title; `0` approves on
+green CI without a Copilot review, but only when every changed file matches `copilot-optional-paths`
+(default `**/*.md,docs/**`). Keep `edited` in `pull_request_target.types` so retitles
+re-evaluate. To stop Copilot reviewing those PRs at all, turn off the ruleset's automatic review and
+set `request-copilot-review: 'true'`.
 
 ## 4. Verify
 

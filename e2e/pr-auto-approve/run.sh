@@ -187,6 +187,130 @@ scenario_draft() {
   close_pr "$pr_num"
 }
 
+# The scenarios below need the sandbox caller to set `rounds-by-type: 'chore:0'`
+# (and keep `edited` in pull_request_target.types). They post NO Copilot review:
+# type 0 means none is required.
+
+scenario_type_zero_docs() {
+  log "scenario: type-zero-docs (chore: + docs-only diff, no review → expect approved)"
+  local branch pr pr_num
+  branch=$(new_branch "type-zero-docs")
+  pr=$(create_pr "$branch" "chore: e2e type-zero docs" "" "docs/e2e-marker.md")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
+    ok "type-zero-docs → approved without a Copilot review"
+  else
+    close_pr "$pr_num"
+    fail "type-zero-docs: no approval within ${TIMEOUT}s"
+  fi
+  close_pr "$pr_num"
+}
+
+scenario_type_zero_code() {
+  log "scenario: type-zero-code (chore: title but touches a non-docs file → expect no type-0 approval)"
+  local branch pr pr_num
+  branch=$(new_branch "type-zero-code")
+  # e2e-marker.txt is outside copilot-optional-paths, so the title must not help.
+  pr=$(create_pr "$branch" "chore: e2e type-zero code")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
+    ok "type-zero-code → no type-0 approval (allowlist fell back to the normal rules)"
+  else
+    close_pr "$pr_num"
+    fail "type-zero-code: unexpectedly got a type-0 approval"
+  fi
+  close_pr "$pr_num"
+}
+
+scenario_retitle_approves() {
+  log "scenario: retitle-approves (feat: → chore: on a docs-only diff → expect approved after the edit)"
+  local branch pr pr_num
+  branch=$(new_branch "retitle-approves")
+  pr=$(create_pr "$branch" "feat: e2e retitle" "" "docs/e2e-marker.md")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if ! wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
+    close_pr "$pr_num"
+    fail "retitle-approves: approved before the retitle"
+  fi
+  local since
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  gh pr edit -R "$REPO" "$pr_num" --title "chore: e2e retitle" >/dev/null
+  # The ruleset's Copilot review may already have approved the PR, in which
+  # case the re-evaluation is a no-op ("bot already approved head"). So assert
+  # the edited event ran the workflow, and, when no approval stands yet, that
+  # it ends up type-0 approved.
+  if ! wait_caller_run "$branch" pull_request_target "$since"; then
+    close_pr "$pr_num"
+    fail "retitle-approves: no workflow run after the retitle (is 'edited' in the caller's triggers?)"
+  fi
+  if has_bot_approval "$pr_num" || wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
+    ok "retitle-approves → the edited event re-evaluated the PR"
+  else
+    close_pr "$pr_num"
+    fail "retitle-approves: the retitle run left the PR unapproved"
+  fi
+  close_pr "$pr_num"
+}
+
+scenario_retitle_withdraws() {
+  log "scenario: retitle-withdraws (approved as chore:, retitled feat: → expect the approval dismissed)"
+  local branch pr pr_num
+  branch=$(new_branch "retitle-withdraws")
+  pr=$(create_pr "$branch" "chore: e2e retitle withdraw" "" "docs/e2e-marker.md")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
+    close_pr "$pr_num"
+    fail "retitle-withdraws: no initial approval within ${TIMEOUT}s"
+  fi
+  gh pr edit -R "$REPO" "$pr_num" --title "feat: e2e retitle withdraw" >/dev/null
+  if wait_approval_withdrawn "$pr_num" "$ZERO_APPROVAL_RE"; then
+    ok "retitle-withdraws → the no-Copilot approval was dismissed"
+  else
+    close_pr "$pr_num"
+    fail "retitle-withdraws: approval still stands after the retitle (can the bot dismiss reviews?)"
+  fi
+  close_pr "$pr_num"
+}
+
+# Needs a sandbox WITHOUT the automatic Copilot ruleset, whose caller sets
+# `request-copilot-review: 'true'` and `rounds-by-type: 'docs:0,...'`. It asks for
+# a real Copilot review on the code PR, so it spends one.
+scenario_request_copilot() {
+  log "scenario: request-copilot (code PR → Copilot requested; docs: PR → not requested, approved)"
+  local branch pr pr_num rc
+  branch=$(new_branch "request-copilot-code")
+  pr=$(create_pr "$branch" "feat: e2e request copilot")
+  pr_num=$(basename "$pr")
+  if wait_copilot_requested "$pr_num"; then
+    ok "request-copilot → Copilot was requested on the code PR"
+  else
+    close_pr "$pr_num"
+    fail "request-copilot: no Copilot review request within ${TIMEOUT}s"
+  fi
+  close_pr "$pr_num"
+
+  branch=$(new_branch "request-copilot-docs")
+  pr=$(create_pr "$branch" "docs: e2e request copilot" "" "docs/e2e-marker.md")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
+    close_pr "$pr_num"
+    fail "request-copilot: the docs PR was not approved within ${TIMEOUT}s"
+  fi
+  rc=0
+  copilot_review_requested "$pr_num" || rc=$?
+  close_pr "$pr_num"
+  [[ $rc -eq 1 ]] || fail "request-copilot: Copilot was requested on a docs PR (rc=$rc)"
+  ok "request-copilot → no Copilot request on the docs PR"
+}
+
+# Not in the default run: they need sandbox config the original six do not
+# (see the README). Select them by name, or pass `all-types`-style names directly.
+
 # --- Runner --------------------------------------------------------------
 
 require_gh "$REVIEWER"
@@ -198,6 +322,11 @@ declare -A SCENARIOS=(
   [three-rounds]=scenario_three_rounds
   [changes-requested]=scenario_changes_requested
   [draft]=scenario_draft
+  [type-zero-docs]=scenario_type_zero_docs
+  [type-zero-code]=scenario_type_zero_code
+  [retitle-approves]=scenario_retitle_approves
+  [retitle-withdraws]=scenario_retitle_withdraws
+  [request-copilot]=scenario_request_copilot
 )
 
 SELECTED=("${@:-copilot-clean copilot-with-comments suppressed-comments three-rounds changes-requested draft}")

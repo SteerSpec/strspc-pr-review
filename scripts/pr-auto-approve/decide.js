@@ -112,7 +112,8 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
-function getBotLogin() { return process.env.AUTO_APPROVE_BOT_LOGIN || ''; }
+// Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
+function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
 // Comma-separated set of base branches a PR must target to be eligible.
 // Whitespace-only/empty falls back to the default so a blank input never makes
 // every PR ineligible. Accepts an env override for direct unit testing.

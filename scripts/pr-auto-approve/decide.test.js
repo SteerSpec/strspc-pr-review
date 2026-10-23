@@ -2657,7 +2657,7 @@ async function withBotLogin(value, fn) {
 }
 
 test('error: empty bot-login fails the job and names the variable', async () => {
-  for (const value of ['', undefined]) {
+  for (const value of ['', '   ', undefined]) {
     await withBotLogin(value, async () => {
       const core = makeCore();
       const failures = [];

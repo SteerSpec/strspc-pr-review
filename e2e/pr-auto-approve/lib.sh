@@ -213,8 +213,10 @@ copilot_review_requested() {
   if ! events=$(gh api "repos/$REPO/issues/$pr_num/events" --paginate 2>&1); then
     return 2
   fi
-  printf '%s' "$events" | jq -e \
-    '[.[] | select(.event == "review_requested" and .requested_reviewer.login == "Copilot")] | length > 0' \
+  # --paginate prints one array per page: slurp them so a match on an earlier
+  # page is not lost to a later page without one.
+  printf '%s' "$events" | jq -es \
+    '[.[][] | select(.event == "review_requested" and .requested_reviewer.login == "Copilot")] | length > 0' \
     >/dev/null
 }
 

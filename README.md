@@ -247,10 +247,11 @@ form (`on: [push, pull_request]`) too. The
 [`pr-auto-approve-setup`](skills/pr-auto-approve-setup/SKILL.md) skill has the
 enumeration command.
 
-**`checks: read` in the caller's job permissions is load-bearing** (`pull-requests: write` and
-`checks: read` are all the action asks of that token). The action reads check runs
-with the workflow's `GITHUB_TOKEN` (the `github-token` input, default `${{ github.token }}`); only
-the approval itself is posted with `bot-github-token`. That split exists because listing check runs
+**`checks: read` in the caller's job permissions is load-bearing** (`pull-requests: write`,
+`checks: read` and `contents: read` are all the action asks of that token; `contents: read` is for
+the commit comparison that lists a PR's changed files when `rounds-by-type` relaxes its type). The
+action reads check runs with the workflow's `GITHUB_TOKEN` (the `github-token` input, default
+`${{ github.token }}`); only the approval itself is posted with `bot-github-token`. That split exists because listing check runs
 requires the `Checks` permission, which fine-grained PATs cannot be granted — so a PAT doing the
 reading works on public repos and fails with `403` forever on private ones. The bot PAT therefore
 needs only `Pull requests: write`.
@@ -379,6 +380,7 @@ rounds-by-type: 'docs:1,chore:0,fix:3,default:3'
 - `0` means Copilot is not required: the PR is approved once CI is green. A Copilot `CHANGES_REQUESTED` review still blocks.
 - **Any type mapped below the default** (`0` or otherwise) applies only when **every changed file matches `copilot-optional-paths`** (default `**/*.md,docs/**`). Otherwise the PR gets the default threshold (the `default` entry, else `rounds-threshold`) and the `reason` says so: `…; type 'docs' is relaxed to 1 round(s) but the PR touches files outside copilot-optional-paths, so the default 3 applies`. The title is author-controlled, so a code change titled `chore:` or `docs:` still gets the normal review. Types at or above the default are never gated and never list the PR's files.
 - The gate is re-applied on every run: a `docs:1` approval earned on a docs-only diff is withdrawn once a later push adds a code file (the approval's stamp records the threshold it relied on).
+- The changed files are listed for **exactly the head SHA under evaluation** (a `base...sha` commit comparison, not the PR's live file list), so a force-push during the run cannot swap the diff behind the gate. That comparison needs `contents: read` on `github-token`, which the shipped caller template already grants. A PR touching 300 or more files cannot prove it is docs-only (the comparison's file list stops there) and gets the default rules.
 - Unlisted types and non-conventional titles use `default`, else `rounds-threshold`.
 - To also stop Copilot from reviewing those PRs, disable the ruleset's "Automatically request Copilot code review" and set `request-copilot-review: 'true'`. GitHub cannot filter automatic reviews by title.
 - When a retitle raises the required rounds above what an earlier approval relied on, the action **dismisses** that approval. It tries the bot token first and, if GitHub refuses it (401/403), retries with the workflow's `GITHUB_TOKEN`, so keep `pull-requests: write` in the caller's job permissions. If neither can dismiss it, the run fails (`decision=error`).
@@ -401,6 +403,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI; approval requires all checks green. |
 | `…; type '<type>' is relaxed to N round(s) but the PR touches files outside copilot-optional-paths, so the default M applies` | The title's type is mapped below the default in `rounds-by-type`, but the diff reaches outside `copilot-optional-paths`, so the PR is judged by the default rules. The text before the `;` is the ordinary reason under those rules. Expected for a code change with a relaxed title; otherwise widen the globs. |
+| `evaluation failed: 403 … /compare/…` or `evaluation failed: 404 … /compare/…` | The changed-files listing for a relaxed `rounds-by-type` type failed. A `403` means the **read** token lacks `contents: read`; the shipped template grants it, so restore it in the caller's job permissions. A `404` means the evaluated head SHA is no longer on the PR (a force-push landed mid-run); the next run re-evaluates the new head. |
 | `evaluation failed: 403 … /check-runs` | The **read** token can't list check runs. Reads must use the workflow's `GITHUB_TOKEN` (the `github-token` input, default) and the caller must grant `checks: read` — a fine-grained PAT cannot be given the `Checks` permission at all. This fails **only on private repositories**: check runs are readable without that permission on public ones, so it works everywhere you'd think to test it. |
 | `bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable…` | The job fails on purpose. `bot-login` came through blank, which also disables the caller's `github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN` loop guard, so each approval would re-trigger the workflow. Set the variable (Settings → Secrets and variables → Actions → Variables) or hard-code the login in both places. |
 | `triggered by the bot's own review` | The run was started by the bot's approval and exits without evaluating. Expected; if you see many of these, the `if:` loop guard does not match `bot-login`. |
@@ -426,7 +429,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 144 unit tests, no external dependencies
+npm test            # 148 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

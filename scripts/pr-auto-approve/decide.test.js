@@ -38,7 +38,7 @@ function makeFakeGithub({
   graphqlImpl,
   changedFiles = ['README.md'],
 } = {}) {
-  const calls = { createReview: [], graphql: [] };
+  const calls = { createReview: [], graphql: [], compare: [] };
 
   const paginate = async (fn, params, mapper) => {
     const pages = await fn(params);
@@ -56,6 +56,14 @@ function makeFakeGithub({
     rest: {
       checks: {
         listForRef: async () => ({ data: { total_count: checkRuns.length, check_runs: checkRuns } }),
+      },
+      repos: {
+        // The compare endpoint puts the files on the first page only, capped at
+        // 300: one object, not a paginated list.
+        compareCommitsWithBasehead: async (args) => {
+          calls.compare.push(args);
+          return { data: { files: changedFiles.map((filename) => ({ filename })) } };
+        },
       },
       pulls: {
         get: async ({ pull_number }) => {
@@ -83,7 +91,6 @@ function makeFakeGithub({
               : r,
           ),
         }),
-        listFiles: async () => ({ data: changedFiles.map((filename) => ({ filename })) }),
         listCommentsForReview: async ({ review_id }) => ({
           data: reviewComments[review_id] || [],
         }),
@@ -2324,7 +2331,7 @@ test('rounds-by-type: a type at or above the default never lists the changed fil
         reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
         getPrImpl: getPrWithTitle(title),
       });
-      github.rest.pulls.listFiles = async () => { throw new Error(`listed files for ${title}`); };
+      github.rest.repos.compareCommitsWithBasehead = async () => { throw new Error(`listed files for ${title}`); };
       const result = await decide({ github, core, context: makeContext({ prOverrides: { title } }) });
       assert.equal(result.decision, 'approved', result.reason);
       assert.doesNotMatch(result.reason, /relaxed/);
@@ -2378,6 +2385,51 @@ test('rounds-by-type: threshold 0 aborts when the head moved during evaluation',
   });
 });
 
+// The listing names the SHA under evaluation, so an A -> B -> A force-push
+// between the listing and the pre-approval head re-read cannot hand the gate
+// a different diff than the one approved.
+test('the changed-files listing is pinned to the evaluated head SHA', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [], getPrImpl: getPrWithTitle('docs: x') });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'approved', result.reason);
+    assert.equal(calls.compare.length, 1);
+    assert.equal(calls.compare[0].basehead, 'develop...deadbeef');
+    assert.equal(calls.compare[0].owner, 'axeptio');
+    assert.equal(calls.compare[0].repo, 'test-only-repo');
+  });
+});
+
+test('a head SHA the compare endpoint no longer knows is a clean skip that names the request', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [] });
+    github.rest.repos.compareCommitsWithBasehead = async () => {
+      throw Object.assign(new Error('Not Found'), {
+        status: 404,
+        request: { method: 'GET', url: 'https://api.github.com/repos/axeptio/test-only-repo/compare/develop...deadbeef' },
+      });
+    };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /^evaluation failed: 404 GET \/repos\/axeptio\/test-only-repo\/compare\/develop\.\.\.deadbeef Not Found$/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('a compare response without a files array is treated as an empty (unprovable) list', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [] });
+    github.rest.repos.compareCommitsWithBasehead = async () => ({ data: { status: 'identical' } });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /^no Copilot review yet; type 'docs' is relaxed/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
 test('approval is pinned to the evaluated head commit', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
@@ -2397,8 +2449,8 @@ test('parseRoundsByType: rejects entries with extra fields', () => {
   assert.deepEqual([...map], [['chore', 1]]);
 });
 
-test('changedFileNames: a list at the 3000-file API cap cannot prove docs-only', () => {
-  const big = Array.from({ length: 3000 }, (_, i) => ({ filename: `docs/${i}.md` }));
+test('changedFileNames: a list at the 300-file compare cap cannot prove docs-only', () => {
+  const big = Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` }));
   assert.equal(decide.changedFileNames(big), null);
   assert.equal(decide.filesMatchPaths(decide.changedFileNames(big), ['docs/**']), false);
   assert.deepEqual(decide.changedFileNames([{ filename: 'b.md', previous_filename: 'a.md' }]), ['b.md', 'a.md']);
@@ -2822,12 +2874,19 @@ test('requestCopilotReview: type 0 touching code still requests Copilot', async 
 
 test('requestCopilotReview: default type requests Copilot without listing files', async () => {
   const { github, core, context, requested } = requestSetup({ title: 'feat: thing', changedFiles: ['src/app.js'] });
-  let listed = false;
-  github.paginate = async () => { listed = true; return []; };
+  github.rest.repos.compareCommitsWithBasehead = async () => { throw new Error('listed files'); };
   const out = await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
   assert.equal(out, 'requested');
   assert.equal(requested.length, 1);
-  assert.equal(listed, false);
+});
+
+test('requestCopilotReview: the file listing is pinned to the event head SHA', async () => {
+  const { github, core, context } = requestSetup({ title: 'docs: fix typo', changedFiles: ['README.md'] });
+  const compared = [];
+  const original = github.rest.repos.compareCommitsWithBasehead;
+  github.rest.repos.compareCommitsWithBasehead = async (a) => { compared.push(a); return original(a); };
+  await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
+  assert.deepEqual(compared.map((c) => c.basehead), ['develop...deadbeef']);
 });
 
 test('requestCopilotReview: an API error only warns', async () => {

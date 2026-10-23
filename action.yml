@@ -30,10 +30,12 @@ inputs:
     description: >-
       Token used for every READ (check runs, the PR, its reviews and their
       comments). Defaults to the workflow's GITHUB_TOKEN, which is what makes
-      this work on private repositories. The action needs `checks: read` and
-      `pull-requests: write` from it and nothing else — the shipped template
-      also grants `contents: read`, which this action never uses. Override only
-      if you have a reason to read as someone else.
+      this work on private repositories. The action needs `checks: read`,
+      `pull-requests: write` and `contents: read` from it and nothing else; the
+      shipped template grants all three. `contents: read` is for the commit
+      comparison that lists a PR's changed files when rounds-by-type relaxes
+      its type (the list is pinned to the evaluated head SHA that way). Override
+      only if you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'

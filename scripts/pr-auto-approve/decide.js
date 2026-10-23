@@ -165,29 +165,39 @@ function resolveThreshold(title, env = process.env) {
 // hole one notch up (a single commented review approves code), so the gate
 // covers every type below the default. Types at or above it are not relaxed
 // and are never gated.
-// GitHub's list-files endpoint stops at 3000 files, so a list that long may be
-// truncated and cannot prove the PR is docs-only. null means "cannot tell".
-const MAX_LISTED_FILES = 3000;
+// The compare endpoint's files array stops at 300 entries (it paginates commits,
+// not files: the list appears on the first page only), so a list that long may
+// be truncated and cannot prove the PR is docs-only. null means "cannot tell".
+const MAX_LISTED_FILES = 300;
 function changedFileNames(changed) {
   if (changed.length >= MAX_LISTED_FILES) return null;
   return changed.flatMap((f) => [f.filename, f.previous_filename]).filter(Boolean);
 }
 
-// Changed files of the PR, as the names filesMatchPaths expects.
-async function listChangedFileNames({ github, owner, repo, prNumber }) {
-  const changed = await github.paginate(github.rest.pulls.listFiles, {
-    owner, repo, pull_number: prNumber, per_page: 100,
+// Changed files of exactly `headSha`, as the names filesMatchPaths expects.
+// pulls.listFiles describes whatever the PR's head is when it is called, and
+// the head re-reads around the approval cannot tell that apart from a force-push
+// that moves the head away and back (A -> B -> A) between the listing and the
+// re-read. compare(base...sha) is addressed by the SHA, so the list is the
+// evaluated head's by construction; a SHA no longer on the PR is a 404, which
+// the top-level catch turns into an "evaluation failed" skip. Three-dot against
+// the base BRANCH is what the PR's Files tab shows (merge-base to head), so a
+// base that moved on since the PR opened does not pull its commits into the
+// list. Needs `contents: read` on github-token, which the shipped caller grants.
+async function listChangedFileNames({ github, owner, repo, baseRef, headSha }) {
+  const { data } = await github.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead: `${baseRef}...${headSha}`, per_page: 1,
   });
-  return changedFileNames(changed);
+  return changedFileNames(data.files || []);
 }
 
 // Threshold a PR actually gets once the path gate is applied, plus a note for
 // the reason string when the gate changed it. Only a relaxed type pays for the
 // file listing; the default rules need no file list.
-async function applyPathGate({ github, owner, repo, prNumber, title, env = process.env }) {
+async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env = process.env }) {
   const { threshold, type, defaultThreshold } = resolveThreshold(title, env);
   if (threshold >= defaultThreshold) return { threshold, type, note: '' };
-  const names = await listChangedFileNames({ github, owner, repo, prNumber });
+  const names = await listChangedFileNames({ github, owner, repo, baseRef, headSha });
   if (filesMatchPaths(names, getOptionalPaths(env))) return { threshold, type, note: '' };
   return {
     threshold: defaultThreshold,
@@ -456,7 +466,7 @@ async function requestCopilotReview({ github, context, core, env = process.env }
     let { threshold, type } = resolveThreshold(pr.title, env);
     if (threshold === 0) {
       ({ threshold } = await applyPathGate({
-        github, owner, repo, prNumber: pr.number, title: pr.title, env,
+        github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title, env,
       }));
     }
     if (threshold === 0) {
@@ -663,7 +673,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // outside copilot-optional-paths, in which case the default applies. 0 means
   // Copilot is not required: nothing to wait for, and the review rules below
   // are bypassed.
-  const gate = await applyPathGate({ github, owner, repo, prNumber, title: pr.title });
+  const gate = await applyPathGate({
+    github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
+  });
   const { threshold, type: commitType } = gate;
   if (gate.note) {
     thresholdNote = gate.note;
@@ -953,12 +965,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
-  // The path allowlist was read from the live PR while headSha came from the
-  // event, so a push in between would leave them describing different commits.
-  // Only the no-review path rests on that list, so only it pays for the re-read.
-  // Also compared: the title, which chose the threshold. A retitle that lands
-  // while this run is in flight would otherwise be approved under the old type
-  // (cancel-in-progress is not atomic).
+  // headSha came from the event; a push while this run is in flight would make
+  // the approval below (pinned to headSha by commit_id) describe a commit that
+  // is no longer the head. Also compared: the title, which chose the threshold.
+  // A retitle that lands mid-run would otherwise be approved under the old type
+  // (cancel-in-progress is not atomic). The path allowlist needs no re-read: it
+  // was listed for exactly headSha.
   const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
   if (current.head.sha !== headSha) {
     return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);

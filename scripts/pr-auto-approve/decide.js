@@ -214,8 +214,13 @@ const THRESHOLD_MARKER_RE = /<!-- pr-auto-approve:threshold=(\d+) -->/;
 const LEGACY_OPTIONAL_MARKER = '<!-- pr-auto-approve:copilot-optional -->';
 const thresholdMarker = (n) => `<!-- pr-auto-approve:threshold=${n} -->`;
 
+// Markdown only. The earlier `docs/**` admitted any file under docs/ (a script,
+// a generated HTML page), which is code as far as a review is concerned.
+// `docs/**/*.md` is a subset of `**/*.md`; it is kept so the intent reads off
+// the value and so a caller trimming the first glob keeps the docs tree. The
+// default here and in action.yml must stay identical.
 function getOptionalPaths(env = process.env) {
-  const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**')
+  const list = String(env.AUTO_APPROVE_COPILOT_OPTIONAL_PATHS || '**/*.md,docs/**/*.md')
     .split(',').map((x) => x.trim()).filter(Boolean);
   return list;
 }

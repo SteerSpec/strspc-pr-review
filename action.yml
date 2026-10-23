@@ -73,7 +73,7 @@ inputs:
       copilot-optional-paths. Empty (default) uses rounds-threshold for every PR.
   copilot-optional-paths:
     required: false
-    default: '**/*.md,docs/**'
+    default: '**/*.md,docs/**/*.md'
     description: >-
       Comma-separated globs. A type mapped below the default in rounds-by-type
       (0 included) applies only when EVERY changed file matches one of these;

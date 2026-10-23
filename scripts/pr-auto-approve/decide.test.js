@@ -2263,6 +2263,30 @@ test('filesMatchPaths: globs, nesting, empty list', () => {
   assert.equal(decide.filesMatchPaths([], g), false);
 });
 
+test('default copilot-optional-paths admits Markdown only, matching action.yml', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const actionYml = fs.readFileSync(path.join(__dirname, '..', '..', 'action.yml'), 'utf8');
+  const declared = /copilot-optional-paths:\n(?:.*\n)*?\s+default: '([^']*)'/.exec(actionYml);
+  assert.ok(declared, 'action.yml declares a copilot-optional-paths default');
+  assert.equal(declared[1], decide.getOptionalPaths({}).join(','));
+  const g = decide.getOptionalPaths({});
+  assert.deepEqual(g, ['**/*.md', 'docs/**/*.md']);
+  const cases = [
+    { files: ['README.md', 'docs/guide.md', 'docs/a/b/c.md'], ok: true },
+    { files: ['docs/build.js'], ok: false },
+    { files: ['docs/index.html'], ok: false },
+    { files: ['docs/x/y.png'], ok: false },
+    { files: ['docs/README.MD'], ok: false },
+    { files: ['docs/notes.md', 'docs/gen.py'], ok: false },
+  ];
+  for (const c of cases) {
+    assert.equal(decide.filesMatchPaths(c.files, g), c.ok, c.files.join(','));
+  }
+  // A caller's explicit value is used as given.
+  assert.deepEqual(decide.getOptionalPaths({ AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ' docs/** , *.txt ' }), ['docs/**', '*.txt']);
+});
+
 test('rounds-by-type: threshold 0 ignored when the PR touches code', async () => {
   await withRoundsByType('docs:0', async () => {
     const core = makeCore();

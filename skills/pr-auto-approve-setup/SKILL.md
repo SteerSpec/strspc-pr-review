@@ -165,7 +165,7 @@ soon as Copilot reviewed at all, on whatever commit".
 
 `rounds-by-type: 'docs:1,chore:0,fix:3,default:3'` reads the type from the PR title; `0` approves on
 green CI without a Copilot review. Any type mapped below the default (`0` included) applies only when
-every changed file matches `copilot-optional-paths` (default `**/*.md,docs/**`); otherwise the PR
+every changed file matches `copilot-optional-paths` (default `**/*.md,docs/**/*.md`); otherwise the PR
 gets the default threshold. Keep `edited` in `pull_request_target.types` so retitles
 re-evaluate. To stop Copilot reviewing those PRs at all, turn off the ruleset's automatic review and
 set `request-copilot-review: 'true'`.

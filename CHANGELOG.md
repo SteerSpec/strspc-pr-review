@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.8.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.2...v1.8.0) (2026-10-23)
+
+
+### Features
+
+* **decide:** per-commit-type rounds and optional Copilot review ([92c0aa2](https://github.com/SteerSpec/strspc-pr-review/commit/92c0aa209ac35779faace27925b95da5d546382d))
+* **decide:** per-commit-type rounds and optional Copilot review ([9d42255](https://github.com/SteerSpec/strspc-pr-review/commit/9d422557ff375880c6652f42ba59fce7add8e248))
+* **decide:** test the Copilot review request and add an e2e scenario ([c7b3962](https://github.com/SteerSpec/strspc-pr-review/commit/c7b396227856261fe884ad2627b6fffb26c0ca0d))
+* **decide:** test the Copilot review request and add an e2e scenario ([93acbe4](https://github.com/SteerSpec/strspc-pr-review/commit/93acbe4036727b2ea189ad6e446008f102bc5e34))
+
+
+### Bug Fixes
+
+* **decide:** dismiss stale approvals with the workflow token when the bot token is refused ([171625f](https://github.com/SteerSpec/strspc-pr-review/commit/171625fd9d80e9af3aff78ade7724c4bff5e8167))
+* **decide:** do not treat a sibling auto-approve check as CI ([697c2ff](https://github.com/SteerSpec/strspc-pr-review/commit/697c2ff12ad419c1cb269bcc9827a0308d5a011c))
+* **decide:** fail on an empty bot-login and ignore the bot's own review events ([07a6cea](https://github.com/SteerSpec/strspc-pr-review/commit/07a6ceadebb26267e4a3caa7bd7c5c3a135a6094))
+* **decide:** fail on an empty bot-login and ignore the bot's own review events ([6c4f026](https://github.com/SteerSpec/strspc-pr-review/commit/6c4f02620bfbc38da50cd20b85c5e414f2946b98))
+* **decide:** harden rounds-by-type against retitles, truncation and malformed entries ([8932865](https://github.com/SteerSpec/strspc-pr-review/commit/89328658b18b94e207368959297f14599fa5e28d))
+* **decide:** ignore the Copilot check run in the CI gate for types that skip Copilot ([f452356](https://github.com/SteerSpec/strspc-pr-review/commit/f4523562d182f017bb6564588e91ad18d9bdb48a))
+* **decide:** keep honoring the first-form copilot-optional approval marker ([29f2b58](https://github.com/SteerSpec/strspc-pr-review/commit/29f2b585e23338013cf9f355cf0fd2a5bc6628fb))
+* **decide:** only honor a 0 rounds type when changed files match an allowlist ([dd6dad3](https://github.com/SteerSpec/strspc-pr-review/commit/dd6dad35420f72fcc61046af6f299e2e72ea4c33))
+* **decide:** pin approval to the evaluated head and re-check it before a threshold-0 approval ([991bfa0](https://github.com/SteerSpec/strspc-pr-review/commit/991bfa053769ef3fd0fbef93cce9b894c1c187e0))
+* **decide:** stamp rounds approvals, narrow the check filters, document dismissal ([3085536](https://github.com/SteerSpec/strspc-pr-review/commit/3085536e585b435d0e40c6aa801c2a801f05cdab))
+* **decide:** treat a whitespace-only bot-login as empty ([e9b1ccc](https://github.com/SteerSpec/strspc-pr-review/commit/e9b1ccc0fd298385a52a2b5d2bc2a7cc44ed60f9))
+* **decide:** withdraw stale no-Copilot approvals first, fail closed, recheck after approving ([2512f10](https://github.com/SteerSpec/strspc-pr-review/commit/2512f1099921b084be7fda88cd001513e60802c3))
+* **e2e:** search every page of PR events for the Copilot request ([13ee4f0](https://github.com/SteerSpec/strspc-pr-review/commit/13ee4f03203289d20a9a016c7095111c3e813735))
+
 ## [1.7.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.1...v1.7.2) (2026-10-21)
 
 

@@ -408,6 +408,41 @@ async function waitForCopilotReview({
   return { reviews: current, polled };
 }
 
+// Reviewer login accepted by the REST requested_reviewers endpoint; the review
+// then shows up as `Copilot` in the PR timeline. Verified on a ruleset-free repo.
+const COPILOT_REVIEWER = 'copilot-pull-request-reviewer[bot]';
+
+// Requests the Copilot review unless the PR's type needs none (threshold 0 and
+// every changed file optional). Best-effort: requesting is a convenience and
+// must never turn the check red, so errors only warn. The title is read from
+// the event payload, never interpolated into a script. Returns 'requested',
+// 'skipped' or 'error' so callers and tests can tell the outcomes apart.
+async function requestCopilotReview({ github, context, core, env = process.env }) {
+  try {
+    const { owner, repo } = context.repo;
+    const pr = context.payload.pull_request;
+    const { threshold, type } = resolveThreshold(pr.title, env);
+    if (threshold === 0) {
+      const changed = await github.paginate(github.rest.pulls.listFiles, {
+        owner, repo, pull_number: pr.number, per_page: 100,
+      });
+      if (filesMatchPaths(changedFileNames(changed), getOptionalPaths(env))) {
+        core.info(`pr-auto-approve: type '${type}' does not need Copilot; not requesting a review`);
+        return 'skipped';
+      }
+    }
+    await github.rest.pulls.requestReviewers({
+      owner, repo, pull_number: pr.number, reviewers: [COPILOT_REVIEWER],
+    });
+    return 'requested';
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: could not request a Copilot review: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+    return 'error';
+  }
+}
+
 async function decide(args) {
   try {
     return await decideInner(args);
@@ -974,3 +1009,4 @@ module.exports.resolveThreshold = resolveThreshold;
 module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
 module.exports.changedFileNames = changedFileNames;
+module.exports.requestCopilotReview = requestCopilotReview;

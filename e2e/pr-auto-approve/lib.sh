@@ -205,6 +205,34 @@ wait_caller_run() {
   return 1
 }
 
+# 0 when the PR timeline records a review request for Copilot, 1 when it does
+# not, 2 on an API error. The REST request for copilot-pull-request-reviewer[bot]
+# shows up there as review_requested for the reviewer `Copilot`.
+copilot_review_requested() {
+  local pr_num="$1" events
+  if ! events=$(gh api "repos/$REPO/issues/$pr_num/events" --paginate 2>&1); then
+    return 2
+  fi
+  # --paginate prints one array per page: slurp them so a match on an earlier
+  # page is not lost to a later page without one.
+  printf '%s' "$events" | jq -es \
+    '[.[][] | select(.event == "review_requested" and .requested_reviewer.login == "Copilot")] | length > 0' \
+    >/dev/null
+}
+
+# Poll until Copilot has been requested as a reviewer on the PR.
+wait_copilot_requested() {
+  local pr_num="$1" deadline rc
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    rc=0
+    copilot_review_requested "$pr_num" || rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    sleep "$POLL_INTERVAL"
+  done
+  return 1
+}
+
 # Poll until the approver has NO live approval on the PR (it was dismissed).
 wait_approval_withdrawn() {
   local pr_num="$1" body_re="${2:-}" deadline rc

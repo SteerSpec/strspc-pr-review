@@ -97,6 +97,15 @@ caller must set `rounds-by-type: 'chore:0'` and list `edited` in `pull_request_t
 must run on a docs-only change (a path-filtered workflow would leave `wait_for_ci` with no checks).
 `retitle-withdraws` also needs a bot token that may dismiss reviews.
 
+| Scenario (opt-in) | Expected |
+|---|---|
+| `request-copilot` | Copilot is requested on a `feat:` PR and not on a `docs:` PR, which is approved without it |
+
+`request-copilot` needs a sandbox **without** the automatic Copilot code review ruleset (otherwise
+Copilot reviews every PR and the docs half cannot pass), a caller with `request-copilot-review: 'true'`
+and `rounds-by-type: 'docs:0,default:3'`, and it spends one real Copilot review. Point `E2E_REPO` at
+that sandbox.
+
 ```bash
 # Run the default six scenarios
 ./e2e/pr-auto-approve/run.sh

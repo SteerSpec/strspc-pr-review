@@ -276,6 +276,38 @@ scenario_retitle_withdraws() {
   close_pr "$pr_num"
 }
 
+# Needs a sandbox WITHOUT the automatic Copilot ruleset, whose caller sets
+# `request-copilot-review: 'true'` and `rounds-by-type: 'docs:0,...'`. It asks for
+# a real Copilot review on the code PR, so it spends one.
+scenario_request_copilot() {
+  log "scenario: request-copilot (code PR → Copilot requested; docs: PR → not requested, approved)"
+  local branch pr pr_num rc
+  branch=$(new_branch "request-copilot-code")
+  pr=$(create_pr "$branch" "feat: e2e request copilot")
+  pr_num=$(basename "$pr")
+  if wait_copilot_requested "$pr_num"; then
+    ok "request-copilot → Copilot was requested on the code PR"
+  else
+    close_pr "$pr_num"
+    fail "request-copilot: no Copilot review request within ${TIMEOUT}s"
+  fi
+  close_pr "$pr_num"
+
+  branch=$(new_branch "request-copilot-docs")
+  pr=$(create_pr "$branch" "docs: e2e request copilot" "" "docs/e2e-marker.md")
+  pr_num=$(basename "$pr")
+  wait_for_ci "$pr_num"
+  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
+    close_pr "$pr_num"
+    fail "request-copilot: the docs PR was not approved within ${TIMEOUT}s"
+  fi
+  rc=0
+  copilot_review_requested "$pr_num" || rc=$?
+  close_pr "$pr_num"
+  [[ $rc -eq 1 ]] || fail "request-copilot: Copilot was requested on a docs PR (rc=$rc)"
+  ok "request-copilot → no Copilot request on the docs PR"
+}
+
 # Not in the default run: they need sandbox config the original six do not
 # (see the README). Select them by name, or pass `all-types`-style names directly.
 
@@ -294,6 +326,7 @@ declare -A SCENARIOS=(
   [type-zero-code]=scenario_type_zero_code
   [retitle-approves]=scenario_retitle_approves
   [retitle-withdraws]=scenario_retitle_withdraws
+  [request-copilot]=scenario_request_copilot
 )
 
 SELECTED=("${@:-copilot-clean copilot-with-comments suppressed-comments three-rounds changes-requested draft}")

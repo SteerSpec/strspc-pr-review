@@ -2696,3 +2696,58 @@ test('a review by someone else still gets evaluated', async () => {
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
   assert.equal(calls.createReview.length, 1);
 });
+
+// -- requestCopilotReview ------------------------------------------------
+
+const COPILOT_ENV = { AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:0,default:3', AUTO_APPROVE_ROUNDS_THRESHOLD: '3' };
+
+function requestSetup({ title, changedFiles, requestImpl }) {
+  const { github } = makeFakeGithub({ changedFiles });
+  const requested = [];
+  github.rest.pulls.requestReviewers = async (a) => {
+    if (requestImpl) return requestImpl(a);
+    requested.push(a);
+    return { data: {} };
+  };
+  const core = makeCore();
+  const warnings = [];
+  core.warning = (m) => warnings.push(m);
+  const context = makeContext({ prOverrides: { title } });
+  return { github, core, context, requested, warnings };
+}
+
+test('requestCopilotReview: docs-only PR of a type set to 0 does not request Copilot', async () => {
+  const { github, core, context, requested } = requestSetup({ title: 'docs: fix typo', changedFiles: ['README.md'] });
+  const out = await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
+  assert.equal(out, 'skipped');
+  assert.equal(requested.length, 0);
+});
+
+test('requestCopilotReview: type 0 touching code still requests Copilot', async () => {
+  const { github, core, context, requested } = requestSetup({ title: 'docs: sneaky', changedFiles: ['README.md', 'src/app.js'] });
+  const out = await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
+  assert.equal(out, 'requested');
+  assert.deepEqual(requested[0].reviewers, ['copilot-pull-request-reviewer[bot]']);
+  assert.equal(requested[0].pull_number, 42);
+});
+
+test('requestCopilotReview: default type requests Copilot without listing files', async () => {
+  const { github, core, context, requested } = requestSetup({ title: 'feat: thing', changedFiles: ['src/app.js'] });
+  let listed = false;
+  github.paginate = async () => { listed = true; return []; };
+  const out = await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
+  assert.equal(out, 'requested');
+  assert.equal(requested.length, 1);
+  assert.equal(listed, false);
+});
+
+test('requestCopilotReview: an API error only warns', async () => {
+  const { github, core, context, warnings } = requestSetup({
+    title: 'feat: thing',
+    changedFiles: ['src/app.js'],
+    requestImpl: async () => { throw Object.assign(new Error('Validation Failed'), { status: 422 }); },
+  });
+  const out = await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
+  assert.equal(out, 'error');
+  assert.match(warnings[0], /could not request a Copilot review: 422 Validation Failed/);
+});

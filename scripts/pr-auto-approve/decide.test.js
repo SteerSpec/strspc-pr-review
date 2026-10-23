@@ -2145,11 +2145,11 @@ test('parseRoundsByType: trims, lowercases, keeps 0, drops malformed entries', (
 
 test('resolveThreshold: type, default, then rounds-threshold fallback', () => {
   const env = { AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:1,default:2', AUTO_APPROVE_ROUNDS_THRESHOLD: '4' };
-  assert.deepEqual(decide.resolveThreshold('docs: x', env), { threshold: 1, type: 'docs', defaultThreshold: 2 });
-  assert.deepEqual(decide.resolveThreshold('fix: x', env), { threshold: 2, type: 'fix', defaultThreshold: 2 });
-  assert.deepEqual(decide.resolveThreshold('no type', env), { threshold: 2, type: null, defaultThreshold: 2 });
+  assert.deepEqual(decide.resolveThreshold('docs: x', env), { threshold: 1, type: 'docs', defaultThreshold: 2, roundsThreshold: 4 });
+  assert.deepEqual(decide.resolveThreshold('fix: x', env), { threshold: 2, type: 'fix', defaultThreshold: 2, roundsThreshold: 4 });
+  assert.deepEqual(decide.resolveThreshold('no type', env), { threshold: 2, type: null, defaultThreshold: 2, roundsThreshold: 4 });
   const noDefault = { AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:1', AUTO_APPROVE_ROUNDS_THRESHOLD: '4' };
-  assert.deepEqual(decide.resolveThreshold('fix: x', noDefault), { threshold: 4, type: 'fix', defaultThreshold: 4 });
+  assert.deepEqual(decide.resolveThreshold('fix: x', noDefault), { threshold: 4, type: 'fix', defaultThreshold: 4, roundsThreshold: 4 });
   assert.equal(decide.resolveThreshold('docs: x', noDefault).defaultThreshold, 4);
   assert.equal(decide.resolveThreshold('fix: x', {}).threshold, 3);
 });
@@ -2363,6 +2363,49 @@ test('rounds-by-type: a type at or above the default never lists the changed fil
   });
 });
 
+// 0 is relaxed even when it IS the default: `default:0` must not waive Copilot
+// for a code change, so it falls back to rounds-threshold exactly as 0 always did.
+test('rounds-by-type: default:0 is still path-gated and falls back to rounds-threshold', async () => {
+  await withRoundsByType('chore:0,default:0', async () => {
+    const cases = [
+      { title: 'fix: code', changedFiles: ['src/a.js'], decision: 'skip',
+        reason: /^no Copilot review yet; type 'fix' is relaxed to 0 round\(s\) .* the default 3 applies$/ },
+      { title: 'Update the thing', changedFiles: ['src/a.js'], decision: 'skip',
+        reason: /^no Copilot review yet; type 'none' is relaxed to 0 round\(s\)/ },
+      { title: 'fix: docs', changedFiles: ['README.md'], decision: 'approved', reason: /^copilot-optional \(type fix, rounds-by-type 0\)$/ },
+    ];
+    for (const c of cases) {
+      const core = makeCore();
+      const { github, calls } = makeFakeGithub({
+        reviews: [], changedFiles: c.changedFiles, getPrImpl: getPrWithTitle(c.title),
+      });
+      const result = await decide({ github, core, context: makeContext({ prOverrides: { title: c.title } }) });
+      assert.equal(result.decision, c.decision, `${c.title}: ${result.reason}`);
+      assert.match(result.reason, c.reason);
+      assert.equal(calls.createReview.length, c.decision === 'approved' ? 1 : 0);
+    }
+  });
+});
+
+test('rounds-by-type: 0 under rounds-threshold 1 with no default entry is still gated', async () => {
+  const original = process.env.AUTO_APPROVE_ROUNDS_THRESHOLD;
+  process.env.AUTO_APPROVE_ROUNDS_THRESHOLD = '1';
+  try {
+    await withRoundsByType('docs:0', async () => {
+      const core = makeCore();
+      const { github, calls } = makeFakeGithub({
+        reviews: [], changedFiles: ['README.md', 'src/a.js'], getPrImpl: getPrWithTitle('docs: x'),
+      });
+      const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+      assert.equal(result.decision, 'skip');
+      assert.match(result.reason, /^no Copilot review yet; type 'docs' is relaxed to 0 round\(s\) .* the default 1 applies$/);
+      assert.equal(calls.createReview.length, 0);
+    });
+  } finally {
+    process.env.AUTO_APPROVE_ROUNDS_THRESHOLD = original;
+  }
+});
+
 test('a docs:1 approval of a docs-only diff is withdrawn once the PR touches code', async () => {
   await withRoundsByType('docs:1,default:3', async () => {
     const core = makeCore();
@@ -2381,7 +2424,7 @@ test('a docs:1 approval of a docs-only diff is withdrawn once the PR touches cod
     const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: still says docs' } }) });
     assert.equal(dismissed.length, 1);
     assert.equal(dismissed[0].review_id, 77);
-    assert.match(dismissed[0].message, /now needs 3 Copilot review round/);
+    assert.match(dismissed[0].message, /^Withdrawn: the PR \(type docs\) touches files outside copilot-optional-paths and needs 3 Copilot review round\(s\)\.$/);
     assert.equal(result.decision, 'skip');
     assert.match(result.reason, /^latest Copilot review has 1 comments; type 'docs' is relaxed/);
     assert.equal(calls.createReview.length, 0);

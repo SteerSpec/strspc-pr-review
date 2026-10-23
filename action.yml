@@ -78,8 +78,9 @@ inputs:
       Comma-separated globs. A type mapped below the default in rounds-by-type
       (0 included) applies only when EVERY changed file matches one of these;
       otherwise the PR gets the default threshold (the 'default' entry, else
-      rounds-threshold) and the reason says so. The title is author-controlled,
-      so this stops a code change from borrowing a relaxed type.
+      rounds-threshold; a 0 is always gated, so 'default:0' falls back to
+      rounds-threshold for code) and the reason says so. The title is
+      author-controlled, so this stops a code change from borrowing a relaxed type.
   request-copilot-review:
     required: false
     default: 'false'

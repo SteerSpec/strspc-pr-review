@@ -148,14 +148,16 @@ function parseRoundsByType(raw) {
 // Rounds threshold for one PR title: the type's entry, else `default`, else
 // the plain rounds-threshold input. `defaultThreshold` is what a PR of any
 // other type gets (`default`, else rounds-threshold): the bar a relaxed type is
-// measured against. Accepts an env override for unit tests.
+// measured against. `roundsThreshold` is the plain input (never below 1), the
+// bar of last resort when `default` is itself 0. Accepts an env override for
+// unit tests.
 function resolveThreshold(title, env = process.env) {
   const type = parseCommitType(title);
   const byType = parseRoundsByType(env.AUTO_APPROVE_ROUNDS_BY_TYPE);
-  const fallback = Math.max(1, parseInt(env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
-  const defaultThreshold = byType.has('default') ? byType.get('default') : fallback;
+  const roundsThreshold = Math.max(1, parseInt(env.AUTO_APPROVE_ROUNDS_THRESHOLD, 10) || 3);
+  const defaultThreshold = byType.has('default') ? byType.get('default') : roundsThreshold;
   const threshold = type !== null && byType.has(type) ? byType.get(type) : defaultThreshold;
-  return { threshold, type, defaultThreshold };
+  return { threshold, type, defaultThreshold, roundsThreshold };
 }
 
 // Paths a PR may touch for a RELAXED type (one mapped below the default) to
@@ -164,7 +166,9 @@ function resolveThreshold(title, env = process.env) {
 // rules. Threshold 0 was gated from the start; a type set to 1 is the same
 // hole one notch up (a single commented review approves code), so the gate
 // covers every type below the default. Types at or above it are not relaxed
-// and are never gated.
+// and are never gated, with one exception: 0 is always relaxed, so a
+// `default:0` mapping cannot waive Copilot for code (it falls back to
+// rounds-threshold, as 0 always did).
 // The compare endpoint's files array stops at 300 entries (it paginates commits,
 // not files: the list appears on the first page only), so a list that long may
 // be truncated and cannot prove the PR is docs-only. null means "cannot tell".
@@ -195,15 +199,16 @@ async function listChangedFileNames({ github, owner, repo, baseRef, headSha }) {
 // the reason string when the gate changed it. Only a relaxed type pays for the
 // file listing; the default rules need no file list.
 async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env = process.env }) {
-  const { threshold, type, defaultThreshold } = resolveThreshold(title, env);
-  if (threshold >= defaultThreshold) return { threshold, type, note: '' };
+  const { threshold, type, defaultThreshold, roundsThreshold } = resolveThreshold(title, env);
+  if (threshold !== 0 && threshold >= defaultThreshold) return { threshold, type, note: '' };
   const names = await listChangedFileNames({ github, owner, repo, baseRef, headSha });
   if (filesMatchPaths(names, getOptionalPaths(env))) return { threshold, type, note: '' };
+  const strict = defaultThreshold > threshold ? defaultThreshold : roundsThreshold;
   return {
-    threshold: defaultThreshold,
+    threshold: strict,
     type,
-    note: `type '${type}' is relaxed to ${threshold} round(s) but the PR touches files outside ` +
-      `copilot-optional-paths, so the default ${defaultThreshold} applies`,
+    note: `type '${type || 'none'}' is relaxed to ${threshold} round(s) but the PR touches files ` +
+      `outside copilot-optional-paths, so the default ${strict} applies`,
   };
 }
 
@@ -722,7 +727,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
             repo,
             pull_number: prNumber,
             review_id: r.id,
-            message: `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
+            message: thresholdNote
+              ? `Withdrawn: the PR (type ${commitType || 'none'}) touches files outside copilot-optional-paths and needs ${threshold} Copilot review round(s).`
+              : `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
           },
         });
         withdrew = true;

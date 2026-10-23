@@ -378,7 +378,7 @@ rounds-by-type: 'docs:1,chore:0,fix:3,default:3'
 ```
 
 - `0` means Copilot is not required: the PR is approved once CI is green. A Copilot `CHANGES_REQUESTED` review still blocks.
-- **Any type mapped below the default** (`0` or otherwise) applies only when **every changed file matches `copilot-optional-paths`** (default `**/*.md,docs/**/*.md`, Markdown only: a script or generated page under `docs/` is code and gets the normal review). Otherwise the PR gets the default threshold (the `default` entry, else `rounds-threshold`) and the `reason` says so: `…; type 'docs' is relaxed to 1 round(s) but the PR touches files outside copilot-optional-paths, so the default 3 applies`. The title is author-controlled, so a code change titled `chore:` or `docs:` still gets the normal review. Types at or above the default are never gated and never list the PR's files.
+- **Any type mapped below the default** (`0` or otherwise) applies only when **every changed file matches `copilot-optional-paths`** (default `**/*.md,docs/**/*.md`, Markdown only: a script or generated page under `docs/` is code and gets the normal review). Otherwise the PR gets the default threshold (the `default` entry, else `rounds-threshold`; a `0` is always gated, so `default:0` falls back to `rounds-threshold` for code) and the `reason` says so: `…; type 'docs' is relaxed to 1 round(s) but the PR touches files outside copilot-optional-paths, so the default 3 applies`. The title is author-controlled, so a code change titled `chore:` or `docs:` still gets the normal review. Types at or above the default are never gated and never list the PR's files.
 - The gate is re-applied on every run: a `docs:1` approval earned on a docs-only diff is withdrawn once a later push adds a code file (the approval's stamp records the threshold it relied on).
 - The changed files are listed for **exactly the head SHA under evaluation** (a `base...sha` commit comparison, not the PR's live file list), so a force-push during the run cannot swap the diff behind the gate. That comparison needs `contents: read` on `github-token`, which the shipped caller template already grants. A PR touching 300 or more files cannot prove it is docs-only (the comparison's file list stops there) and gets the default rules.
 - Unlisted types and non-conventional titles use `default`, else `rounds-threshold`.
@@ -429,7 +429,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 149 unit tests, no external dependencies
+npm test            # 151 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

@@ -21,7 +21,7 @@ on:
   # belt-and-braces. Do not remove it.
   pull_request_target:
     branches: [main]
-    types: [opened, ready_for_review, synchronize, reopened]
+    types: [opened, ready_for_review, synchronize, reopened, edited]
   # Safe as-is: pull_request_review "will only trigger a workflow run if the
   # workflow file exists on the default branch", so the definition is not
   # PR-controlled and this is not an injection path. Its GITHUB_REF is still the
@@ -144,7 +144,10 @@ jobs:
           # replace with a literal string.
           bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
 
-          # Required: PAT for bot-login with `repo` scope so it can post reviews.
+          # Required: PAT for bot-login. A fine-grained token with `Pull requests: write`
+          # is enough to post the approval; a classic token needs `repo`. After a
+          # retitle that raises the required rounds the earlier approval is dismissed
+          # with this token, falling back to the job's GITHUB_TOKEN if it is refused.
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
 
           # Optional: base branch(es) PRs must target (default: main). Accepts a
@@ -165,6 +168,15 @@ jobs:
           # (e.g. docs-only repos or PRs that skip CI via path filters).
           # When 'false' (default), PRs with no external checks are never approved.
           # allow-no-checks: 'false'
+
+          # Optional: Conventional-Commit rounds from the PR title. 0 = Copilot
+          # not required (approve on green CI). `edited` in the triggers above
+          # makes a retitle re-evaluate the PR.
+          # rounds-by-type: 'docs:1,chore:0,fix:3,default:3'
+
+          # Optional: request the Copilot review from the action so types set to
+          # 0 above are skipped. Disable the ruleset's automatic review first.
+          # request-copilot-review: 'true'
 
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.

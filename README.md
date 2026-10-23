@@ -134,7 +134,7 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 on:
   pull_request_target:   # NOT pull_request — see the security note below
     branches: [main]
-    types: [opened, ready_for_review, synchronize, reopened]
+    types: [opened, ready_for_review, synchronize, reopened, edited]
   pull_request_review:
     types: [submitted]
   check_run:            # third-party app checks only — see the note below
@@ -348,6 +348,9 @@ They're a convenience, not a requirement — everything they do is documented on
 | `github-token` | No | `${{ github.token }}` | Token used for every **read** (check runs, PR, reviews). The default is what makes this work on private repos — see [Prerequisites](#prerequisites) |
 | `base-branch` | No | `main` | Base branch(es) PRs must target; a single branch or a comma-separated set (e.g. `develop,main`) |
 | `rounds-threshold` | No | `3` | Copilot review rounds before approving regardless of inline comments |
+| `rounds-by-type` | No | `''` | Per-Conventional-Commit-type rounds read from the PR title, e.g. `docs:1,chore:0,fix:3,default:3`. `0` means Copilot is not required for that type (approve on green CI). Empty uses `rounds-threshold` for all PRs. See [Per-type rounds](#per-type-rounds) |
+| `copilot-optional-paths` | No | `**/*.md,docs/**` | Globs; a type set to `0` only skips Copilot when every changed file matches, otherwise the PR uses `rounds-threshold`. Stops a code change from borrowing a relaxed title |
+| `request-copilot-review` | No | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. **Experimental:** the REST request for the Copilot bot is not yet verified against real GitHub; failures only warn |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `wait-for-copilot-seconds` | No | `0` | Seconds to wait for Copilot's review (its check run when it is the **last** check still running, or the review itself when no check run exists) instead of skipping. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow). `0` disables |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
@@ -361,6 +364,23 @@ They're a convenience, not a requirement — everything they do is documented on
 |---|---|
 | `decision` | `approved`, `skip`, or `error` |
 | `reason` | Human-readable explanation |
+
+---
+
+## Per-type rounds
+
+`rounds-by-type` reads the Conventional Commit type from the **PR title** (the squash-merge title
+release-please sees), so `docs` can need 1 round while `fix` needs 3:
+
+```yaml
+rounds-by-type: 'docs:1,chore:0,fix:3,default:3'
+```
+
+- `0` means Copilot is not required: the PR is approved once CI is green, **provided every changed file matches `copilot-optional-paths`** (default `**/*.md,docs/**`). The title is author-controlled, so a code change titled `chore:` still gets the normal review. A Copilot `CHANGES_REQUESTED` review still blocks.
+- Unlisted types and non-conventional titles use `default`, else `rounds-threshold`.
+- To also stop Copilot from reviewing those PRs, disable the ruleset's "Automatically request Copilot code review" and set `request-copilot-review: 'true'`. GitHub cannot filter automatic reviews by title.
+- When a retitle raises the required rounds above what an earlier approval relied on, the action **dismisses** that approval. It tries the bot token first and, if GitHub refuses it (401/403), retries with the workflow's `GITHUB_TOKEN`, so keep `pull-requests: write` in the caller's job permissions. If neither can dismiss it, the run fails (`decision=error`).
+- Add `edited` to `pull_request_target.types` in your caller so a retitle re-evaluates the PR; otherwise a `feat:` PR renamed `docs:` keeps its old decision until the next push.
 
 ---
 
@@ -401,7 +421,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 99 unit tests, no external dependencies
+npm test            # 133 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

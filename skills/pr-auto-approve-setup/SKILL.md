@@ -159,6 +159,14 @@ Setting it to `1` makes *every* Copilot review satisfy the threshold immediately
 clean-review, suppressed-comment and freshness rules entirely. The action degrades to "approve as
 soon as Copilot reviewed at all, on whatever commit".
 
+### Different rounds per commit type
+
+`rounds-by-type: 'docs:1,chore:0,fix:3,default:3'` reads the type from the PR title; `0` approves on
+green CI without a Copilot review, but only when every changed file matches `copilot-optional-paths`
+(default `**/*.md,docs/**`). Keep `edited` in `pull_request_target.types` so retitles
+re-evaluate. To stop Copilot reviewing those PRs at all, turn off the ruleset's automatic review and
+set `request-copilot-review: 'true'`.
+
 ## 4. Verify
 
 Open a **second** PR and touch nothing:

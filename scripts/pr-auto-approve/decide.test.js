@@ -2592,3 +2592,20 @@ test('threshold 0: a COMPLETED failing check named like Copilot still blocks', a
     assert.match(result.reason, /failing check/);
   });
 });
+
+test('an approval stamped with the legacy copilot-optional marker is still withdrawn', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const reviews = [{
+      id: 77, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login: 'axeptio-bot' },
+      body: 'Auto-approved: copilot-optional.\n\n<!-- pr-auto-approve:copilot-optional -->',
+    }];
+    const { github } = makeFakeGithub({
+      reviewDecision: 'APPROVED', reviews, getPrImpl: getPrWithTitle('fix: code'),
+    });
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); reviews[0].state = 'DISMISSED'; return { data: {} }; };
+    await decide({ github, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
+    assert.equal(dismissed.length, 1);
+  });
+});

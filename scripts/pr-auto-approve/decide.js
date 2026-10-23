@@ -170,6 +170,7 @@ function changedFileNames(changed) {
 // rounds rule), so a later run can withdraw it if a retitle raises the bar. A
 // copilot-clean approval is threshold-independent and carries no stamp.
 const THRESHOLD_MARKER_RE = /<!-- pr-auto-approve:threshold=(\d+) -->/;
+const LEGACY_OPTIONAL_MARKER = '<!-- pr-auto-approve:copilot-optional -->';
 const thresholdMarker = (n) => `<!-- pr-auto-approve:threshold=${n} -->`;
 
 function getOptionalPaths(env = process.env) {
@@ -585,8 +586,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reviews = await loadReviews();
     const stale = reviews.filter((r) => {
       if (!r.user || r.user.login !== BOT_LOGIN || r.state !== 'APPROVED') return false;
-      const m = THRESHOLD_MARKER_RE.exec(String(r.body || ''));
-      return m !== null && parseInt(m[1], 10) < threshold;
+      const body = String(r.body || '');
+      const m = THRESHOLD_MARKER_RE.exec(body);
+      // The first marker form (pre-3085536) meant "no Copilot review", i.e. 0.
+      const stamped = m ? parseInt(m[1], 10) : (body.includes(LEGACY_OPTIONAL_MARKER) ? 0 : null);
+      return stamped !== null && stamped < threshold;
     });
     for (const r of stale) {
       try {

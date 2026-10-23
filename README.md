@@ -399,6 +399,8 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI; approval requires all checks green. |
 | `evaluation failed: 403 … /check-runs` | The **read** token can't list check runs. Reads must use the workflow's `GITHUB_TOKEN` (the `github-token` input, default) and the caller must grant `checks: read` — a fine-grained PAT cannot be given the `Checks` permission at all. This fails **only on private repositories**: check runs are readable without that permission on public ones, so it works everywhere you'd think to test it. |
+| `bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable…` | The job fails on purpose. `bot-login` came through blank, which also disables the caller's `github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN` loop guard, so each approval would re-trigger the workflow. Set the variable (Settings → Secrets and variables → Actions → Variables) or hard-code the login in both places. |
+| `triggered by the bot's own review` | The run was started by the bot's approval and exits without evaluating. Expected; if you see many of these, the `if:` loop guard does not match `bot-login`. |
 | `PR author is the bot itself` | The bot can't approve its own PR (except in `sandbox-repos`). Expected. |
 | `check_run: PR base ref '...' not in [...]` | The PR targets a branch outside `base-branch`. Align the [3 base-branch sync points](#usage). |
 | Nothing runs at all | Confirm `BOT_GITHUB_TOKEN` belongs to `bot-login` (with write access), and that `vars.PR_AUTO_APPROVE_BOT_LOGIN` is set so the review-loop guard works. |
@@ -421,7 +423,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 133 unit tests, no external dependencies
+npm test            # 136 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

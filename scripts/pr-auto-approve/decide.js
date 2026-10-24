@@ -187,10 +187,14 @@ function changedFileNames(changed) {
 // the top-level catch turns into an "evaluation failed" skip. Three-dot against
 // the base BRANCH is what the PR's Files tab shows (merge-base to head), so a
 // base that moved on since the PR opened does not pull its commits into the
-// list. Needs `contents: read` on github-token, which the shipped caller grants.
+// list. The branch is named as `heads/<ref>`: a bare name is resolved like a
+// git revision, so a TAG of the same name could shadow the branch and the diff
+// would be computed from the wrong base (verified: `heads/<tag-name>` is a 404,
+// `<tag-name>` resolves). Needs `contents: read` on github-token, which the
+// shipped caller grants.
 async function listChangedFileNames({ github, owner, repo, baseRef, headSha }) {
   const { data } = await github.rest.repos.compareCommitsWithBasehead({
-    owner, repo, basehead: `${baseRef}...${headSha}`, per_page: 1,
+    owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 1,
   });
   return changedFileNames(data.files || []);
 }
@@ -977,15 +981,24 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
-  // headSha came from the event; a push while this run is in flight would make
-  // the approval below (pinned to headSha by commit_id) describe a commit that
-  // is no longer the head. Also compared: the title, which chose the threshold.
-  // A retitle that lands mid-run would otherwise be approved under the old type
-  // (cancel-in-progress is not atomic). The path allowlist needs no re-read: it
-  // was listed for exactly headSha.
+  // Every PR field the decision above was computed from is re-read here, so a
+  // change that lands while this run is in flight (cancel-in-progress is not
+  // atomic) cannot be approved under stale inputs:
+  //   - head.sha: the approval below is pinned to headSha by commit_id, so a
+  //     push would leave it describing a commit that is no longer the head;
+  //   - base.ref: the path gate compared headSha against this branch, so a
+  //     retarget changes the diff it judged;
+  //   - title: it chose the threshold, so a retitle changes the rules.
+  // base.sha is deliberately NOT compared: the base branch moves whenever
+  // anything else merges, and the three-dot comparison is merge-base to head,
+  // so the diff is the same for any base tip that has not been merged into
+  // headSha (and merging it in would change headSha).
   const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
   if (current.head.sha !== headSha) {
     return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
+  }
+  if (!current.base || current.base.ref !== pr.base.ref) {
+    return setDecision('skip', `PR base changed from ${pr.base.ref} to ${current.base ? current.base.ref : ''} during evaluation`);
   }
   if ((current.title || '') !== (pr.title || '')) {
     return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
@@ -1021,15 +1034,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
 
   // From here an approval exists, so nothing below may fall back to a plain
-  // skip. The pre-approval re-read leaves a window: a retitle or push can land
-  // between it and the review. Look again and take the approval back; if the
-  // look itself fails, withdraw as a precaution.
+  // skip. The pre-approval re-read leaves a window: a retitle, retarget or push
+  // can land between it and the review. Look again (same fields as above) and
+  // take the approval back; if the look itself fails, withdraw as a precaution.
   let changedWhileApproving;
   try {
     const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    changedWhileApproving = after.head.sha !== headSha || (after.title || '') !== (pr.title || '')
-      ? 'PR head or title changed while approving'
-      : '';
+    const same = after.head.sha === headSha &&
+      Boolean(after.base) && after.base.ref === pr.base.ref &&
+      (after.title || '') === (pr.title || '');
+    changedWhileApproving = same ? '' : 'PR head, base or title changed while approving';
   } catch (err) {
     changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
   }

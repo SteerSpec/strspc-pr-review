@@ -2462,10 +2462,49 @@ test('the changed-files listing is pinned to the evaluated head SHA', async () =
     const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
     assert.equal(result.decision, 'approved', result.reason);
     assert.equal(calls.compare.length, 1);
-    assert.equal(calls.compare[0].basehead, 'develop...deadbeef');
+    assert.equal(calls.compare[0].basehead, 'heads/develop...deadbeef');
     assert.equal(calls.compare[0].owner, 'axeptio');
     assert.equal(calls.compare[0].repo, 'test-only-repo');
   });
+});
+
+// The path gate compared headSha against the event's base branch. A retarget
+// mid-run changes that diff, so it is re-read next to the head and the title.
+test('PR retargeted mid-run: approval is skipped, not granted against the old base', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [],
+      getPrImpl: (num) => {
+        const { data } = getPrWithTitle('docs: x')(num);
+        return { data: { ...data, base: { ref: 'main' } } };
+      },
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'PR base changed from develop to main during evaluation');
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('approval is withdrawn if the base changes right after it is posted', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => {
+      const { data } = getPrWithTitle('docs: x')(num);
+      return { data: { ...data, base: { ref: gets++ === 0 ? 'develop' : 'main' } } };
+    },
+  });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'PR head, base or title changed while approving; approval withdrawn');
+  assert.equal(dismissed[0].review_id, 999);
+  assert.match(dismissed[0].message, /^Withdrawn: PR head, base or title changed while approving\.$/);
 });
 
 test('a head SHA the compare endpoint no longer knows is a clean skip that names the request', async () => {
@@ -2953,7 +2992,7 @@ test('requestCopilotReview: the file listing is pinned to the event head SHA', a
   const original = github.rest.repos.compareCommitsWithBasehead;
   github.rest.repos.compareCommitsWithBasehead = async (a) => { compared.push(a); return original(a); };
   await decide.requestCopilotReview({ github, core, context, env: COPILOT_ENV });
-  assert.deepEqual(compared.map((c) => c.basehead), ['develop...deadbeef']);
+  assert.deepEqual(compared.map((c) => c.basehead), ['heads/develop...deadbeef']);
 });
 
 test('requestCopilotReview: an API error only warns', async () => {

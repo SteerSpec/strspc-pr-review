@@ -30,10 +30,12 @@ inputs:
     description: >-
       Token used for every READ (check runs, the PR, its reviews and their
       comments). Defaults to the workflow's GITHUB_TOKEN, which is what makes
-      this work on private repositories. The action needs `checks: read` and
-      `pull-requests: write` from it and nothing else — the shipped template
-      also grants `contents: read`, which this action never uses. Override only
-      if you have a reason to read as someone else.
+      this work on private repositories. The action needs `checks: read`,
+      `pull-requests: write` and `contents: read` from it and nothing else; the
+      shipped template grants all three. `contents: read` is for the commit
+      comparison that lists a PR's changed files when rounds-by-type relaxes
+      its type (the list is pinned to the evaluated head SHA that way). Override
+      only if you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'
@@ -66,16 +68,19 @@ inputs:
       listed types; 'default' covers every other type and non-conventional
       titles; with no 'default' entry they use rounds-threshold. A value of 0
       means Copilot is not required for that type: the PR is approved once CI is
-      green (a Copilot CHANGES_REQUESTED review still blocks). Empty (default)
-      uses rounds-threshold for every PR.
+      green (a Copilot CHANGES_REQUESTED review still blocks). A type mapped
+      below the default applies only when every changed file matches
+      copilot-optional-paths. Empty (default) uses rounds-threshold for every PR.
   copilot-optional-paths:
     required: false
-    default: '**/*.md,docs/**'
+    default: '**/*.md,docs/**/*.md'
     description: >-
-      Comma-separated globs. A type set to 0 in rounds-by-type only skips Copilot
-      when EVERY changed file matches one of these; otherwise the PR falls back
-      to rounds-threshold. The title is author-controlled, so this stops a code
-      change from borrowing a relaxed type.
+      Comma-separated globs. A type mapped below the default in rounds-by-type
+      (0 included) applies only when EVERY changed file matches one of these;
+      otherwise the PR gets the default threshold (the 'default' entry, else
+      rounds-threshold; a 0 is always gated, so 'default:0' falls back to
+      rounds-threshold for code) and the reason says so. The title is
+      author-controlled, so this stops a code change from borrowing a relaxed type.
   request-copilot-review:
     required: false
     default: 'false'

@@ -1108,18 +1108,40 @@ test('top-level try/catch: checks.listForRef throws → clean skip', async () =>
   assert.match(result.reason, /evaluation failed: 401 Bad credentials/);
 });
 
-test('top-level try/catch: pulls.listReviews throws → clean skip', async () => {
+// Listing the reviews is the first thing a type that needs Copilot does, to
+// find and withdraw an earlier relaxed approval. A failure THERE is an error,
+// not a skip: a skip would leave an approval the run never found standing.
+test('pulls.listReviews throwing before the stale-approval check is an error, not a skip', async () => {
   const core = makeCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
   const err = new Error('rate limit exceeded');
   err.status = 403;
-  // Default (green) check runs so we reach listReviews, which then throws.
-  const { github } = makeFakeGithub();
+  const { github, calls } = makeFakeGithub();
   github.rest.pulls.listReviews = async () => {
     throw err;
   };
   const result = await decide({ github, context: makeContext(), core });
-  assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /evaluation failed: 403 rate limit/);
+  assert.equal(result.decision, 'error');
+  assert.equal(result.reason, "could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: 403 rate limit exceeded");
+  assert.equal(failures.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+// Once the stale check is behind us (a type 0 PR runs none), the same failure
+// is the ordinary "evaluation failed" skip: no approval can be hiding.
+test('top-level try/catch: pulls.listReviews throws after the stale-approval check → clean skip', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ getPrImpl: getPrWithTitle('docs: x') });
+    github.rest.pulls.listReviews = async () => {
+      throw Object.assign(new Error('rate limit exceeded'), { status: 403 });
+    };
+    const result = await decide({ github, context: makeContext({ prOverrides: { title: 'docs: x' } }), core });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /evaluation failed: 403 rate limit/);
+    assert.equal(calls.createReview.length, 0);
+  });
 });
 
 test('test-login override: AUTO_APPROVE_COPILOT_TEST_LOGINS treats listed users as Copilot', async () => {
@@ -2078,18 +2100,22 @@ test('token split: botGithub defaults to github, so one-client callers still wor
 
 test('evaluation failure names the request that was refused', async () => {
   const core = makeCore();
-  const { github } = makeFakeGithub();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github } = makeFakeGithub({
+    reviews: [{ id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp }],
+  });
   const err = new Error('Resource not accessible by personal access token');
   err.status = 403;
-  err.request = { method: 'GET', url: 'https://api.github.com/repos/o/r/pulls/1/reviews' };
-  // paginate, not pulls.get: on a pull_request event the PR comes from the
-  // payload and pulls.get is never called, so overriding it proves nothing.
-  github.paginate = async () => { throw err; };
+  err.request = { method: 'GET', url: 'https://api.github.com/repos/o/r/pulls/1/reviews/1/comments' };
+  // The review-comments call, not the reviews one: listing the reviews fails
+  // closed as an error (it is how a stale relaxed approval is found), and on a
+  // pull_request event pulls.get is never called, so overriding it proves nothing.
+  github.rest.pulls.listCommentsForReview = async () => { throw err; };
 
   const result = await decide({ github, context: makeContext(), core });
 
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /^evaluation failed: 403 GET \/repos\/o\/r\/pulls\/1\/reviews /);
+  assert.match(result.reason, /^evaluation failed: 403 GET \/repos\/o\/r\/pulls\/1\/reviews\/1\/comments /);
   // Unrelated 403s must not carry the Checks hint, or it stops meaning anything.
   assert.doesNotMatch(result.reason, /Checks permission/);
 });
@@ -2568,6 +2594,22 @@ test('a failed file listing withdraws every stamped bot approval before skipping
     assert.equal(dismissed[0].message, 'Withdrawn: the changed files of deadbeef could not be listed (403 Resource not accessible by integration), so a relaxed approval cannot be verified.');
     assert.equal(result.decision, 'skip');
     assert.match(result.reason, /^evaluation failed: 403 GET \/repos\/axeptio\/test-only-repo\/compare\/heads%2Fdevelop\.\.\.deadbeef Resource not accessible/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('a failed file listing followed by a failed review listing is an error, not a skip', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github, calls } = makeFakeGithub();
+    github.rest.repos.compareCommitsWithBasehead = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); };
+    github.rest.pulls.listReviews = async () => { throw Object.assign(new Error('Server Error'), { status: 500 }); };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'error');
+    assert.equal(result.reason, "could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: 500 Server Error");
+    assert.equal(failures.length, 1);
     assert.equal(calls.createReview.length, 0);
   });
 });

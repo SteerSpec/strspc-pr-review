@@ -730,12 +730,26 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // Dismiss every stamped bot approval `isStale` selects. Loads the reviews
   // (into the shared `reviews`, cleared again if anything was dismissed) and
-  // returns an error decision if a dismissal fails: the stale approval then
-  // still stands, so this must not read as an ordinary skip. Neither the bot
-  // token nor the workflow token could dismiss.
+  // returns an error decision if the reviews cannot be listed or a dismissal
+  // fails: a stale approval may then still stand, so neither may read as an
+  // ordinary skip. The listing failure in particular must not fall through to
+  // the top-level catch: that catch is a skip, and a skip here is precisely the
+  // state this helper exists to prevent (an approval the run never found).
   let withdrew = false;
+  const failClosed = (reason) => {
+    core.error(`pr-auto-approve ${reason}`);
+    if (typeof core.setFailed === 'function') core.setFailed(reason);
+    return setDecision('error', reason);
+  };
   const withdrawStampedApprovals = async (isStale, message) => {
-    reviews = await loadReviews();
+    try {
+      reviews = await loadReviews();
+    } catch (err) {
+      return failClosed(
+        'could not list the PR\'s reviews, so an earlier approval stamped with a relaxed ' +
+          `rounds-by-type threshold cannot be found and withdrawn: ${err.status || ''} ${err.message || err}`.trim(),
+      );
+    }
     for (const r of reviews) {
       const stamped = stampedThreshold(r);
       if (stamped === null || !isStale(stamped)) continue;
@@ -745,10 +759,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         });
         withdrew = true;
       } catch (err) {
-        const reason = `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
-        core.error(`pr-auto-approve ${reason}`);
-        if (typeof core.setFailed === 'function') core.setFailed(reason);
-        return setDecision('error', reason);
+        return failClosed(
+          `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim(),
+        );
       }
     }
     if (withdrew) reviews = null;

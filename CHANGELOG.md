@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.8.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.8.0...v1.8.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **decide:** fail closed when the file listing fails, and re-check the merge base ([1bddfbc](https://github.com/SteerSpec/strspc-pr-review/commit/1bddfbcd70defef4e5d2097daa4e8d23af407a07))
+* **decide:** fail closed when the reviews cannot be listed for the stale-approval check ([32ddb08](https://github.com/SteerSpec/strspc-pr-review/commit/32ddb080d4da06821075cc930f8ee7e15bb3ed2e))
+* **decide:** gate every relaxed rounds-by-type entry on copilot-optional-paths ([d762e32](https://github.com/SteerSpec/strspc-pr-review/commit/d762e320f21d885d4341f39df3a38d406e6e728c))
+* **decide:** harden the rounds-by-type path gate ([96f1f66](https://github.com/SteerSpec/strspc-pr-review/commit/96f1f66f911d482d77ff30436bdf6aa6bc460833))
+* **decide:** keep a rounds-by-type 0 path-gated even when it is the default ([f1f6966](https://github.com/SteerSpec/strspc-pr-review/commit/f1f6966e195e5624953adb0e80a412550a2b6248))
+* **decide:** list the PR's changed files for the evaluated head SHA ([23e1c17](https://github.com/SteerSpec/strspc-pr-review/commit/23e1c1727d558dbeea4e35cf0964ace912b6697a))
+* **decide:** re-read the base branch around approval and name it as heads/&lt;ref&gt; ([2bb5174](https://github.com/SteerSpec/strspc-pr-review/commit/2bb5174c546781eb65d7ae0621e3d8b8d68d3bcc))
+* **decide:** restrict the default copilot-optional-paths to Markdown ([ec6d685](https://github.com/SteerSpec/strspc-pr-review/commit/ec6d6850b3cb390e66317dcba7eb7fd8fe05d4e2))
+* update vulnerable and outdated dependencies ([1f6f387](https://github.com/SteerSpec/strspc-pr-review/commit/1f6f38791e638dbe47b12cb0201f0ad32ff281b0))
+* update vulnerable and outdated dependencies ([d503919](https://github.com/SteerSpec/strspc-pr-review/commit/d503919823063f5e1e5190ce472a9adfe34d8b31))
+
 ## [1.8.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.7.2...v1.8.0) (2026-10-23)
 
 

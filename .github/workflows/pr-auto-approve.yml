@@ -149,7 +149,7 @@ jobs:
         if: >-
           github.event_name == 'pull_request' &&
           (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
         with:
           github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           script: |
@@ -176,7 +176,7 @@ jobs:
 
       - name: Evaluate and approve
         id: evaluate
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
         env:
           AUTO_APPROVE_BOT_LOGIN: ${{ inputs.bot_login }}
           AUTO_APPROVE_BASE_BRANCH: ${{ inputs.base_branch }}

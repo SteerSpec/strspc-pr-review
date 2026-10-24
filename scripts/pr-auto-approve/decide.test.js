@@ -62,7 +62,7 @@ function makeFakeGithub({
         // 300: one object, not a paginated list.
         compareCommitsWithBasehead: async (args) => {
           calls.compare.push(args);
-          return { data: { files: changedFiles.map((filename) => ({ filename })) } };
+          return { data: { merge_base_commit: { sha: 'mb000001' }, files: changedFiles.map((filename) => ({ filename })) } };
         },
       },
       pulls: {
@@ -2461,10 +2461,132 @@ test('the changed-files listing is pinned to the evaluated head SHA', async () =
     const { github, calls } = makeFakeGithub({ reviews: [], getPrImpl: getPrWithTitle('docs: x') });
     const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
     assert.equal(result.decision, 'approved', result.reason);
+    // Once for the gate, then once before and once after approving to prove the
+    // merge base (hence the diff) did not move.
+    assert.equal(calls.compare.length, 3);
+    for (const c of calls.compare) {
+      assert.equal(c.basehead, 'heads/develop...deadbeef');
+      assert.equal(c.owner, 'axeptio');
+      assert.equal(c.repo, 'test-only-repo');
+    }
+  });
+});
+
+test('a relaxed type that fell back to the default re-checks nothing: the approval does not rest on the diff', async () => {
+  await withRoundsByType('docs:1,default:3', async () => {
+    const core = makeCore();
+    const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+    const { github, calls } = makeFakeGithub({
+      reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+      changedFiles: ['README.md', 'src/a.js'], getPrImpl: getPrWithTitle('docs: x'),
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'approved', result.reason);
+    assert.match(result.reason, /^3-rounds \(3 Copilot reviews\); type 'docs' is relaxed/);
     assert.equal(calls.compare.length, 1);
-    assert.equal(calls.compare[0].basehead, 'heads/develop...deadbeef');
-    assert.equal(calls.compare[0].owner, 'axeptio');
-    assert.equal(calls.compare[0].repo, 'test-only-repo');
+  });
+});
+
+// A force-push of the base branch keeps base.ref and head.sha intact but can
+// change the merge base, i.e. the diff the gate judged. Catch it both sides of
+// the approval; a base that merely moved on keeps its merge base and passes.
+test('base branch rewritten before approving: the relaxed approval is skipped', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [], getPrImpl: getPrWithTitle('docs: x') });
+    let compares = 0;
+    github.rest.repos.compareCommitsWithBasehead = async () => ({
+      data: { merge_base_commit: { sha: compares++ === 0 ? 'mb000001' : 'mb000002' }, files: [{ filename: 'README.md' }] },
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'base develop was rewritten (merge base mb000001 -> mb000002) during evaluation; the next run re-evaluates the diff');
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('base branch rewritten while approving: the relaxed approval is withdrawn', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [], getPrImpl: getPrWithTitle('docs: x') });
+    let compares = 0;
+    github.rest.repos.compareCommitsWithBasehead = async () => ({
+      data: { merge_base_commit: { sha: compares++ < 2 ? 'mb000001' : 'mb000002' }, files: [{ filename: 'README.md' }] },
+    });
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(calls.createReview.length, 1);
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'base develop was rewritten (merge base mb000001 -> mb000002) while approving; approval withdrawn');
+    assert.equal(dismissed[0].review_id, 999);
+    assert.equal(dismissed[0].message, 'Withdrawn: base develop was rewritten (merge base mb000001 -> mb000002) while approving.');
+  });
+});
+
+test('a comparison with no merge base cannot be re-verified, so the relaxation is not granted', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({ reviews: [] });
+    github.rest.repos.compareCommitsWithBasehead = async () => ({ data: { files: [{ filename: 'README.md' }] } });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, "no Copilot review yet; type 'docs' is relaxed to 0 round(s) but the comparison reported no merge base, so the diff cannot be re-verified and the default 3 applies");
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+// The gate runs before the stale-approval withdrawal, so a failed file listing
+// used to leave an earlier relaxed approval standing behind an "evaluation
+// failed" skip. Withdraw first, then report the failure.
+test('a failed file listing withdraws every stamped bot approval before skipping', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const reviews = [
+      { id: 70, state: 'APPROVED', submitted_at: '2026-04-15T07:00:00Z', user: { login: 'axeptio-bot' },
+        body: 'Auto-approved: copilot-clean (review 1, state=COMMENTED).' },
+      { id: 71, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login: 'axeptio-bot' },
+        body: 'Auto-approved: copilot-optional.\n\n<!-- pr-auto-approve:threshold=0 -->' },
+      { id: 72, state: 'APPROVED', submitted_at: '2026-04-15T09:00:00Z', user: { login: 'axeptio-bot' },
+        body: 'Auto-approved: 1-rounds (1 Copilot reviews).\n\n<!-- pr-auto-approve:threshold=1 -->' },
+      { id: 73, state: 'APPROVED', submitted_at: '2026-04-15T10:00:00Z', user: { login: 'someone-else' },
+        body: '<!-- pr-auto-approve:threshold=0 -->' },
+    ];
+    const { github, calls } = makeFakeGithub({ reviews });
+    github.rest.repos.compareCommitsWithBasehead = async () => {
+      throw Object.assign(new Error('Resource not accessible by integration'), {
+        status: 403,
+        request: { method: 'GET', url: 'https://api.github.com/repos/axeptio/test-only-repo/compare/heads%2Fdevelop...deadbeef' },
+      });
+    };
+    const dismissed = [];
+    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    // Only the bot's STAMPED approvals: the clean one holds under any threshold,
+    // and another user's review is not ours to dismiss.
+    assert.deepEqual(dismissed.map((d) => d.review_id), [71, 72]);
+    assert.equal(dismissed[0].message, 'Withdrawn: the changed files of deadbeef could not be listed (403 Resource not accessible by integration), so a relaxed approval cannot be verified.');
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /^evaluation failed: 403 GET \/repos\/axeptio\/test-only-repo\/compare\/heads%2Fdevelop\.\.\.deadbeef Resource not accessible/);
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('a failed file listing whose withdrawal also fails is an error, not a skip', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github } = makeFakeGithub({
+      reviews: [{ id: 71, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login: 'axeptio-bot' },
+        body: 'x\n\n<!-- pr-auto-approve:threshold=0 -->' }],
+    });
+    github.rest.repos.compareCommitsWithBasehead = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); };
+    github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('boom'), { status: 500 }); };
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'error');
+    assert.match(result.reason, /^could not withdraw the stale approval \(review 71\): 500 boom$/);
+    assert.equal(failures.length, 1);
   });
 });
 

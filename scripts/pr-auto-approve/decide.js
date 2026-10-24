@@ -192,28 +192,55 @@ function changedFileNames(changed) {
 // would be computed from the wrong base (verified: `heads/<tag-name>` is a 404,
 // `<tag-name>` resolves). Needs `contents: read` on github-token, which the
 // shipped caller grants.
-async function listChangedFileNames({ github, owner, repo, baseRef, headSha }) {
+//
+// Also returned: the merge base the diff was computed from. The diff of a
+// three-dot comparison depends on nothing but the merge base and the head, so
+// the merge base is the one value that proves the base branch was not REWRITTEN
+// (force-pushed) between this listing and the approval; a base that merely
+// moved on keeps the same merge base and is not a change.
+async function compareHead({ github, owner, repo, baseRef, headSha }) {
   const { data } = await github.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 1,
   });
-  return changedFileNames(data.files || []);
+  return {
+    names: changedFileNames(data.files || []),
+    mergeBase: (data.merge_base_commit && data.merge_base_commit.sha) || null,
+  };
 }
 
 // Threshold a PR actually gets once the path gate is applied, plus a note for
 // the reason string when the gate changed it. Only a relaxed type pays for the
-// file listing; the default rules need no file list.
+// file listing; the default rules need no file list. `mergeBase` is set only
+// when the relaxed threshold was KEPT on the strength of that listing: that is
+// the one outcome that rests on the diff, so it is the one the caller must
+// re-verify before and after approving.
 async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env = process.env }) {
   const { threshold, type, defaultThreshold, roundsThreshold } = resolveThreshold(title, env);
-  if (threshold !== 0 && threshold >= defaultThreshold) return { threshold, type, note: '' };
-  const names = await listChangedFileNames({ github, owner, repo, baseRef, headSha });
-  if (filesMatchPaths(names, getOptionalPaths(env))) return { threshold, type, note: '' };
+  const unverified = { threshold, type, note: '', mergeBase: null };
+  if (threshold !== 0 && threshold >= defaultThreshold) return unverified;
+  const { names, mergeBase } = await compareHead({ github, owner, repo, baseRef, headSha });
   const strict = defaultThreshold > threshold ? defaultThreshold : roundsThreshold;
-  return {
-    threshold: strict,
-    type,
-    note: `type '${type || 'none'}' is relaxed to ${threshold} round(s) but the PR touches files ` +
-      `outside copilot-optional-paths, so the default ${strict} applies`,
-  };
+  const relaxedTo = `type '${type || 'none'}' is relaxed to ${threshold} round(s) but`;
+  if (!filesMatchPaths(names, getOptionalPaths(env))) {
+    return {
+      threshold: strict,
+      type,
+      note: `${relaxedTo} the PR touches files outside copilot-optional-paths, so the default ${strict} applies`,
+      mergeBase: null,
+    };
+  }
+  // Without a merge base the diff cannot be re-verified at approval time, so
+  // the relaxation is not granted: the one failure direction this gate exists
+  // to prevent is an unverifiable approval.
+  if (!mergeBase) {
+    return {
+      threshold: strict,
+      type,
+      note: `${relaxedTo} the comparison reported no merge base, so the diff cannot be re-verified and the default ${strict} applies`,
+      mergeBase: null,
+    };
+  }
+  return { threshold, type, note: '', mergeBase };
 }
 
 // Stamps the threshold an approval relied on (0 = no Copilot review; N = the
@@ -683,20 +710,6 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision('skip', 'PR author is the bot itself');
   }
 
-  // The type's threshold, unless the type is relaxed and the diff reaches
-  // outside copilot-optional-paths, in which case the default applies. 0 means
-  // Copilot is not required: nothing to wait for, and the review rules below
-  // are bypassed.
-  const gate = await applyPathGate({
-    github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
-  });
-  const { threshold, type: commitType } = gate;
-  if (gate.note) {
-    thresholdNote = gate.note;
-    core.info(`pr-auto-approve: ${gate.note}`);
-  }
-  const copilotOptional = threshold === 0;
-
   const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
@@ -705,41 +718,33 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   });
   let reviews = null;
 
-  // A no-Copilot approval was earned by the title at the time. If the title has
-  // since changed to a type that needs a review, the approval no longer stands:
-  // withdraw it and evaluate the PR under the current rules. This runs before
-  // every other gate (CI, the Copilot waits, reviewDecision), because those
-  // return early and would otherwise leave the stale approval in place.
+  // Threshold an earlier bot approval was stamped with; null for an approval
+  // that carries no stamp (copilot-clean, or not ours to judge).
+  const stampedThreshold = (r) => {
+    if (!r.user || r.user.login !== BOT_LOGIN || r.state !== 'APPROVED') return null;
+    const body = String(r.body || '');
+    const m = THRESHOLD_MARKER_RE.exec(body);
+    // The first marker form (pre-3085536) meant "no Copilot review", i.e. 0.
+    return m ? parseInt(m[1], 10) : (body.includes(LEGACY_OPTIONAL_MARKER) ? 0 : null);
+  };
+
+  // Dismiss every stamped bot approval `isStale` selects. Loads the reviews
+  // (into the shared `reviews`, cleared again if anything was dismissed) and
+  // returns an error decision if a dismissal fails: the stale approval then
+  // still stands, so this must not read as an ordinary skip. Neither the bot
+  // token nor the workflow token could dismiss.
   let withdrew = false;
-  if (BOT_LOGIN && !copilotOptional) {
+  const withdrawStampedApprovals = async (isStale, message) => {
     reviews = await loadReviews();
-    const stale = reviews.filter((r) => {
-      if (!r.user || r.user.login !== BOT_LOGIN || r.state !== 'APPROVED') return false;
-      const body = String(r.body || '');
-      const m = THRESHOLD_MARKER_RE.exec(body);
-      // The first marker form (pre-3085536) meant "no Copilot review", i.e. 0.
-      const stamped = m ? parseInt(m[1], 10) : (body.includes(LEGACY_OPTIONAL_MARKER) ? 0 : null);
-      return stamped !== null && stamped < threshold;
-    });
-    for (const r of stale) {
+    for (const r of reviews) {
+      const stamped = stampedThreshold(r);
+      if (stamped === null || !isStale(stamped)) continue;
       try {
         await dismissReview({
-          github,
-          botGithub,
-          params: {
-            owner,
-            repo,
-            pull_number: prNumber,
-            review_id: r.id,
-            message: thresholdNote
-              ? `Withdrawn: the PR (type ${commitType || 'none'}) touches files outside copilot-optional-paths and needs ${threshold} Copilot review round(s).`
-              : `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
-          },
+          github, botGithub, params: { owner, repo, pull_number: prNumber, review_id: r.id, message },
         });
         withdrew = true;
       } catch (err) {
-        // Fail closed and loudly: the stale approval still stands, so this must
-        // not read as an ordinary skip. Neither the bot token nor the workflow token could dismiss.
         const reason = `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
         core.error(`pr-auto-approve ${reason}`);
         if (typeof core.setFailed === 'function') core.setFailed(reason);
@@ -747,6 +752,58 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       }
     }
     if (withdrew) reviews = null;
+    return null;
+  };
+
+  // The type's threshold, unless the type is relaxed and the diff reaches
+  // outside copilot-optional-paths, in which case the default applies. 0 means
+  // Copilot is not required: nothing to wait for, and the review rules below
+  // are bypassed.
+  //
+  // If the file listing itself fails (403: github-token lacks contents: read;
+  // 404: the head was force-pushed away mid-run), the run cannot tell whether
+  // an earlier relaxed approval still holds, and the ordinary "evaluation
+  // failed" skip would leave it standing for a repo that does not dismiss stale
+  // approvals. Withdraw every stamped approval first, then let the top-level
+  // catch report the failed request as usual.
+  let gate;
+  try {
+    gate = await applyPathGate({
+      github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
+    });
+  } catch (err) {
+    if (BOT_LOGIN) {
+      const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+      const failed = await withdrawStampedApprovals(
+        () => true,
+        `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be listed (${detail}), ` +
+          'so a relaxed approval cannot be verified.',
+      );
+      if (failed) return failed;
+    }
+    throw err;
+  }
+  const { threshold, type: commitType } = gate;
+  if (gate.note) {
+    thresholdNote = gate.note;
+    core.info(`pr-auto-approve: ${gate.note}`);
+  }
+  const copilotOptional = threshold === 0;
+
+  // A relaxed approval was earned by the title and the diff at the time. If the
+  // title has since changed to a type that needs more rounds, or a push added a
+  // file outside copilot-optional-paths, the approval no longer stands:
+  // withdraw it and evaluate the PR under the current rules. This runs before
+  // every other gate (CI, the Copilot waits, reviewDecision), because those
+  // return early and would otherwise leave the stale approval in place.
+  if (BOT_LOGIN && !copilotOptional) {
+    const failed = await withdrawStampedApprovals(
+      (stamped) => stamped < threshold,
+      thresholdNote
+        ? `Withdrawn: the PR (type ${commitType || 'none'}) touches files outside copilot-optional-paths and needs ${threshold} Copilot review round(s).`
+        : `Withdrawn: the PR title (type ${commitType || 'none'}) now needs ${threshold} Copilot review round(s).`,
+    );
+    if (failed) return failed;
   }
 
   const headSha = pr.head.sha;
@@ -992,13 +1049,26 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // base.sha is deliberately NOT compared: the base branch moves whenever
   // anything else merges, and the three-dot comparison is merge-base to head,
   // so the diff is the same for any base tip that has not been merged into
-  // headSha (and merging it in would change headSha).
+  // headSha (and merging it in would change headSha). A REWRITE of the base
+  // (force-push) is the one base change that can alter the diff with the ref
+  // and the head unchanged; the merge base catches exactly that, so it is
+  // re-read instead, and only when the approval rests on the file list.
+  const mergeBaseMoved = async () => {
+    if (!gate.mergeBase) return '';
+    const { mergeBase } = await compareHead({ github, owner, repo, baseRef: pr.base.ref, headSha });
+    if (mergeBase === gate.mergeBase) return '';
+    return `base ${pr.base.ref} was rewritten (merge base ${gate.mergeBase.slice(0, 8)} -> ${String(mergeBase || 'none').slice(0, 8)})`;
+  };
   const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
   if (current.head.sha !== headSha) {
     return setDecision('skip', `head moved from ${headSha.slice(0, 8)} to ${current.head.sha.slice(0, 8)} during evaluation`);
   }
   if (!current.base || current.base.ref !== pr.base.ref) {
     return setDecision('skip', `PR base changed from ${pr.base.ref} to ${current.base ? current.base.ref : ''} during evaluation`);
+  }
+  const rewritten = await mergeBaseMoved();
+  if (rewritten) {
+    return setDecision('skip', `${rewritten} during evaluation; the next run re-evaluates the diff`);
   }
   if ((current.title || '') !== (pr.title || '')) {
     return setDecision('skip', 'PR title changed during evaluation; the next run re-evaluates it');
@@ -1043,7 +1113,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     const same = after.head.sha === headSha &&
       Boolean(after.base) && after.base.ref === pr.base.ref &&
       (after.title || '') === (pr.title || '');
-    changedWhileApproving = same ? '' : 'PR head, base or title changed while approving';
+    if (!same) {
+      changedWhileApproving = 'PR head, base or title changed while approving';
+    } else {
+      const rewritten = await mergeBaseMoved();
+      changedWhileApproving = rewritten ? `${rewritten} while approving` : '';
+    }
   } catch (err) {
     changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
   }

@@ -12,17 +12,13 @@ name: Sync marketplace pin
 # after a release and opens the PR that does it — see the `on:` block for why
 # "after a release" is not spelled `release: [published]`.
 #
-# It authenticates with BOT_TOKEN rather than GITHUB_TOKEN for two reasons: the
-# default token has no access to another repository at all, and a
-# GITHUB_TOKEN-authored commit would leave the resulting PR's head SHA with no
-# checks, which .claude's own auto-approve refuses to approve.
-#
-# CONSEQUENCE, and it is not a bug to be fixed: the PR arrives authored by the
-# bot, so .claude's auto-approve skips it with "PR author is the bot itself".
-# GitHub blocks self-approval, and there is no second bot identity to open it
-# as. Every pin PR therefore needs one human approval. That is fine — the
-# automation's value is in never forgetting the edit and never getting the sha
-# wrong, not in saving a click.
+# It authenticates as the steerspec-sync GitHub App rather than GITHUB_TOKEN or
+# the approving bot's PAT: the default token has no access to another
+# repository at all and its events start no workflows; a PAT commit is unsigned
+# (the enterprise ruleset requires verified signatures) and the resulting PR
+# would be authored by the same bot that approves, which GitHub forbids. The App
+# token commits through the API (GitHub-signed), opens the PR as
+# steerspec-sync[bot], and .claude's CI and auto-approve run on it normally.
 
 on:
   # NOT `release: [published]`, which cannot work here and shipped broken in
@@ -64,9 +60,29 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve the marketplace repo
+        id: target
+        env:
+          TARGET_REPO: ${{ vars.MARKETPLACE_REPO || 'SteerSpec/.claude' }}
+        run: |
+          echo "owner=${TARGET_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${TARGET_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Mint a GitHub App token for the marketplace repo
+        # Scoped to the marketplace repo; this repo's release lookups below are
+        # public reads, which any installation token can do. Another org reusing
+        # this flow must have the App installed on its marketplace repo.
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ secrets.STEERSPEC_APP_ID }}
+          private-key: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+
       - name: Open the pin-update PR in the marketplace repo
         env:
-          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           SOURCE_REPO: ${{ github.repository }}
           # Another org reusing this flow sets the MARKETPLACE_REPO repository
           # variable; SteerSpec's own marketplace is the default.

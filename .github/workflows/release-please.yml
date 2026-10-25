@@ -14,20 +14,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mint a GitHub App token
-        # steerspec-sync App: its PRs trigger CI and auto-approve (unlike GITHUB_TOKEN),
-        # its API commits are GitHub-signed (enterprise required_signatures) and its
-        # author steerspec-sync[bot] is not the approving bot, so auto-approve can act.
+        # steerspec-sync App rather than GITHUB_TOKEN or a PAT: its API commits
+        # are GitHub-signed (enterprise required_signatures, no manual re-sign)
+        # and the events it causes do start workflows. Release PRs target main,
+        # where ci.yml and auto-approve.yml do not run, so merging one stays a
+        # human click; main carries no review requirement.
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           app-id: ${{ secrets.STEERSPEC_APP_ID }}
           private-key: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
+          # Scoped to this repository (the action's default) and to the two
+          # permissions release-please needs, matching the workflow permissions.
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          # Not the default GITHUB_TOKEN: the release PR it opens gets no CI run and
-          # no auto-approve, so every release needed a human merge.
+          # Not the default GITHUB_TOKEN: its commits would still be signed, but
+          # no workflow would ever fire from the tags and PRs it creates.
           token: ${{ steps.app.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

@@ -79,6 +79,9 @@ jobs:
           private-key: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
           owner: ${{ steps.target.outputs.owner }}
           repositories: ${{ steps.target.outputs.name }}
+          # Only what the pin PR needs: a branch with one commit, and the PR.
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Open the pin-update PR in the marketplace repo
         env:

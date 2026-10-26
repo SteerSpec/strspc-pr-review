@@ -129,7 +129,7 @@ never checks out PR code.
   `skills/*/SKILL.md` YAML snippet exists in `action.yml` (it does not cover outputs or require
   every input to be documented). When you change an input or output, update all three in the
   same PR.
-- `CLAUDE.md` is a symlink to this file; edit `AGENTS.md`.
+- `AGENTS.md` is a symlink to this file. `CLAUDE.md` must stay a regular file: SteerSpec Sync rewrites it in place, and a symlink makes the sync PR commit the whole file as the link target, which breaks checkout.
 - Workflow files carry long comments explaining non-obvious choices (why `pull_request_target`,
   why `workflow_run` is the re-entry point, why BOT_TOKEN rather than GITHUB_TOKEN). Read them
   before changing a trigger, and keep the comment true when you do.

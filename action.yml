@@ -90,6 +90,14 @@ inputs:
       request Copilot code review" first, or Copilot reviews every PR anyway.
       Needs pull_request_target (with the 'edited' type) in the caller.
       Failures only log a warning.
+  copilot-error-retries:
+    required: false
+    default: '0'
+    description: >-
+      Times to re-request Copilot's review on the same head commit when its
+      review errored ("unable to review this pull request"). Errored reviews
+      never approve or count as rounds either way. 0 (default) disables the
+      automatic re-request. Uses github-token; failures only log a warning.
   allow-no-checks:
     required: false
     default: 'false'
@@ -216,6 +224,7 @@ runs:
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
+        AUTO_APPROVE_COPILOT_ERROR_RETRIES: ${{ inputs.copilot-error-retries }}
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}

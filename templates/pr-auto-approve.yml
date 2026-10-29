@@ -178,6 +178,10 @@ jobs:
           # 0 above are skipped. Disable the ruleset's automatic review first.
           # request-copilot-review: 'true'
 
+          # Optional: re-request Copilot's review up to N times per commit when its
+          # review errors ("unable to review"). 0 (default) = off.
+          # copilot-error-retries: '2'
+
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

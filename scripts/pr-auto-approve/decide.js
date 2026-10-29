@@ -117,8 +117,12 @@ function countSuppressedComments(body) {
 // error and was unable to review this pull request. You can try again by
 // re-requesting a review." That is the absence of a review, not a clean one, so
 // it must neither approve as copilot-clean nor count toward the rounds threshold.
-function isErroredReview(body) {
-  return /encountered an error and was unable to review/i.test(String(body || ''));
+// Anchored and COMMENTED-only: a review that merely quotes the phrase, or a
+// CHANGES_REQUESTED review, must never be filtered out (that would fail open).
+function isErroredReview(review) {
+  return review.state === 'COMMENTED'
+    && /^Copilot encountered an error and was unable to review this pull request\./i
+      .test(String(review.body || '').trim());
 }
 
 // Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
@@ -958,7 +962,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         r.state !== 'DISMISSED' &&
         r.state !== 'PENDING' &&
         r.submitted_at &&
-        !isErroredReview(r.body),
+        !isErroredReview(r),
     )
     .sort((a, b) => {
       const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
@@ -997,7 +1001,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
   if (copilotReviews.length === 0 && !copilotOptional) {
-    const errored = reviews.some((r) => copilotMatches(r.user) && isErroredReview(r.body));
+    const errored = reviews.some((r) => copilotMatches(r.user) && isErroredReview(r));
     return setDecision(
       'skip',
       errored

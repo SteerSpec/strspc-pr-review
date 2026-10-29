@@ -799,6 +799,21 @@ test('skip: errored Copilot review on the head is not copilot-clean', async () =
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: CHANGES_REQUESTED or quoting reviews are not mistaken for errored ones', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT },
+      { id: 7, state: 'CHANGES_REQUESTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 6: [], 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /requested changes/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('skip: errored reviews do not count toward the rounds threshold', async () => {
   const core = makeCore();
   const mk = (id, h) => ({

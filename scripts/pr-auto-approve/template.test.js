@@ -81,6 +81,9 @@ test('the loop guard and bot-login read the same expression', () => {
 test('the job if: base-branch pre-filter reads the same variable as base-branch', () => {
   const src = read('templates/pr-auto-approve.yml');
   assert.match(src, /contains\(vars\.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH \|\| 'main', github\.event\.pull_request\.base\.ref\)/);
+  // 'main' must always pass: the action reads a whitespace- or comma-only value
+  // as main, which contains() on the raw value cannot see.
+  assert.match(src, /github\.event\.pull_request\.base\.ref == 'main' \|\|\s+contains\(vars\.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH/);
   // on: cannot read vars, so a branches: filter would be a second, unsynced copy.
   assert.doesNotMatch(src, /^\s+branches:/m);
 });

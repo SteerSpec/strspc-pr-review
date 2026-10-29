@@ -119,7 +119,10 @@ jobs:
     # obviously don't qualify ('mai' would pass for 'main'); the action does the
     # exact match. Kept loose on purpose: an exact match here would silently
     # skip a value written with spaces ('develop, main'), and a PR it drops is
-    # never approved, with no run to tell you why.
+    # never approved, with no run to tell you why. For the same reason 'main'
+    # always passes: the action reads a whitespace- or comma-only value as the
+    # default 'main', which contains() cannot see (expressions have no trim).
+    # The cost is a skipped run for main-targeting PRs in repos that exclude it.
     # The workflow_run branch below pairs with the trigger in the `on:` section.
     # The pull_requests[0] != null guard matters: workflow_run fires for EVERY
     # completed run of the named workflow, including non-PR runs (e.g. a push to
@@ -136,7 +139,10 @@ jobs:
             github.actor != (vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN)
           )
         ) &&
-        contains(vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main', github.event.pull_request.base.ref) &&
+        (
+          github.event.pull_request.base.ref == 'main' ||
+          contains(vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main', github.event.pull_request.base.ref)
+        ) &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (

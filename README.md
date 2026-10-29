@@ -170,7 +170,10 @@ jobs:
             github.actor != (vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN)
           )
         ) &&
-        contains(vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main', github.event.pull_request.base.ref) &&
+        (
+          github.event.pull_request.base.ref == 'main' ||
+          contains(vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main', github.event.pull_request.base.ref)
+        ) &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
@@ -238,8 +241,9 @@ variable, the organization variable, the action's default.
 (e.g. `develop,main`; whitespace-only falls back to `main`). The template takes it from
 `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` in two places, the input and the job `if:`, and
 has no `branches:` filter on the trigger, because `on:` cannot read variables. The
-`if:` check is a substring pre-filter that only saves a runner; the action enforces the
-exact set for every event.
+`if:` check is a substring pre-filter that only saves a runner, and it always lets `main`
+through (a whitespace- or comma-only value means `main` to the action, which the `if:`
+cannot detect); the action enforces the exact set for every event.
 
 **Why `pull_request_target` and not `pull_request`.** This workflow holds a bot PAT.
 For a **same-repo** PR, the `pull_request` event runs the workflow definition from the

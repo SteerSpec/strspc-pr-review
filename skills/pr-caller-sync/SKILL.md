@@ -30,7 +30,9 @@ cat templates/pr-auto-approve.yml   # the current recommended shape
 gh search code "uses: SteerSpec/strspc-pr-review" --json repository,path
 ```
 
-**Migrating a caller to variables** (template shape with `STRSPC_PR_AUTO_APPROVE_*`): this is a
+**Migrating a caller to variables** (template shape with `STRSPC_PR_AUTO_APPROVE_*`): sync only
+once the release that introduced it is on `@v1` — an older action posts Slack messages to an empty
+channel and does not enforce the base branch on PR events, which the new template relies on. It is a
 one-time sync per repo; after it, policy changes are variable edits and need no PR. Before opening
 the sync PR, translate the caller's current literals into variables — org-level when most repos
 share the value, repo-level otherwise — or the synced caller silently falls back to the action's

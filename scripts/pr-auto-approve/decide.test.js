@@ -1838,6 +1838,89 @@ test('check_run event: PR base outside the configured multi-branch set → skip'
   }
 });
 
+// -- base-branch gate on payload events ---------------------------------------
+// The template has no `branches:` filter (the set comes from a variable, which
+// `on:` cannot read) and its job `if:` is only a substring pre-filter, so the
+// action must enforce the exact set for pull_request_target/pull_request_review.
+
+test('pull_request_target: PR base outside base-branch → skip, no approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: { ref: 'main' } } }), // env: develop
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref 'main' not in [develop]");
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('pull_request_target: substring of a configured branch is not a match', async () => {
+  // The caller's if: uses contains(), so 'dev' gets through it for 'develop'.
+  const core = makeCore();
+  const { github } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: { ref: 'dev' } } }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref 'dev' not in [develop]");
+});
+
+test('pull_request_target: PR without a base → skip rather than approve', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: undefined } }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref '' not in [develop]");
+});
+
+test('pull_request_target: base in a spaced multi-branch set is eligible', async () => {
+  const core = makeCore();
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop, staging';
+  try {
+    const { github, calls } = makeFakeGithub({
+      // The action re-reads the PR mid-evaluation; it must still target staging.
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'staging' },
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+      reviews: [
+        {
+          id: 7,
+          state: 'COMMENTED',
+          submitted_at: '2026-04-15T10:00:00Z',
+          user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        },
+      ],
+      reviewComments: { 7: [] },
+    });
+    const result = await decide({
+      github,
+      context: makeContext({ prOverrides: { base: { ref: 'staging' } } }),
+      core,
+    });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
+});
+
 // -- workflow_run event tests -------------------------------------------------
 
 // Returns a context shaped like a workflow_run:completed event (no pull_request).

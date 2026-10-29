@@ -75,7 +75,7 @@ The rounds threshold is unaffected by both rules: it remains an unconditional es
 
 > **Configuration tradeoff.** That escape hatch is what `rounds-threshold` tunes, so setting it to `1` makes *every* Copilot review satisfy it immediately — the clean, suppressed-comment, and freshness rules are then never evaluated, and the action degrades to "approve as soon as Copilot has reviewed at all, on whatever commit". Keep it at 2 or higher unless that is genuinely what you want.
 
-Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The base-branch, draft, and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request_target`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
+Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The draft and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request_target`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The base-branch gate is enforced by the action for every event; the caller's `if:` only pre-filters on it. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
 
 Every run records a one-line `reason` (also exposed as the [`reason` output](#outputs)) explaining what it did — see [Troubleshooting](#troubleshooting).
 
@@ -104,17 +104,20 @@ curl -o .github/workflows/pr-auto-approve.yml \
   https://raw.githubusercontent.com/SteerSpec/strspc-pr-review/main/templates/pr-auto-approve.yml
 ```
 
-**2. Set a repository variable**
+**2. Set the bot login as an organization variable** (or a repository variable)
 
 ```
-PR_AUTO_APPROVE_BOT_LOGIN = <your-bot-account-login>
+STRSPC_PR_AUTO_APPROVE_BOT_LOGIN = <your-bot-account-login>
 ```
 
-**3. Add a repository secret**
+**3. Add the bot token as an organization or repository secret**
 
 ```
 BOT_GITHUB_TOKEN = <PAT for the bot — `Pull requests: write` is all it needs>
 ```
+
+Every other setting is optional and also comes from a variable — see
+[Organization-wide configuration](#organization-wide-configuration).
 
 **4. Optional: Slack notifications**
 
@@ -133,7 +136,6 @@ The caller workflow snippet (from [`templates/pr-auto-approve.yml`](templates/pr
 ```yaml
 on:
   pull_request_target:   # NOT pull_request — see the security note below
-    branches: [main]
     types: [opened, ready_for_review, synchronize, reopened, edited]
   pull_request_review:
     types: [submitted]
@@ -165,10 +167,10 @@ jobs:
           github.event_name == 'pull_request_target' ||
           (
             github.event_name == 'pull_request_review' &&
-            github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN
+            github.actor != (vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN)
           )
         ) &&
-        github.event.pull_request.base.ref == 'main' &&
+        contains(vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main', github.event.pull_request.base.ref) &&
         github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) || (
@@ -184,17 +186,59 @@ jobs:
     steps:
       - uses: SteerSpec/strspc-pr-review@v1
         with:
-          bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
+          bot-login: ${{ vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN }}
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
+          base-branch: ${{ vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH }}
+          rounds-threshold: ${{ vars.STRSPC_PR_AUTO_APPROVE_ROUNDS_THRESHOLD }}
+          # ...one line per setting; see Organization-wide configuration below
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
 
+### Organization-wide configuration
+
+The template reads every setting from an Actions variable named
+`STRSPC_PR_AUTO_APPROVE_<INPUT>`. Set the values once at the organization level
+(Settings → Secrets and variables → Actions → Variables, or
+`gh variable set NAME --org <org> --body <value>`), and override them in a repository
+that needs something different with a repository variable of the same name.
+
+| Variable | Input |
+|---|---|
+| `STRSPC_PR_AUTO_APPROVE_BOT_LOGIN` | `bot-login` (required; `PR_AUTO_APPROVE_BOT_LOGIN` still works as a fallback) |
+| `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` | `base-branch` (also drives the job `if:`) |
+| `STRSPC_PR_AUTO_APPROVE_ROUNDS_THRESHOLD` | `rounds-threshold` |
+| `STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE` | `rounds-by-type` |
+| `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
+| `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
+| `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
+| `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
+| `STRSPC_PR_AUTO_APPROVE_SLACK_CHANNEL` | `slack-channel` |
+
+Precedence, highest first: a literal written in the caller's `with:`, the repository
+variable, the organization variable, the action's default.
+
+- **Overrides replace the whole value.** A repository that wants `fix:` PRs at 2 rounds
+  writes the full `rounds-by-type` string (`docs:1,chore:0,fix:2,default:3`), not just `fix:2`.
+- **An unset variable means "use the default".** It reaches the action as an empty
+  string, which every input treats as its default.
+- **To go back to the default in one repository, write the default value explicitly.**
+  GitHub does not allow an empty variable, so a repo cannot "unset" an org value.
+- **Org variables have a repository-access policy** (all, private, or selected
+  repositories). A variable not granted to a repository reads as unset there.
+- **Secrets work the same way**: `BOT_GITHUB_TOKEN` and `SLACK_BOT_TOKEN` can be
+  organization secrets.
+- **Existing callers do not pick this up until re-synced** — the template is copied, not
+  referenced. The [`pr-caller-sync`](skills/pr-caller-sync/SKILL.md) skill does that.
+  Create the org variables first, or a synced repo runs on the action's defaults (for
+  `base-branch` that is `main`). The deprecated reusable workflow
+  (`.github/workflows/pr-auto-approve.yml`) does not read these variables.
+
 **Base branches.** `base-branch` accepts a single branch or a comma-separated set
-(e.g. `develop,main`; whitespace-only falls back to `main`). It gates **3 points that
-must list the same branches**: the `on.pull_request_target.branches:` filter, the job `if:`
-`base.ref` check, and the `base-branch` input. For multiple branches, set
-`branches: [main, develop]` and change the `base.ref` line to
-`contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)`.
+(e.g. `develop,main`; whitespace-only falls back to `main`). The template takes it from
+`STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` in two places, the input and the job `if:`, and
+has no `branches:` filter on the trigger, because `on:` cannot read variables. The
+`if:` check is a substring pre-filter that only saves a runner; the action enforces the
+exact set for every event.
 
 **Why `pull_request_target` and not `pull_request`.** This workflow holds a bot PAT.
 For a **same-repo** PR, the `pull_request` event runs the workflow definition from the
@@ -289,9 +333,9 @@ Copilot's check finishes rather than skipping with `check still running`:
 ```yaml
       - uses: SteerSpec/strspc-pr-review@v1
         with:
-          bot-login: ${{ vars.PR_AUTO_APPROVE_BOT_LOGIN }}
+          bot-login: ${{ vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN }}
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
-          wait-for-copilot-seconds: '300'
+          wait-for-copilot-seconds: '300'   # or set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS
 ```
 
 Since 2026-10 Copilot no longer registers a check run on the head SHA at all: it
@@ -411,11 +455,11 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: …` | The job fails on purpose (`decision=error`). Listing the reviews is how the action finds and withdraws an earlier relaxed approval; when that listing fails, a skip would leave such an approval standing unseen. Usually transient (rate limit, 5xx): re-run the job. A persistent `403` means the **read** token cannot read pull requests. |
 | `base <branch> was rewritten (merge base … -> …) during evaluation` / `… while approving; approval withdrawn` | The base branch was force-pushed while the run was evaluating a relaxed type, so the diff the path gate judged is no longer the PR's diff. Nothing is approved (or the approval is dismissed); the next run re-evaluates. A base that merely moved on through unrelated merges keeps its merge base and does not trigger this. |
 | `evaluation failed: 403 … /check-runs` | The **read** token can't list check runs. Reads must use the workflow's `GITHUB_TOKEN` (the `github-token` input, default) and the caller must grant `checks: read` — a fine-grained PAT cannot be given the `Checks` permission at all. This fails **only on private repositories**: check runs are readable without that permission on public ones, so it works everywhere you'd think to test it. |
-| `bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable…` | The job fails on purpose. `bot-login` came through blank, which also disables the caller's `github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN` loop guard, so each approval would re-trigger the workflow. Set the variable (Settings → Secrets and variables → Actions → Variables) or hard-code the login in both places. |
+| `bot-login is empty: set the STRSPC_PR_AUTO_APPROVE_BOT_LOGIN organization or repository variable…` | The job fails on purpose. `bot-login` came through blank, which also disables the caller's `github.actor != (vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN \|\| …)` loop guard, so each approval would re-trigger the workflow. Set the variable (Settings → Secrets and variables → Actions → Variables, at org or repo level; check an org variable's repository access) or hard-code the login in both places. |
 | `triggered by the bot's own review` | The run was started by the bot's approval and exits without evaluating. Expected; if you see many of these, the `if:` loop guard does not match `bot-login`. |
 | `PR author is the bot itself` | The bot can't approve its own PR (except in `sandbox-repos`). Expected. |
-| `check_run: PR base ref '...' not in [...]` | The PR targets a branch outside `base-branch`. Align the [3 base-branch sync points](#usage). |
-| Nothing runs at all | Confirm `BOT_GITHUB_TOKEN` belongs to `bot-login` (with write access), and that `vars.PR_AUTO_APPROVE_BOT_LOGIN` is set so the review-loop guard works. |
+| `PR base ref '...' not in [...]` (optionally prefixed `check_run:`/`workflow_run:`) | The PR targets a branch outside `base-branch`. Check `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` at repo and org level (see [Organization-wide configuration](#organization-wide-configuration)). |
+| Nothing runs at all | Confirm `BOT_GITHUB_TOKEN` belongs to `bot-login` (with write access), and that `STRSPC_PR_AUTO_APPROVE_BOT_LOGIN` (or the older `PR_AUTO_APPROVE_BOT_LOGIN`) is set so the review-loop guard works. If the PR's base branch is not in `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` (default `main`), the job `if:` skips it. |
 
 ---
 

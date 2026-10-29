@@ -664,11 +664,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   };
 
   // An empty bot login is a misconfiguration, not a skip: the caller's loop
-  // guard (`github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN`) is then always
+  // guard (`github.actor != vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN`) is then always
   // true too, so each approval re-triggers this workflow. That ran away to 17
   // approvals in three minutes once. Fail the job so it cannot pass unnoticed.
   if (!BOT_LOGIN) {
-    const reason = 'bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable ' +
+    const reason = 'bot-login is empty: set the STRSPC_PR_AUTO_APPROVE_BOT_LOGIN organization or repository variable ' +
       '(the caller passes it as bot-login and uses it in the job `if:` loop guard)';
     core.error(`pr-auto-approve ${reason}`);
     if (typeof core.setFailed === 'function') core.setFailed(reason);
@@ -680,6 +680,18 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const triggeringReview = context.payload.review;
   if (triggeringReview && triggeringReview.user && triggeringReview.user.login === BOT_LOGIN) {
     return setDecision('skip', 'triggered by the bot\'s own review');
+  }
+
+  // pull_request_target / pull_request_review carry the PR in the payload. The
+  // caller can no longer filter these by branch in `on:` once the set comes
+  // from a variable (`on:` cannot read `vars`), and its `if:` only pre-filters
+  // with a substring match, so the exact check lives here, as it does for
+  // check_run and workflow_run below.
+  if (pr && (!pr.base || !BASE_BRANCHES.has(pr.base.ref))) {
+    return setDecision(
+      'skip',
+      `PR base ref '${pr.base ? pr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+    );
   }
 
   // check_run events don't carry pull_request directly; extract from associated PRs.

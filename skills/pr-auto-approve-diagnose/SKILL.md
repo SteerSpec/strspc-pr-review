@@ -26,7 +26,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 
 | Symptom | Cause |
 |---|---|
-| No run for the event | The `if:` excluded it — check `base.ref`, `draft`, and the fork guard |
+| No run for the event | The `if:` excluded it — check the base branch against `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` (default `main`), `draft`, and the fork guard |
 | A `pull_request_review` run with `conclusion: action_required` | GitHub is holding it for approval, **not** a failure. Runs triggered by an actor with no repo membership (notably `Copilot`) are gated this way |
 | No run after Copilot reviewed | Expected. Copilot cannot trigger this workflow — use `wait-for-copilot-seconds` |
 
@@ -46,6 +46,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `PR author is the bot itself` | Self-approval is blocked by GitHub. Expected |
 | `PR already approved (reviewDecision=APPROVED)` / `bot already approved head <sha>` | Idempotent no-op. Already done |
 | `check_run:` / `workflow_run:` prefixed skips | The event carried no usable PR — draft, fork, wrong base, or a non-PR run |
+| `PR base ref '<ref>' not in [...]` | The PR targets a branch outside `base-branch`. See [§2c](#2c-which-variable-value-won) |
 | `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message |
 
 ## 2a. Copilot's check is red but its review is clean
@@ -104,6 +105,23 @@ permission, and **fine-grained PATs cannot be granted it**. Reads must go throug
 `GITHUB_TOKEN` (the `github-token` input, which defaults to it) and the caller must grant
 `checks: read`. This fails *only on private repositories* — check runs are readable without the
 permission on public ones — so it will have worked everywhere you tested.
+
+## 2c. Which variable value won
+
+The template reads each setting from `STRSPC_PR_AUTO_APPROVE_<INPUT>`. A repo variable replaces the
+org one whole; an unset variable means the action's default; a literal in the caller's `with:`
+beats both. Compare the two levels before guessing:
+
+```bash
+gh variable list --repo <owner>/<repo> | grep STRSPC_PR_AUTO_APPROVE_
+gh variable list --org <org> | grep STRSPC_PR_AUTO_APPROVE_
+gh api orgs/<org>/actions/variables/<NAME> --jq '.visibility'            # all | private | selected
+gh api orgs/<org>/actions/variables/<NAME>/repositories --jq '.repositories[].full_name'  # if selected
+```
+
+An org variable this repo has no access to reads as unset, so the repo silently gets the default
+(for the base branch: `main`). A caller synced from an older template ignores the variables
+entirely: check that its `with:` reads `vars.STRSPC_PR_AUTO_APPROVE_*`.
 
 ## 3. Tools that will mislead you
 

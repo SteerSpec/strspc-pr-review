@@ -40,6 +40,10 @@ WORKFLOW=.github/workflows/pr-auto-approve.yml
 CI=.github/workflows/ci.yml
 P=STRSPC_PR_AUTO_APPROVE_
 ORG_VARS="BOT_LOGIN BASE_BRANCH ROUNDS_BY_TYPE WAIT_FOR_COPILOT_SECONDS"
+# The only repo variables this script (or its printed matrix) touches. `down`
+# restores exactly these, so a variable someone else adds or changes in the
+# meantime survives the rollback.
+REPO_VARS="${P}ROUNDS_BY_TYPE ${P}BASE_BRANCH PR_AUTO_APPROVE_BOT_LOGIN"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
@@ -83,13 +87,20 @@ backup() {
   log "backing up to $STATE_DIR"
   raw "$REPO" "$WORKFLOW" >"$STATE_DIR/workflow.yml"
   raw "$REPO" "$CI" >"$STATE_DIR/ci.yml"
-  gh api "repos/$REPO/actions/variables" --jq '.variables' >"$STATE_DIR/repo-vars.json"
   local v
+  for v in $REPO_VARS; do
+    if ! gh api "repos/$REPO/actions/variables/$v" >"$STATE_DIR/repo-$v.json" 2>/dev/null; then
+      rm -f "$STATE_DIR/repo-$v.json"
+      touch "$STATE_DIR/repo-$v.absent"
+    fi
+  done
   for v in $ORG_VARS; do
     if gh api "orgs/$ORG/actions/variables/$P$v" >"$STATE_DIR/org-$v.json" 2>/dev/null; then
       if [[ $(jq -r .visibility "$STATE_DIR/org-$v.json") == selected ]]; then
-        gh api "orgs/$ORG/actions/variables/$P$v/repositories" \
-          --jq '[.repositories[].name] | join(",")' >"$STATE_DIR/org-$v.repos"
+        # Paginated (30 per page): a truncated list would narrow the variable's
+        # access on restore.
+        gh api --paginate "orgs/$ORG/actions/variables/$P$v/repositories" \
+          --jq '.repositories[].name' | paste -sd, - >"$STATE_DIR/org-$v.repos"
       fi
     else
       rm -f "$STATE_DIR/org-$v.json"
@@ -188,9 +199,11 @@ status() {
       || echo "    $P$v (unset)"
   done
   log "repo variables ($REPO)"
-  gh api "repos/$REPO/actions/variables" --jq '.variables[] | "    \(.name)=\(.value)"'
+  gh api --paginate "repos/$REPO/actions/variables" --jq '.variables[] | "    \(.name)=\(.value)"'
   log "caller"
-  raw "$REPO" "$WORKFLOW" | grep -E '^\s+- uses: |vars\.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN|^\s+branches:' | sed 's/^ */    /' || true
+  raw "$REPO" "$WORKFLOW" \
+    | grep -E '^[[:space:]]+- uses: |vars\.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN|^[[:space:]]+branches:' \
+    | sed 's/^ */    /' || true
 }
 
 # --- down -------------------------------------------------------------------
@@ -224,12 +237,13 @@ down() {
   done
 
   log "restoring repo variables"
-  local name
-  for name in $(gh api "repos/$REPO/actions/variables" --jq '.variables[].name'); do
-    gh variable delete "$name" --repo "$REPO"
-  done
-  jq -c '.[]' "$STATE_DIR/repo-vars.json" | while read -r row; do
-    gh variable set "$(jq -r .name <<<"$row")" --repo "$REPO" --body "$(jq -r .value <<<"$row")"
+  for v in $REPO_VARS; do
+    if [[ -e "$STATE_DIR/repo-$v.absent" ]]; then
+      gh variable delete "$v" --repo "$REPO" 2>/dev/null && echo "    $v deleted" || true
+    else
+      gh variable set "$v" --repo "$REPO" --body "$(jq -r .value "$STATE_DIR/repo-$v.json")"
+      echo "    $v restored"
+    fi
   done
 
   if [[ -e "$STATE_DIR/develop.absent" ]] && has_branch develop; then

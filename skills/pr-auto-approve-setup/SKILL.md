@@ -77,6 +77,9 @@ gh variable set STRSPC_PR_AUTO_APPROVE_BASE_BRANCH --repo <owner>/<repo> --body 
 - GitHub rejects empty variables, so to restore a default in one repo, set the default value
   explicitly.
 - A literal in `with:` still beats both variables, if a repo really needs to pin a value in code.
+  Except `base-branch`: the job `if:` reads the variable before the action runs, so a literal
+  there must also replace `vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main'` in the `if:`.
+  Prefer the repo variable.
 
 ## 3. The traps, in the order people hit them
 

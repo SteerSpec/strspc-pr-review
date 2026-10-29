@@ -110,7 +110,9 @@ permission on public ones — so it will have worked everywhere you tested.
 
 The template reads each setting from `STRSPC_PR_AUTO_APPROVE_<INPUT>`. A repo variable replaces the
 org one whole; an unset variable means the action's default; a literal in the caller's `with:`
-beats both. Compare the two levels before guessing:
+beats both — except `base-branch`, which the job `if:` also reads: a literal `base-branch` with
+the variable unset skips every PR to that branch with no run at all. Compare the two levels
+before guessing:
 
 ```bash
 gh variable list --repo <owner>/<repo> | grep STRSPC_PR_AUTO_APPROVE_

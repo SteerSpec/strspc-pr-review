@@ -219,7 +219,10 @@ that needs something different with a repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_SLACK_CHANNEL` | `slack-channel` |
 
 Precedence, highest first: a literal written in the caller's `with:`, the repository
-variable, the organization variable, the action's default.
+variable, the organization variable, the action's default. **`base-branch` is the
+exception:** the job `if:` reads the variable as well, before the action runs, so a
+literal `base-branch` must be written into the `if:` too (replacing
+`vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main'`), or PRs to that branch are skipped.
 
 - **Overrides replace the whole value.** A repository that wants `fix:` PRs at 2 rounds
   writes the full `rounds-by-type` string (`docs:1,chore:0,fix:2,default:3`), not just `fix:2`.

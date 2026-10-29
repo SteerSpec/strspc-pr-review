@@ -10,7 +10,9 @@ name: PR Auto-Approve (Copilot)
 # name overrides the org value as a whole. An unset variable reaches the action
 # as an empty string, which means "use the action's default". Org variables
 # have a repository-access policy: one not granted to this repo reads as unset.
-# A literal written in `with:` below still wins over both.
+# A literal written in `with:` below still wins over both, EXCEPT base-branch:
+# the job if: reads the variable too, so a literal there must be mirrored in
+# the if: (see BASE BRANCH below) or its PRs are skipped before the action runs.
 
 on:
   # SECURITY: pull_request_target, NOT pull_request. For a same-repo PR the
@@ -123,6 +125,10 @@ jobs:
     # always passes: the action reads a whitespace- or comma-only value as the
     # default 'main', which contains() cannot see (expressions have no trim).
     # The cost is a skipped run for main-targeting PRs in repos that exclude it.
+    # If you hard-code base-branch in `with:` instead of using the variable,
+    # replace `vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main'` below with the
+    # same literal: this condition is evaluated before the action ever sees the
+    # input, so it cannot honour a literal it does not contain.
     # The workflow_run branch below pairs with the trigger in the `on:` section.
     # The pull_requests[0] != null guard matters: workflow_run fires for EVERY
     # completed run of the named workflow, including non-PR runs (e.g. a push to

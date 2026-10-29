@@ -207,9 +207,9 @@ jobs:
           # Used only when slack-bot-token is set.
           slack-channel: ${{ vars.STRSPC_PR_AUTO_APPROVE_SLACK_CHANNEL }}
 
-          # Optional: re-request Copilot's review up to N times per commit when its
-          # review errors ("unable to review"). 0 (default) = off.
-          # copilot-error-retries: '2'
+          # Times to re-request Copilot's review per commit when its review errors
+          # ("unable to review"), e.g. 2. 0 (default) = off.
+          copilot-error-retries: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES }}
 
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.

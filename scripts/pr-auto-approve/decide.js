@@ -562,7 +562,11 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
     // this request and Copilot's next review would otherwise request again.
     // A request still pending on the PR means the retry is already in flight.
     const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    if ((live.requested_reviewers || []).some((r) => /copilot/i.test(r.login))) return 'pending';
+    // Exact logins only: a substring match would let an unrelated "copilot-x"
+    // reviewer mask a missing Copilot request. 'Copilot' is the display login
+    // GitHub uses for the bot on requested reviewers (not seen on a live PR
+    // yet; the canonical bot logins are checked as well).
+    if ((live.requested_reviewers || []).some((r) => isCopilot(r) || r.login === 'Copilot')) return 'pending';
     await github.rest.pulls.requestReviewers({
       owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
     });

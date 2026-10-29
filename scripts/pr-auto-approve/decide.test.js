@@ -923,6 +923,14 @@ test('retries: a Copilot request already pending is not requested again', async 
   assert.equal(requested.length, 0);
 });
 
+test('retries: an unrelated reviewer with "copilot" in its login does not mask the retry', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'copilot-helper' }],
+  );
+  assert.match(result.reason, /re-requested, retry 1\/2/);
+  assert.equal(requested.length, 1);
+});
+
 test('retries: a re-request failure only warns and still skips', async () => {
   const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {
     throw Object.assign(new Error('Validation Failed'), { status: 422 });

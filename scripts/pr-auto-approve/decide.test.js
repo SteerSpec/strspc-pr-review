@@ -842,7 +842,7 @@ function erroredOnHead(id, hour, commit = 'deadbeef') {
   };
 }
 
-async function runWithRetries(retries, reviews, requestImpl) {
+async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = []) {
   const prev = process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   if (retries === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = retries;
@@ -852,6 +852,11 @@ async function runWithRetries(retries, reviews, requestImpl) {
     core.warning = (m) => warnings.push(m);
     const { github, calls } = makeFakeGithub({ reviews, reviewComments: {} });
     const requested = [];
+    const originalGet = github.rest.pulls.get;
+    github.rest.pulls.get = async (a) => {
+      const out = await originalGet(a);
+      return { ...out, data: { ...out.data, requested_reviewers: pendingReviewers } };
+    };
     github.rest.pulls.requestReviewers = async (a) => {
       if (requestImpl) return requestImpl(a);
       requested.push(a);
@@ -906,6 +911,15 @@ test('retries: a stale review with retries off keeps the plain waiting reason pl
   const stale = { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT };
   const { requested, result } = await runWithRetries(undefined, [stale, erroredOnHead(7, '10')]);
   assert.match(result.reason, /waiting for re-review; its attempt on this head errored \(re-request a review\)/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: a Copilot request already pending is not requested again', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'Copilot' }],
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /re-request already pending, retry 1\/2/);
   assert.equal(requested.length, 0);
 });
 

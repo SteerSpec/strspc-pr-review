@@ -558,6 +558,11 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
   if (erroredOnHead > retries) return 'exhausted';
   try {
     const { owner, repo } = context.repo;
+    // The budget counts only reviews that already errored, so every run between
+    // this request and Copilot's next review would otherwise request again.
+    // A request still pending on the PR means the retry is already in flight.
+    const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    if ((live.requested_reviewers || []).some((r) => /copilot/i.test(r.login))) return 'pending';
     await github.rest.pulls.requestReviewers({
       owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
     });
@@ -1050,6 +1055,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return {
       requested: `re-requested, retry ${erroredOnHead}/${retries}`,
       exhausted: `errored ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
+      pending: `re-request already pending, retry ${erroredOnHead}/${retries}`,
       disabled: 're-request a review',
       none: 're-request a review',
       error: 'automatic re-request failed; re-request a review',

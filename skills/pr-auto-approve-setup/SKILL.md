@@ -170,6 +170,9 @@ gets the default threshold. Keep `edited` in `pull_request_target.types` so reti
 re-evaluate. To stop Copilot reviewing those PRs at all, turn off the ruleset's automatic review and
 set `request-copilot-review: 'true'`.
 
+To retry automatically when Copilot's review errors ("unable to review this pull request"), set
+`copilot-error-retries: '2'`; the default `0` leaves the re-request to a human.
+
 ## 4. Verify
 
 Open a **second** PR and touch nothing:

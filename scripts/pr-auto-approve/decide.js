@@ -539,6 +539,36 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   }
 }
 
+// Max automatic re-requests per head SHA after Copilot errors. 0 (default, also
+// any blank/negative/non-numeric value) disables it, so a typo never turns an
+// opt-in write call on.
+function getErrorRetries(env = process.env) {
+  const n = parseInt(env.AUTO_APPROVE_COPILOT_ERROR_RETRIES, 10);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+// Re-requests the Copilot review after an errored one on the current head.
+// `erroredOnHead` comes from the review history, so the cap needs no stored
+// state and a re-run cannot exceed it. Best-effort like requestCopilotReview:
+// a failure only warns. Returns 'requested', 'exhausted', 'disabled' or 'error'.
+async function retryErroredCopilotReview({ github, context, core, prNumber, erroredOnHead, retries }) {
+  if (retries <= 0) return 'disabled';
+  if (erroredOnHead === 0) return 'none'; // it errored on an older commit only
+  if (erroredOnHead > retries) return 'exhausted';
+  try {
+    const { owner, repo } = context.repo;
+    await github.rest.pulls.requestReviewers({
+      owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
+    });
+    return 'requested';
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: could not re-request a Copilot review: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+    return 'error';
+  }
+}
+
 async function decide(args) {
   try {
     return await decideInner(args);
@@ -958,20 +988,27 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // Set by every pass of the selector, including the wait loop's reloads, so a
   // review that errors while we poll still explains the final skip reason.
   let sawErroredReview = false;
-  const selectCopilotReviews = (rs) => rs
-    .filter((r) => {
-      if (!copilotMatches(r.user)) return false;
-      if (isErroredReview(r)) {
-        sawErroredReview = true;
-        return false;
-      }
-      return r.state !== 'DISMISSED' && r.state !== 'PENDING' && r.submitted_at;
-    })
-    .sort((a, b) => {
-      const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
-      const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
-      return at - bt;
-    });
+  // Errored reviews OF THE CURRENT HEAD: the retry budget is per head SHA, and
+  // is recomputed on every pass so it always reflects the latest snapshot.
+  let erroredOnHead = 0;
+  const selectCopilotReviews = (rs) => {
+    erroredOnHead = 0;
+    return rs
+      .filter((r) => {
+        if (!copilotMatches(r.user)) return false;
+        if (isErroredReview(r)) {
+          sawErroredReview = true;
+          if (r.commit_id === headSha) erroredOnHead += 1;
+          return false;
+        }
+        return r.state !== 'DISMISSED' && r.state !== 'PENDING' && r.submitted_at;
+      })
+      .sort((a, b) => {
+        const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
+        const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
+        return at - bt;
+      });
+  };
   let copilotReviews = selectCopilotReviews(reviews);
 
   // Copilot stopped registering a check run on the head SHA (verified
@@ -1004,12 +1041,18 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
   if (copilotReviews.length === 0 && !copilotOptional) {
-    return setDecision(
-      'skip',
-      sawErroredReview
-        ? 'no Copilot review yet (its last attempt errored; re-request a review)'
-        : 'no Copilot review yet',
-    );
+    if (!sawErroredReview) return setDecision('skip', 'no Copilot review yet');
+    const retry = await retryErroredCopilotReview({
+      github, context, core, prNumber, erroredOnHead, retries: getErrorRetries(),
+    });
+    const note = {
+      requested: `re-requested, retry ${erroredOnHead}/${getErrorRetries()}`,
+      exhausted: `errored ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
+      disabled: 're-request a review',
+      none: 're-request a review',
+      error: 'automatic re-request failed; re-request a review',
+    }[retry];
+    return setDecision('skip', `no Copilot review yet (its last attempt errored; ${note})`);
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
@@ -1194,3 +1237,5 @@ module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
 module.exports.changedFileNames = changedFileNames;
 module.exports.requestCopilotReview = requestCopilotReview;
+module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
+module.exports.getErrorRetries = getErrorRetries;

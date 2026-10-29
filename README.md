@@ -352,6 +352,7 @@ They're a convenience, not a requirement — everything they do is documented on
 | `rounds-by-type` | No | `''` | Per-Conventional-Commit-type rounds read from the PR title, e.g. `docs:1,chore:0,fix:3,default:3`. `0` means Copilot is not required for that type (approve on green CI). A type below the default only applies when every changed file matches `copilot-optional-paths`. Empty uses `rounds-threshold` for all PRs. See [Per-type rounds](#per-type-rounds) |
 | `copilot-optional-paths` | No | `**/*.md,docs/**/*.md` | Globs; a type mapped below the default (`0` included) only applies when every changed file matches, otherwise the PR uses the default (`default` entry, else `rounds-threshold`). Stops a code change from borrowing a relaxed title |
 | `request-copilot-review` | No | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. Failures only warn |
+| `copilot-error-retries` | No | `0` | Times to re-request Copilot's review on the same commit when its review errored ("unable to review this pull request"). Errored reviews never approve or count as rounds. `0` disables; failures only warn |
 | `allow-no-checks` | No | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA (e.g. docs-only PRs) |
 | `wait-for-copilot-seconds` | No | `0` | Seconds to wait for Copilot's review (its check run when it is the **last** check still running, or the review itself when no check run exists) instead of skipping. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow). `0` disables |
 | `sandbox-repos` | No | `''` | Comma-separated `owner/repo` list where bot-authored PRs are allowed (e2e only) |
@@ -398,6 +399,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED` — this always blocks. Address the feedback and push. |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue. |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the collapsed section, and act on it (or let more rounds accrue). |
+| `no Copilot review yet (its last attempt errored; …)` | Copilot's run failed ("unable to review this pull request"); that review is ignored, not counted as clean. The text after `;` says whether the action re-requested it (`copilot-error-retries`), ran out of retries, or you should re-request it by hand. |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit — no action needed. |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. Unexpected from real Copilot reviews — check the reviewer really is Copilot and not a synthetic review posted without a `commit_id`. |
 | `check still running: <name>` / `no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion — no action needed. |
@@ -433,7 +435,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 168 unit tests, no external dependencies
+npm test            # 175 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

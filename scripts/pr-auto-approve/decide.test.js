@@ -834,6 +834,90 @@ test('approve: a COMMENTED review that only quotes the error text stays eligible
   assert.equal(calls.createReview.length, 1);
 });
 
+// -- copilot-error-retries ----------------------------------------------
+
+function erroredOnHead(id, hour, commit = 'deadbeef') {
+  return {
+    id, state: 'COMMENTED', submitted_at: `2026-10-29T${hour}:00:00Z`, commit_id: commit, user: COPILOT, body: ERRORED_BODY,
+  };
+}
+
+async function runWithRetries(retries, reviews, requestImpl) {
+  const prev = process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+  if (retries === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+  else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = retries;
+  try {
+    const core = makeCore();
+    const warnings = [];
+    core.warning = (m) => warnings.push(m);
+    const { github, calls } = makeFakeGithub({ reviews, reviewComments: {} });
+    const requested = [];
+    github.rest.pulls.requestReviewers = async (a) => {
+      if (requestImpl) return requestImpl(a);
+      requested.push(a);
+      return { data: {} };
+    };
+    const result = await decide({ github, context: makeContext(), core });
+    return { result, requested, warnings, calls };
+  } finally {
+    if (prev === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+    else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = prev;
+  }
+}
+
+test('retries off by default: errored review is not re-requested', async () => {
+  const { result, requested } = await runWithRetries(undefined, [erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /errored; re-request a review\)/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries=2: first errored review on the head is re-requested', async () => {
+  const { result, requested, calls } = await runWithRetries('2', [erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /re-requested, retry 1\/2/);
+  assert.deepEqual(requested[0].reviewers, ['copilot-pull-request-reviewer[bot]']);
+  assert.equal(requested[0].pull_number, 42);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('retries=1: a second errored review on the head exhausts the budget', async () => {
+  const { result, requested } = await runWithRetries('1', [erroredOnHead(7, '10'), erroredOnHead(8, '11')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /errored 2 time\(s\) on this head; retries exhausted/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: an errored review of an older commit neither spends nor triggers the budget', async () => {
+  const { result, requested } = await runWithRetries('2', [erroredOnHead(7, '10', 'cafebabe')]);
+  assert.equal(result.decision, 'skip');
+  assert.equal(requested.length, 0);
+});
+
+test('retries: a re-request failure only warns and still skips', async () => {
+  const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {
+    throw Object.assign(new Error('Validation Failed'), { status: 422 });
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /automatic re-request failed/);
+  assert.match(warnings.join('\n'), /could not re-request a Copilot review: 422/);
+});
+
+test('retries: a real review on the head means no re-request', async () => {
+  const { result, requested } = await runWithRetries('2', [
+    erroredOnHead(7, '10'),
+    { id: 8, state: 'COMMENTED', submitted_at: '2026-10-29T10:05:00Z', commit_id: 'deadbeef', user: COPILOT },
+  ]);
+  assert.equal(requested.length, 0);
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+});
+
+test('getErrorRetries: only a positive integer enables retries', () => {
+  for (const [raw, want] of [[undefined, 0], ['', 0], ['0', 0], ['-1', 0], ['abc', 0], ['2', 2], [' 3 ', 3]]) {
+    assert.equal(decide.getErrorRetries({ AUTO_APPROVE_COPILOT_ERROR_RETRIES: raw }), want, String(raw));
+  }
+});
+
 test('skip: errored reviews do not count toward the rounds threshold', async () => {
   const core = makeCore();
   const mk = (id, h) => ({

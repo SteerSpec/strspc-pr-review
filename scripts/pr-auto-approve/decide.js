@@ -955,15 +955,18 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     typeof core.warning === 'function' ? core.warning.bind(core) : undefined,
   );
   const copilotMatches = makeIsCopilot(testLogins);
+  // Set by every pass of the selector, including the wait loop's reloads, so a
+  // review that errors while we poll still explains the final skip reason.
+  let sawErroredReview = false;
   const selectCopilotReviews = (rs) => rs
-    .filter(
-      (r) =>
-        copilotMatches(r.user) &&
-        r.state !== 'DISMISSED' &&
-        r.state !== 'PENDING' &&
-        r.submitted_at &&
-        !isErroredReview(r),
-    )
+    .filter((r) => {
+      if (!copilotMatches(r.user)) return false;
+      if (isErroredReview(r)) {
+        sawErroredReview = true;
+        return false;
+      }
+      return r.state !== 'DISMISSED' && r.state !== 'PENDING' && r.submitted_at;
+    })
     .sort((a, b) => {
       const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
       const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
@@ -1001,10 +1004,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
   if (copilotReviews.length === 0 && !copilotOptional) {
-    const errored = reviews.some((r) => copilotMatches(r.user) && isErroredReview(r));
     return setDecision(
       'skip',
-      errored
+      sawErroredReview
         ? 'no Copilot review yet (its last attempt errored; re-request a review)'
         : 'no Copilot review yet',
     );

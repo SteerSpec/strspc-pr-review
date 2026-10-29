@@ -799,7 +799,7 @@ test('skip: errored Copilot review on the head is not copilot-clean', async () =
   assert.equal(calls.createReview.length, 0);
 });
 
-test('skip: CHANGES_REQUESTED or quoting reviews are not mistaken for errored ones', async () => {
+test('skip: a CHANGES_REQUESTED review is not mistaken for an errored one', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
     reviews: [
@@ -812,6 +812,26 @@ test('skip: CHANGES_REQUESTED or quoting reviews are not mistaken for errored on
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /requested changes/);
   assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: a COMMENTED review that only quotes the error text stays eligible', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-10-29T10:00:00Z',
+        user: COPILOT,
+        body: `Generated no new comments.\n\n> ${ERRORED_BODY}`,
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean \(review 7/);
+  assert.equal(calls.createReview.length, 1);
 });
 
 test('skip: errored reviews do not count toward the rounds threshold', async () => {
@@ -1965,6 +1985,25 @@ test('wait on: Copilot review arriving on a later poll leads to approval', async
     assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
     assert.equal(calls.createReview.length, 1);
     assert.ok(state.reviewCalls >= 3, `expected review polling, saw ${state.reviewCalls} fetches`);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: an errored review arriving during polling is named in the skip reason', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '1';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '400';
+  try {
+    const core = makeCore();
+    const errored = {
+      id: 9, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', commit_id: 'deadbeef', user: COPILOT, body: ERRORED_BODY,
+    };
+    const { github, calls } = makePollingGithub([[CI_OK]], { reviewSequence: [[], [errored]] });
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no Copilot review yet.*errored/);
+    assert.equal(calls.createReview.length, 0);
   } finally {
     delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
     delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;

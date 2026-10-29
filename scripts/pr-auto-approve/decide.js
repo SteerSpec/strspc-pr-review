@@ -112,6 +112,15 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
+// Copilot posts a COMMENTED review with zero inline comments when its run fails
+// (observed 2026-10-29, SteerSpec/strspc-rules#83): "Copilot encountered an
+// error and was unable to review this pull request. You can try again by
+// re-requesting a review." That is the absence of a review, not a clean one, so
+// it must neither approve as copilot-clean nor count toward the rounds threshold.
+function isErroredReview(body) {
+  return /encountered an error and was unable to review/i.test(String(body || ''));
+}
+
 // Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
 function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
 // Comma-separated set of base branches a PR must target to be eligible.
@@ -948,7 +957,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         copilotMatches(r.user) &&
         r.state !== 'DISMISSED' &&
         r.state !== 'PENDING' &&
-        r.submitted_at,
+        r.submitted_at &&
+        !isErroredReview(r.body),
     )
     .sort((a, b) => {
       const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
@@ -987,7 +997,13 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
   if (copilotReviews.length === 0 && !copilotOptional) {
-    return setDecision('skip', 'no Copilot review yet');
+    const errored = reviews.some((r) => copilotMatches(r.user) && isErroredReview(r.body));
+    return setDecision(
+      'skip',
+      errored
+        ? 'no Copilot review yet (its last attempt errored; re-request a review)'
+        : 'no Copilot review yet',
+    );
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed

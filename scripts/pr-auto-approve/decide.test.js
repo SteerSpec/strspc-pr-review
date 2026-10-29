@@ -778,6 +778,68 @@ test('skip: latest Copilot review suppressed low-confidence comments', async () 
   assert.equal(calls.createReview.length, 0);
 });
 
+// Real production body, SteerSpec/strspc-rules#83: a failed Copilot run still
+// posts a COMMENTED review with no inline comments.
+const ERRORED_BODY =
+  'Copilot encountered an error and was unable to review this pull request. '
+  + 'You can try again by re-requesting a review.';
+const COPILOT = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+
+test('skip: errored Copilot review on the head is not copilot-clean', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no Copilot review yet.*errored/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: errored reviews do not count toward the rounds threshold', async () => {
+  const core = makeCore();
+  const mk = (id, h) => ({
+    id, state: 'COMMENTED', submitted_at: `2026-10-29T${h}:00:00Z`, commit_id: 'cafebabe', user: COPILOT, body: ERRORED_BODY,
+  });
+  const { github, calls } = makeFakeGithub({ reviews: [mk(1, '08'), mk(2, '09'), mk(3, '10')] });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: a real clean review after an errored one is copilot-clean', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 8, state: 'COMMENTED', submitted_at: '2026-10-29T10:05:00Z', user: COPILOT },
+    ],
+    reviewComments: { 7: [], 8: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean \(review 8/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('skip: errored review after a stale clean review does not approve', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT },
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 6: [], 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /older commit/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('skip: suppressed count is reported (plural)', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({

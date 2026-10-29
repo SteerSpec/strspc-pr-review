@@ -543,8 +543,9 @@ async function requestCopilotReview({ github, context, core, env = process.env }
 // any blank/negative/non-numeric value) disables it, so a typo never turns an
 // opt-in write call on.
 function getErrorRetries(env = process.env) {
-  const n = parseInt(env.AUTO_APPROVE_COPILOT_ERROR_RETRIES, 10);
-  return Number.isInteger(n) && n > 0 ? n : 0;
+  // Whole-string match: parseInt would accept "2foo" or "2.5" as 2.
+  const raw = String(env.AUTO_APPROVE_COPILOT_ERROR_RETRIES || '').trim();
+  return /^\d+$/.test(raw) ? parseInt(raw, 10) : 0;
 }
 
 // Re-requests the Copilot review after an errored one on the current head.
@@ -1040,19 +1041,24 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
-  if (copilotReviews.length === 0 && !copilotOptional) {
-    if (!sawErroredReview) return setDecision('skip', 'no Copilot review yet');
+  // Re-requests (when copilot-error-retries allows) and describes the outcome.
+  const erroredReviewNote = async () => {
+    const retries = getErrorRetries();
     const retry = await retryErroredCopilotReview({
-      github, context, core, prNumber, erroredOnHead, retries: getErrorRetries(),
+      github, context, core, prNumber, erroredOnHead, retries,
     });
-    const note = {
-      requested: `re-requested, retry ${erroredOnHead}/${getErrorRetries()}`,
+    return {
+      requested: `re-requested, retry ${erroredOnHead}/${retries}`,
       exhausted: `errored ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
       disabled: 're-request a review',
       none: 're-request a review',
       error: 'automatic re-request failed; re-request a review',
     }[retry];
-    return setDecision('skip', `no Copilot review yet (its last attempt errored; ${note})`);
+  };
+
+  if (copilotReviews.length === 0 && !copilotOptional) {
+    if (!sawErroredReview) return setDecision('skip', 'no Copilot review yet');
+    return setDecision('skip', `no Copilot review yet (its last attempt errored; ${await erroredReviewNote()})`);
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
@@ -1086,9 +1092,13 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       const detail = latest.commit_id
         ? `is for an older commit (${String(latest.commit_id).slice(0, 8)})`
         : 'has no commit_id, so its freshness cannot be verified';
+      // A current-head attempt that errored on top of this stale review is the
+      // same situation as the no-review case: nothing is coming unless the
+      // review is re-requested, so retry here too.
+      const erroredNote = erroredOnHead > 0 ? `; its attempt on this head errored (${await erroredReviewNote()})` : '';
       return setDecision(
         'skip',
-        `latest Copilot review ${detail}, waiting for re-review`,
+        `latest Copilot review ${detail}, waiting for re-review${erroredNote}`,
       );
     }
     const comments = await github.paginate(

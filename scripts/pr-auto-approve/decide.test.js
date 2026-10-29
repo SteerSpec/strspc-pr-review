@@ -894,6 +894,21 @@ test('retries: an errored review of an older commit neither spends nor triggers 
   assert.equal(requested.length, 0);
 });
 
+test('retries: errored head attempt on top of a stale clean review is re-requested', async () => {
+  const stale = { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT };
+  const { result, requested } = await runWithRetries('2', [stale, erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /older commit.*errored \(re-requested, retry 1\/2\)/);
+  assert.equal(requested.length, 1);
+});
+
+test('retries: a stale review with retries off keeps the plain waiting reason plus the errored hint', async () => {
+  const stale = { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT };
+  const { requested, result } = await runWithRetries(undefined, [stale, erroredOnHead(7, '10')]);
+  assert.match(result.reason, /waiting for re-review; its attempt on this head errored \(re-request a review\)/);
+  assert.equal(requested.length, 0);
+});
+
 test('retries: a re-request failure only warns and still skips', async () => {
   const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {
     throw Object.assign(new Error('Validation Failed'), { status: 422 });
@@ -913,7 +928,7 @@ test('retries: a real review on the head means no re-request', async () => {
 });
 
 test('getErrorRetries: only a positive integer enables retries', () => {
-  for (const [raw, want] of [[undefined, 0], ['', 0], ['0', 0], ['-1', 0], ['abc', 0], ['2', 2], [' 3 ', 3]]) {
+  for (const [raw, want] of [[undefined, 0], ['', 0], ['0', 0], ['-1', 0], ['abc', 0], ['2', 2], [' 3 ', 3], ['2foo', 0], ['2.5', 0], ['1e3', 0]]) {
     assert.equal(decide.getErrorRetries({ AUTO_APPROVE_COPILOT_ERROR_RETRIES: raw }), want, String(raw));
   }
 });

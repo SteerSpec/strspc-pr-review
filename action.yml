@@ -42,9 +42,10 @@ inputs:
     description: >-
       Base branch(es) that PRs must target to be eligible for auto-approval.
       Accepts a single branch or a comma-separated set (e.g. 'develop,main');
-      whitespace-only falls back to the default. Default: main. When you change
-      this, also update on.pull_request.branches and the job if: base.ref check
-      in your caller workflow so all three stay aligned.
+      whitespace-only falls back to the default. Default: main. Enforced for
+      every event, including pull_request_target and pull_request_review. The
+      shipped template reads it from vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH and
+      uses the same variable in its job if:, so there is one place to change.
   sandbox-repos:
     required: false
     default: ''
@@ -136,7 +137,8 @@ inputs:
     default: 'alert-pr-notifications'
     description: >-
       Slack channel name or ID for notifications (default:
-      alert-pr-notifications). Used only when slack-bot-token is set.
+      alert-pr-notifications; an empty value also means the default). Used only
+      when slack-bot-token is set.
   slack-bot-token:
     required: false
     default: ''
@@ -251,7 +253,8 @@ runs:
       shell: bash
       env:
         SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        # || because a caller passing an unset variable sends '', not the default.
+        SLACK_CHANNEL: ${{ inputs.slack-channel || 'alert-pr-notifications' }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}
@@ -290,7 +293,8 @@ runs:
       shell: bash
       env:
         SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        # || because a caller passing an unset variable sends '', not the default.
+        SLACK_CHANNEL: ${{ inputs.slack-channel || 'alert-pr-notifications' }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}
@@ -329,7 +333,8 @@ runs:
       shell: bash
       env:
         SLACK_BOT_TOKEN: ${{ inputs.slack-bot-token }}
-        SLACK_CHANNEL: ${{ inputs.slack-channel }}
+        # || because a caller passing an unset variable sends '', not the default.
+        SLACK_CHANNEL: ${{ inputs.slack-channel || 'alert-pr-notifications' }}
         REPO: ${{ github.repository }}
         SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         PR_URL: ${{ github.event.pull_request.html_url || steps.evaluate.outputs.pr_url }}

@@ -52,7 +52,34 @@ curl -o .github/workflows/auto-approve.yml \
   https://raw.githubusercontent.com/SteerSpec/strspc-pr-review/main/templates/pr-auto-approve.yml
 ```
 
-Then change the values below. The template's comments explain each trap inline — keep them.
+The template's comments explain each trap inline — keep them. The only per-repo edit in the file
+itself is the `workflow_run.workflows` list (below). Every other setting comes from a variable.
+
+## 2a. Configure through variables, org first
+
+The template reads each input from an Actions variable named `STRSPC_PR_AUTO_APPROVE_<INPUT>`
+(`..._BOT_LOGIN`, `..._BASE_BRANCH`, `..._ROUNDS_THRESHOLD`, `..._ROUNDS_BY_TYPE`,
+`..._COPILOT_OPTIONAL_PATHS`, `..._ALLOW_NO_CHECKS`, `..._REQUEST_COPILOT_REVIEW`,
+`..._WAIT_FOR_COPILOT_SECONDS`, `..._COPILOT_ERROR_RETRIES`, `..._SLACK_CHANNEL`). Set the org-wide policy once, then override
+it only in a repo that differs:
+
+```bash
+gh variable list --org <org>                       # what the org already provides
+gh variable set STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE --org <org> --visibility all \
+  --body 'docs:1,chore:0,default:3'
+gh variable set STRSPC_PR_AUTO_APPROVE_BASE_BRANCH --repo <owner>/<repo> --body develop   # override
+```
+
+- A repo variable **replaces** the org value whole. To change one `rounds-by-type` entry, write the
+  full string.
+- Unset means "action default", and so does an org variable whose repository access (`--visibility
+  all|private|selected`) does not include this repo. Check access before blaming the action.
+- GitHub rejects empty variables, so to restore a default in one repo, set the default value
+  explicitly.
+- A literal in `with:` still beats both variables, if a repo really needs to pin a value in code.
+  Except `base-branch`: the job `if:` reads the variable before the action runs, so a literal
+  there must also replace `vars.STRSPC_PR_AUTO_APPROVE_BASE_BRANCH || 'main'` in the `if:`.
+  Prefer the repo variable.
 
 ## 3. The traps, in the order people hit them
 
@@ -69,24 +96,23 @@ If you add an `actions/checkout` step to this workflow, that reasoning collapses
 It also makes the fork guard (`head.repo.full_name == github.repository`) load-bearing rather than
 defensive. Keep it.
 
-### Base branch must agree in three places
+### Base branch comes from one variable
 
-`on.pull_request_target.branches`, the `if:` `base.ref` check, and the `base-branch` input. Change
-one and the workflow silently stops matching. For several branches:
+`STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` (comma-separated, default `main`) feeds both the job `if:`
+pre-filter and the `base-branch` input. The template deliberately has **no `branches:` filter** on
+`pull_request_target`: `on:` cannot read variables, so a filter there would be a second copy to keep
+in sync. A repo whose default branch is `develop` needs that variable set (at repo level if the org
+value is `main`); otherwise every PR is skipped as `PR base ref 'develop' not in [main]`.
 
-```yaml
-branches: [main, develop]
-# and in the if:
-contains(fromJSON('["main","develop"]'), github.event.pull_request.base.ref)
-```
+### `bot-login` and the loop guard must read the same thing
 
-### `bot-login` must be a literal, or the loop guard fails open
-
-The `if:` compares `github.actor != '<bot-login>'` to stop the bot's own approval re-triggering the
-workflow. If you point that at an unset variable it becomes `actor != ''` — always true — and the
-guard is silently disabled. Hard-code the login, and keep it identical to the `bot-login` input.
-The action now fails the job with `bot-login is empty` when the input is blank, and ignores runs
-triggered by the bot's own review, but the `if:` guard is still what prevents the extra runs.
+The `if:` compares `github.actor != <bot login>` to stop the bot's own approval re-triggering the
+workflow. The template uses the identical expression in both places:
+`vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN`. What fails open is a
+**mismatch** — a literal in `bot-login` while the guard reads an unset variable becomes
+`actor != ''`, always true. If both read the same unset variable, the action fails the job with
+`bot-login is empty` before approving anything, so the gap is loud. If you hard-code the login, do
+it in both places.
 
 ### `workflow_run` is required when CI is GitHub Actions
 

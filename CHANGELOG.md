@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.0...v1.9.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* pass bot_login through env in the deprecated reusable workflow ([2e8cb96](https://github.com/SteerSpec/strspc-pr-review/commit/2e8cb969f5cb1d9ccb44110572b36d16d7478e43))
+* pass bot-login to the review-request script through env ([7ec8fba](https://github.com/SteerSpec/strspc-pr-review/commit/7ec8fba5d2bbdfadadd7ccc484ea1e38189b78a0))
+* pass bot-login to the review-request script through env ([e3b99df](https://github.com/SteerSpec/strspc-pr-review/commit/e3b99dfaba8dc23099dc8fe5dc9f9cd4c8ad67c0))
+
 ## [1.9.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.8.1...v1.9.0) (2026-10-30)
 
 

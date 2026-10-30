@@ -53,6 +53,9 @@ The rollout showed these differ per repo and are the usual cause of a caller tha
 - **Gating workflow names** in `workflow_run.workflows` — use that repo's real workflow `name:`
   values, and list **all** PR-gating workflows. Each fires its own event, and only the last to
   finish will see every other check complete.
+- **Bot token secret name** — the template reads `secrets.BOT_GITHUB_TOKEN`; keep whatever name
+  the repo already uses (SteerSpec callers use `secrets.BOT_TOKEN`). A wrong name reaches the
+  action as an empty token.
 - **Public vs private** — `wait-for-copilot-seconds` is free on public repos and billable on
   private ones.
 - **Does the repo have PR-time CI at all?** If not, the action can never approve; add a minimal

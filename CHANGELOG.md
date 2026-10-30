@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.9.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.8.1...v1.9.0) (2026-10-30)
+
+
+### Features
+
+* configure callers through org-level STRSPC_PR_AUTO_APPROVE_* variables ([1ac1c4a](https://github.com/SteerSpec/strspc-pr-review/commit/1ac1c4a810521418e1625b827b189efabd4cce1d))
+* configure callers through org-level STRSPC_PR_AUTO_APPROVE_* variables ([44ee64a](https://github.com/SteerSpec/strspc-pr-review/commit/44ee64abe5b53fbb7a684856dfdee0848548c1a0))
+* re-request Copilot's review when it errors ([65c955d](https://github.com/SteerSpec/strspc-pr-review/commit/65c955dfbdf8606a7a97d59de65fd9eac7c83bbe))
+* re-request Copilot's review when it errors (copilot-error-retries) ([198cd67](https://github.com/SteerSpec/strspc-pr-review/commit/198cd67eae3ce6649c7e2acbb9eb925f6e84fc00))
+* wire copilot-error-retries to STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES ([a3479a9](https://github.com/SteerSpec/strspc-pr-review/commit/a3479a90de1dcb833f2830767e8fc106face089e))
+
+
+### Bug Fixes
+
+* always let main through the template's base-branch pre-filter ([6d2fb7a](https://github.com/SteerSpec/strspc-pr-review/commit/6d2fb7a4bda5d3ef5ce9df49c66c033aaeff3f38))
+* anchor the errored-review match and limit it to COMMENTED reviews ([ce535af](https://github.com/SteerSpec/strspc-pr-review/commit/ce535af6832ab0b7540f4579b2c7ee7901ffe2e1))
+* don't re-request Copilot while a request is already pending ([0c8306a](https://github.com/SteerSpec/strspc-pr-review/commit/0c8306a00a1bb562b137ab8c54ac85005e2bd0fd))
+* don't treat an errored Copilot review as clean ([1b7db7c](https://github.com/SteerSpec/strspc-pr-review/commit/1b7db7cec2ca65d77f56ba09221429bb345b779d))
+* don't treat an errored Copilot review as clean ([c2dc28b](https://github.com/SteerSpec/strspc-pr-review/commit/c2dc28bbf2c4ad4ddb31a1c018f193a01bd96d7a))
+* **e2e:** restore only script-owned repo variables; paginate; POSIX grep ([032f698](https://github.com/SteerSpec/strspc-pr-review/commit/032f698df0f26f0508adb1d85922a1c80cbb3967))
+* **e2e:** stop sandbox-vars.sh status printing 404 JSON for unset vars ([c831d82](https://github.com/SteerSpec/strspc-pr-review/commit/c831d823efebf18cffeab59249d403bf15a94588))
+* **e2e:** stop sandbox-vars.sh status printing 404 JSON for unset vars ([9055c44](https://github.com/SteerSpec/strspc-pr-review/commit/9055c44aed87df7e6f63993187826276d8aa08e9))
+* make CLAUDE.md a regular file so SteerSpec Sync PRs check out ([41183cb](https://github.com/SteerSpec/strspc-pr-review/commit/41183cbbd38e1a68bdd1ad014c2db13502b2a956))
+* make CLAUDE.md a regular file so SteerSpec Sync PRs check out ([5770dc3](https://github.com/SteerSpec/strspc-pr-review/commit/5770dc36983fafa1c5bbdc281fa9193de238f294))
+* match the pending Copilot reviewer by exact login ([2c97470](https://github.com/SteerSpec/strspc-pr-review/commit/2c9747073b296dee77a3311868395600e7165540))
+* report errored reviews seen while polling; cover quoted error text ([b18ba9c](https://github.com/SteerSpec/strspc-pr-review/commit/b18ba9c0e2f362951809694fd96581b581b69e7a))
+* retry on a stale review plus an errored head attempt; parse retries strictly ([ffe8f67](https://github.com/SteerSpec/strspc-pr-review/commit/ffe8f6785e74dbb418c8e5cca32d0347a3b4a76a))
+
 ## [1.8.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.8.0...v1.8.1) (2026-10-24)
 
 

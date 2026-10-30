@@ -96,3 +96,33 @@ test('the README names every variable the template reads', () => {
   const missing = [...used].filter((v) => !readme.includes(`\`${v}\``));
   assert.deepEqual(missing, [], `variables missing from README: ${missing.join(', ')}`);
 });
+
+// Inputs can now come from Actions variables, so an expression interpolated into
+// a github-script body is a code-injection path (a quote in the value breaks out
+// of the JS string). Values reach scripts through env: and process.env instead.
+// The deprecated reusable workflow is covered too: its callers pass the same values.
+function assertNoScriptExpressions(file) {
+  const lines = read(file).split('\n');
+  const offenders = [];
+  let blocks = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)script: \|/);
+    if (!m) continue;
+    blocks++;
+    for (let j = i + 1; j < lines.length; j++) {
+      const indent = lines[j].match(/^\s*/)[0].length;
+      if (lines[j].trim() && indent <= m[1].length) break;
+      if (lines[j].includes('${{')) offenders.push(`${file}:${j + 1}: ${lines[j].trim()}`);
+    }
+  }
+  assert.ok(blocks > 0, `expected at least one script block in ${file}`);
+  assert.deepEqual(offenders, []);
+}
+
+test('no action.yml script body interpolates an expression', () => {
+  assertNoScriptExpressions('action.yml');
+});
+
+test('no deprecated reusable workflow script body interpolates an expression', () => {
+  assertNoScriptExpressions('.github/workflows/pr-auto-approve.yml');
+});

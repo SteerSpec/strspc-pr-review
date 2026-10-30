@@ -150,12 +150,16 @@ jobs:
           github.event_name == 'pull_request' &&
           (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
         uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          # Through env, never interpolated into the script: a quote in the
+          # caller-supplied bot_login would otherwise inject code.
+          BOT_LOGIN: ${{ inputs.bot_login }}
         with:
           github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           script: |
             // Best-effort — see the matching comment in action.yml. Kept in sync
             // so the deprecated reusable workflow behaves like the action.
-            const botLogin = '${{ inputs.bot_login }}';
+            const botLogin = process.env.BOT_LOGIN;
             try {
               const { owner, repo } = context.repo;
               const prNumber = context.payload.pull_request.number;

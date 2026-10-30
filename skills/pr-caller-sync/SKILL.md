@@ -77,18 +77,29 @@ The rollout showed these differ per repo and are the usual cause of a caller tha
 
 Updating `.github/workflows/` requires a token with **`workflow` scope**.
 
-Committing via the API avoids cloning each repo:
+Committing via the API avoids cloning each repo. Use GraphQL `createCommitOnBranch`, not the REST
+contents API: GitHub signs the former, while a contents-API commit made with a user token is
+unsigned and cannot merge into a branch whose ruleset has `required_signatures`.
 
 ```bash
-gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/ci/auto-approve" -f sha="<default-branch-sha>"
+# Reuse the branch if a previous attempt (or its open PR) left it; expectedHeadOid must be its
+# current head, or the mutation is rejected as stale.
+if ! head=$(gh api repos/{owner}/{repo}/git/ref/heads/ci/auto-approve --jq .object.sha 2>/dev/null); then
+  head=$(gh api repos/{owner}/{repo}/git/ref/heads/<default-branch> --jq .object.sha)
+  gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/ci/auto-approve" -f sha="$head"
+fi
 
 # openssl, not base64: `base64 -i/-o` is BSD/macOS-only — on GNU coreutils `-i`
-# means "ignore garbage" and `-o` is not a flag at all. `-A` keeps it on one
-# line, which the contents API requires.
+# means "ignore garbage" and `-o` is not a flag at all. `-A` keeps it on one line.
 openssl base64 -A -in workflow.yml -out workflow.b64
 
-gh api repos/{owner}/{repo}/contents/.github/workflows/auto-approve.yml -X PUT \
-  -f message="ci: sync auto-approve caller" -F content=@workflow.b64 -f branch="ci/auto-approve"
+jq -n --arg head "$head" --rawfile c workflow.b64 '{
+  query: "mutation($i: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $i) { commit { oid } } }",
+  variables: {i: {
+    branch: {repositoryNameWithOwner: "{owner}/{repo}", branchName: "ci/auto-approve"},
+    message: {headline: "ci: sync auto-approve caller"}, expectedHeadOid: $head,
+    fileChanges: {additions: [{path: ".github/workflows/auto-approve.yml", contents: $c}]}}}}' \
+  | gh api graphql --input -
 ```
 
 Run `actionlint` on the file **before** committing — a syntax error lands in a repo whose PRs may

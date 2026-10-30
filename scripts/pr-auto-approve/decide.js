@@ -112,6 +112,19 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
+// Copilot posts a COMMENTED review with zero inline comments when its run fails
+// (observed 2026-10-29, SteerSpec/strspc-rules#83): "Copilot encountered an
+// error and was unable to review this pull request. You can try again by
+// re-requesting a review." That is the absence of a review, not a clean one, so
+// it must neither approve as copilot-clean nor count toward the rounds threshold.
+// Anchored and COMMENTED-only: a review that merely quotes the phrase, or a
+// CHANGES_REQUESTED review, must never be filtered out (that would fail open).
+function isErroredReview(review) {
+  return review.state === 'COMMENTED'
+    && /^Copilot encountered an error and was unable to review this pull request\./i
+      .test(String(review.body || '').trim());
+}
+
 // Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
 function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
 // Comma-separated set of base branches a PR must target to be eligible.
@@ -526,6 +539,46 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   }
 }
 
+// Max automatic re-requests per head SHA after Copilot errors. 0 (default, also
+// any blank/negative/non-numeric value) disables it, so a typo never turns an
+// opt-in write call on.
+function getErrorRetries(env = process.env) {
+  // Whole-string match: parseInt would accept "2foo" or "2.5" as 2.
+  const raw = String(env.AUTO_APPROVE_COPILOT_ERROR_RETRIES || '').trim();
+  return /^\d+$/.test(raw) ? parseInt(raw, 10) : 0;
+}
+
+// Re-requests the Copilot review after an errored one on the current head.
+// `erroredOnHead` comes from the review history, so the cap needs no stored
+// state and a re-run cannot exceed it. Best-effort like requestCopilotReview:
+// a failure only warns. Returns 'requested', 'exhausted', 'disabled' or 'error'.
+async function retryErroredCopilotReview({ github, context, core, prNumber, erroredOnHead, retries }) {
+  if (retries <= 0) return 'disabled';
+  if (erroredOnHead === 0) return 'none'; // it errored on an older commit only
+  if (erroredOnHead > retries) return 'exhausted';
+  try {
+    const { owner, repo } = context.repo;
+    // The budget counts only reviews that already errored, so every run between
+    // this request and Copilot's next review would otherwise request again.
+    // A request still pending on the PR means the retry is already in flight.
+    const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    // Exact logins only: a substring match would let an unrelated "copilot-x"
+    // reviewer mask a missing Copilot request. 'Copilot' is the display login
+    // GitHub uses for the bot on requested reviewers (not seen on a live PR
+    // yet; the canonical bot logins are checked as well).
+    if ((live.requested_reviewers || []).some((r) => isCopilot(r) || r.login === 'Copilot')) return 'pending';
+    await github.rest.pulls.requestReviewers({
+      owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
+    });
+    return 'requested';
+  } catch (err) {
+    core.warning(
+      `pr-auto-approve: could not re-request a Copilot review: ${err.status || ''} ${err.message || err}`.trim(),
+    );
+    return 'error';
+  }
+}
+
 async function decide(args) {
   try {
     return await decideInner(args);
@@ -611,11 +664,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   };
 
   // An empty bot login is a misconfiguration, not a skip: the caller's loop
-  // guard (`github.actor != vars.PR_AUTO_APPROVE_BOT_LOGIN`) is then always
+  // guard (`github.actor != vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN`) is then always
   // true too, so each approval re-triggers this workflow. That ran away to 17
   // approvals in three minutes once. Fail the job so it cannot pass unnoticed.
   if (!BOT_LOGIN) {
-    const reason = 'bot-login is empty: set the PR_AUTO_APPROVE_BOT_LOGIN repository variable ' +
+    const reason = 'bot-login is empty: set the STRSPC_PR_AUTO_APPROVE_BOT_LOGIN organization or repository variable ' +
       '(the caller passes it as bot-login and uses it in the job `if:` loop guard)';
     core.error(`pr-auto-approve ${reason}`);
     if (typeof core.setFailed === 'function') core.setFailed(reason);
@@ -627,6 +680,18 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const triggeringReview = context.payload.review;
   if (triggeringReview && triggeringReview.user && triggeringReview.user.login === BOT_LOGIN) {
     return setDecision('skip', 'triggered by the bot\'s own review');
+  }
+
+  // pull_request_target / pull_request_review carry the PR in the payload. The
+  // caller can no longer filter these by branch in `on:` once the set comes
+  // from a variable (`on:` cannot read `vars`), and its `if:` only pre-filters
+  // with a substring match, so the exact check lives here, as it does for
+  // check_run and workflow_run below.
+  if (pr && (!pr.base || !BASE_BRANCHES.has(pr.base.ref))) {
+    return setDecision(
+      'skip',
+      `PR base ref '${pr.base ? pr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+    );
   }
 
   // check_run events don't carry pull_request directly; extract from associated PRs.
@@ -942,19 +1007,30 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     typeof core.warning === 'function' ? core.warning.bind(core) : undefined,
   );
   const copilotMatches = makeIsCopilot(testLogins);
-  const selectCopilotReviews = (rs) => rs
-    .filter(
-      (r) =>
-        copilotMatches(r.user) &&
-        r.state !== 'DISMISSED' &&
-        r.state !== 'PENDING' &&
-        r.submitted_at,
-    )
-    .sort((a, b) => {
-      const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
-      const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
-      return at - bt;
-    });
+  // Set by every pass of the selector, including the wait loop's reloads, so a
+  // review that errors while we poll still explains the final skip reason.
+  let sawErroredReview = false;
+  // Errored reviews OF THE CURRENT HEAD: the retry budget is per head SHA, and
+  // is recomputed on every pass so it always reflects the latest snapshot.
+  let erroredOnHead = 0;
+  const selectCopilotReviews = (rs) => {
+    erroredOnHead = 0;
+    return rs
+      .filter((r) => {
+        if (!copilotMatches(r.user)) return false;
+        if (isErroredReview(r)) {
+          sawErroredReview = true;
+          if (r.commit_id === headSha) erroredOnHead += 1;
+          return false;
+        }
+        return r.state !== 'DISMISSED' && r.state !== 'PENDING' && r.submitted_at;
+      })
+      .sort((a, b) => {
+        const at = a.submitted_at ? Date.parse(a.submitted_at) : a.id;
+        const bt = b.submitted_at ? Date.parse(b.submitted_at) : b.id;
+        return at - bt;
+      });
+  };
   let copilotReviews = selectCopilotReviews(reviews);
 
   // Copilot stopped registering a check run on the head SHA (verified
@@ -986,8 +1062,25 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   core.info(`pr-auto-approve: found ${copilotReviews.length} Copilot review(s) for PR #${prNumber}`);
 
+  // Re-requests (when copilot-error-retries allows) and describes the outcome.
+  const erroredReviewNote = async () => {
+    const retries = getErrorRetries();
+    const retry = await retryErroredCopilotReview({
+      github, context, core, prNumber, erroredOnHead, retries,
+    });
+    return {
+      requested: `re-requested, retry ${erroredOnHead}/${retries}`,
+      exhausted: `errored ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
+      pending: `re-request already pending, retry ${erroredOnHead}/${retries}`,
+      disabled: 're-request a review',
+      none: 're-request a review',
+      error: 'automatic re-request failed; re-request a review',
+    }[retry];
+  };
+
   if (copilotReviews.length === 0 && !copilotOptional) {
-    return setDecision('skip', 'no Copilot review yet');
+    if (!sawErroredReview) return setDecision('skip', 'no Copilot review yet');
+    return setDecision('skip', `no Copilot review yet (its last attempt errored; ${await erroredReviewNote()})`);
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
@@ -1021,9 +1114,13 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       const detail = latest.commit_id
         ? `is for an older commit (${String(latest.commit_id).slice(0, 8)})`
         : 'has no commit_id, so its freshness cannot be verified';
+      // A current-head attempt that errored on top of this stale review is the
+      // same situation as the no-review case: nothing is coming unless the
+      // review is re-requested, so retry here too.
+      const erroredNote = erroredOnHead > 0 ? `; its attempt on this head errored (${await erroredReviewNote()})` : '';
       return setDecision(
         'skip',
-        `latest Copilot review ${detail}, waiting for re-review`,
+        `latest Copilot review ${detail}, waiting for re-review${erroredNote}`,
       );
     }
     const comments = await github.paginate(
@@ -1172,3 +1269,5 @@ module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
 module.exports.changedFileNames = changedFileNames;
 module.exports.requestCopilotReview = requestCopilotReview;
+module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
+module.exports.getErrorRetries = getErrorRetries;

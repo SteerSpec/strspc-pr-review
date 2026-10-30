@@ -778,6 +778,224 @@ test('skip: latest Copilot review suppressed low-confidence comments', async () 
   assert.equal(calls.createReview.length, 0);
 });
 
+// Real production body, SteerSpec/strspc-rules#83: a failed Copilot run still
+// posts a COMMENTED review with no inline comments.
+const ERRORED_BODY =
+  'Copilot encountered an error and was unable to review this pull request. '
+  + 'You can try again by re-requesting a review.';
+const COPILOT = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+
+test('skip: errored Copilot review on the head is not copilot-clean', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no Copilot review yet.*errored/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a CHANGES_REQUESTED review is not mistaken for an errored one', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT },
+      { id: 7, state: 'CHANGES_REQUESTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 6: [], 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /requested changes/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: a COMMENTED review that only quotes the error text stays eligible', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-10-29T10:00:00Z',
+        user: COPILOT,
+        body: `Generated no new comments.\n\n> ${ERRORED_BODY}`,
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean \(review 7/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+// -- copilot-error-retries ----------------------------------------------
+
+function erroredOnHead(id, hour, commit = 'deadbeef') {
+  return {
+    id, state: 'COMMENTED', submitted_at: `2026-10-29T${hour}:00:00Z`, commit_id: commit, user: COPILOT, body: ERRORED_BODY,
+  };
+}
+
+async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = []) {
+  const prev = process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+  if (retries === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+  else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = retries;
+  try {
+    const core = makeCore();
+    const warnings = [];
+    core.warning = (m) => warnings.push(m);
+    const { github, calls } = makeFakeGithub({ reviews, reviewComments: {} });
+    const requested = [];
+    const originalGet = github.rest.pulls.get;
+    github.rest.pulls.get = async (a) => {
+      const out = await originalGet(a);
+      return { ...out, data: { ...out.data, requested_reviewers: pendingReviewers } };
+    };
+    github.rest.pulls.requestReviewers = async (a) => {
+      if (requestImpl) return requestImpl(a);
+      requested.push(a);
+      return { data: {} };
+    };
+    const result = await decide({ github, context: makeContext(), core });
+    return { result, requested, warnings, calls };
+  } finally {
+    if (prev === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
+    else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = prev;
+  }
+}
+
+test('retries off by default: errored review is not re-requested', async () => {
+  const { result, requested } = await runWithRetries(undefined, [erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /errored; re-request a review\)/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries=2: first errored review on the head is re-requested', async () => {
+  const { result, requested, calls } = await runWithRetries('2', [erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /re-requested, retry 1\/2/);
+  assert.deepEqual(requested[0].reviewers, ['copilot-pull-request-reviewer[bot]']);
+  assert.equal(requested[0].pull_number, 42);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('retries=1: a second errored review on the head exhausts the budget', async () => {
+  const { result, requested } = await runWithRetries('1', [erroredOnHead(7, '10'), erroredOnHead(8, '11')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /errored 2 time\(s\) on this head; retries exhausted/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: an errored review of an older commit neither spends nor triggers the budget', async () => {
+  const { result, requested } = await runWithRetries('2', [erroredOnHead(7, '10', 'cafebabe')]);
+  assert.equal(result.decision, 'skip');
+  assert.equal(requested.length, 0);
+});
+
+test('retries: errored head attempt on top of a stale clean review is re-requested', async () => {
+  const stale = { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT };
+  const { result, requested } = await runWithRetries('2', [stale, erroredOnHead(7, '10')]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /older commit.*errored \(re-requested, retry 1\/2\)/);
+  assert.equal(requested.length, 1);
+});
+
+test('retries: a stale review with retries off keeps the plain waiting reason plus the errored hint', async () => {
+  const stale = { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT };
+  const { requested, result } = await runWithRetries(undefined, [stale, erroredOnHead(7, '10')]);
+  assert.match(result.reason, /waiting for re-review; its attempt on this head errored \(re-request a review\)/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: a Copilot request already pending is not requested again', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'Copilot' }],
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /re-request already pending, retry 1\/2/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: an unrelated reviewer with "copilot" in its login does not mask the retry', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'copilot-helper' }],
+  );
+  assert.match(result.reason, /re-requested, retry 1\/2/);
+  assert.equal(requested.length, 1);
+});
+
+test('retries: a re-request failure only warns and still skips', async () => {
+  const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {
+    throw Object.assign(new Error('Validation Failed'), { status: 422 });
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /automatic re-request failed/);
+  assert.match(warnings.join('\n'), /could not re-request a Copilot review: 422/);
+});
+
+test('retries: a real review on the head means no re-request', async () => {
+  const { result, requested } = await runWithRetries('2', [
+    erroredOnHead(7, '10'),
+    { id: 8, state: 'COMMENTED', submitted_at: '2026-10-29T10:05:00Z', commit_id: 'deadbeef', user: COPILOT },
+  ]);
+  assert.equal(requested.length, 0);
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+});
+
+test('getErrorRetries: only a positive integer enables retries', () => {
+  for (const [raw, want] of [[undefined, 0], ['', 0], ['0', 0], ['-1', 0], ['abc', 0], ['2', 2], [' 3 ', 3], ['2foo', 0], ['2.5', 0], ['1e3', 0]]) {
+    assert.equal(decide.getErrorRetries({ AUTO_APPROVE_COPILOT_ERROR_RETRIES: raw }), want, String(raw));
+  }
+});
+
+test('skip: errored reviews do not count toward the rounds threshold', async () => {
+  const core = makeCore();
+  const mk = (id, h) => ({
+    id, state: 'COMMENTED', submitted_at: `2026-10-29T${h}:00:00Z`, commit_id: 'cafebabe', user: COPILOT, body: ERRORED_BODY,
+  });
+  const { github, calls } = makeFakeGithub({ reviews: [mk(1, '08'), mk(2, '09'), mk(3, '10')] });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: a real clean review after an errored one is copilot-clean', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 8, state: 'COMMENTED', submitted_at: '2026-10-29T10:05:00Z', user: COPILOT },
+    ],
+    reviewComments: { 7: [], 8: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean \(review 8/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('skip: errored review after a stale clean review does not approve', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', commit_id: 'cafebabe', user: COPILOT },
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: ERRORED_BODY },
+    ],
+    reviewComments: { 6: [], 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /older commit/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('skip: suppressed count is reported (plural)', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
@@ -1620,6 +1838,89 @@ test('check_run event: PR base outside the configured multi-branch set → skip'
   }
 });
 
+// -- base-branch gate on payload events ---------------------------------------
+// The template has no `branches:` filter (the set comes from a variable, which
+// `on:` cannot read) and its job `if:` is only a substring pre-filter, so the
+// action must enforce the exact set for pull_request_target/pull_request_review.
+
+test('pull_request_target: PR base outside base-branch → skip, no approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: { ref: 'main' } } }), // env: develop
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref 'main' not in [develop]");
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('pull_request_target: substring of a configured branch is not a match', async () => {
+  // The caller's if: uses contains(), so 'dev' gets through it for 'develop'.
+  const core = makeCore();
+  const { github } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: { ref: 'dev' } } }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref 'dev' not in [develop]");
+});
+
+test('pull_request_target: PR without a base → skip rather than approve', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({});
+  const result = await decide({
+    github,
+    context: makeContext({ prOverrides: { base: undefined } }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, "PR base ref '' not in [develop]");
+});
+
+test('pull_request_target: base in a spaced multi-branch set is eligible', async () => {
+  const core = makeCore();
+  const original = process.env.AUTO_APPROVE_BASE_BRANCH;
+  process.env.AUTO_APPROVE_BASE_BRANCH = 'develop, staging';
+  try {
+    const { github, calls } = makeFakeGithub({
+      // The action re-reads the PR mid-evaluation; it must still target staging.
+      getPrImpl: (pull_number) => ({
+        data: {
+          number: pull_number,
+          draft: false,
+          user: { login: 'someone' },
+          head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+          base: { ref: 'staging' },
+          html_url: `https://github.com/axeptio/test-only-repo/pull/${pull_number}`,
+        },
+      }),
+      reviews: [
+        {
+          id: 7,
+          state: 'COMMENTED',
+          submitted_at: '2026-04-15T10:00:00Z',
+          user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        },
+      ],
+      reviewComments: { 7: [] },
+    });
+    const result = await decide({
+      github,
+      context: makeContext({ prOverrides: { base: { ref: 'staging' } } }),
+      core,
+    });
+    assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+    assert.equal(calls.createReview.length, 1);
+  } finally {
+    if (original == null) delete process.env.AUTO_APPROVE_BASE_BRANCH;
+    else process.env.AUTO_APPROVE_BASE_BRANCH = original;
+  }
+});
+
 // -- workflow_run event tests -------------------------------------------------
 
 // Returns a context shaped like a workflow_run:completed event (no pull_request).
@@ -1888,6 +2189,25 @@ test('wait on: Copilot review arriving on a later poll leads to approval', async
     assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
     assert.equal(calls.createReview.length, 1);
     assert.ok(state.reviewCalls >= 3, `expected review polling, saw ${state.reviewCalls} fetches`);
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+    delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;
+  }
+});
+
+test('wait on: an errored review arriving during polling is named in the skip reason', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '1';
+  process.env.AUTO_APPROVE_COPILOT_POLL_MS = '400';
+  try {
+    const core = makeCore();
+    const errored = {
+      id: 9, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', commit_id: 'deadbeef', user: COPILOT, body: ERRORED_BODY,
+    };
+    const { github, calls } = makePollingGithub([[CI_OK]], { reviewSequence: [[], [errored]] });
+    const result = await decide({ github, context: makeContext(), core, sleep: realSleep });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /no Copilot review yet.*errored/);
+    assert.equal(calls.createReview.length, 0);
   } finally {
     delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
     delete process.env.AUTO_APPROVE_COPILOT_POLL_MS;

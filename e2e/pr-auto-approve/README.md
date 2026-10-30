@@ -8,6 +8,7 @@ End-to-end tests for the reusable `pr-auto-approve.yml` workflow.
 |---|---|
 | `lib.sh` | Shared helpers — PR lifecycle, CI polling, approval polling. Sourced, not executed. |
 | `run.sh` | **Synthetic tier.** Fakes Copilot via `test-copilot-logins`. Deterministic and fast. |
+| `sandbox-vars.sh` | Puts the sandbox on the variable-driven caller (`STRSPC_PR_AUTO_APPROVE_*`) and back. See [Variable precedence](#variable-precedence). |
 
 The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so
 every scenario is reproducible and can gate CI. It cannot tell you whether Copilot's own output
@@ -116,6 +117,32 @@ that sandbox.
 # Run the per-type scenarios
 ./e2e/pr-auto-approve/run.sh type-zero-docs type-zero-code retitle-approves retitle-withdraws
 ```
+
+## Variable precedence
+
+`sandbox-vars.sh` tests the org-level configuration end to end with the existing scenarios. It
+needs an org admin of the sandbox's org (`gh auth refresh -h github.com -s admin:org,workflow`).
+
+```bash
+e2e/pr-auto-approve/sandbox-vars.sh up      # back up, then migrate the sandbox
+e2e/pr-auto-approve/sandbox-vars.sh status  # effective org/repo variables and caller pin
+e2e/pr-auto-approve/sandbox-vars.sh down    # restore everything from the backup
+```
+
+`up` saves the sandbox's caller, `ci.yml` and variables under `~/.cache/strspc-e2e/`, then:
+
+- sets `STRSPC_PR_AUTO_APPROVE_{BOT_LOGIN,BASE_BRANCH,ROUNDS_BY_TYPE,WAIT_FOR_COPILOT_SECONDS}` as
+  org variables visible to the sandbox only, with `ROUNDS_BY_TYPE=default:3`;
+- overrides `ROUNDS_BY_TYPE=chore:0,default:3` at repo level and deletes the old
+  `PR_AUTO_APPROVE_BOT_LOGIN`, so each value has exactly one possible source;
+- regenerates the caller from the template at `ACTION_SHA` (pinned there, so an unreleased
+  `develop` build can be tested) and widens `ci.yml` to PRs against `develop`, creating it.
+
+It then prints the matrix: the default scenarios prove the org variables arrive; `type-zero-docs`
+and `type-zero-code` pass only if the repo override wins, because the org value has no `chore:0`;
+a repo `BASE_BRANCH=develop` with `E2E_BASE_BRANCH=develop` proves the base branch comes from the
+variable; and a whitespace-only `BASE_BRANCH` proves `main` still passes the job `if:`.
+`ORG`, `REPO_NAME`, `ACTION_SHA`, `BOT_LOGIN` and `REVIEWER_LOGIN` override the defaults.
 
 ## Notes
 

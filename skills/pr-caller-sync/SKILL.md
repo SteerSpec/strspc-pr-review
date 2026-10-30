@@ -22,7 +22,7 @@ cat templates/pr-auto-approve.yml   # the current recommended shape
 | New event needed | add to `on:` |
 | New `if:` branch | add the matching `||` branch |
 | New concurrency fallback | update the group expression |
-| New input | wire it up if it changes behaviour they need |
+| New input | wire it to `vars.STRSPC_PR_AUTO_APPROVE_<INPUT>` like the others in the template |
 
 ## 2. Find the callers
 
@@ -30,12 +30,26 @@ cat templates/pr-auto-approve.yml   # the current recommended shape
 gh search code "uses: SteerSpec/strspc-pr-review" --json repository,path
 ```
 
+**Migrating a caller to variables** (template shape with `STRSPC_PR_AUTO_APPROVE_*`): sync only
+once the release that introduced it is on `@v1` — an older action posts Slack messages to an empty
+channel and does not enforce the base branch on PR events, which the new template relies on. It is a
+one-time sync per repo; after it, policy changes are variable edits and need no PR. Before opening
+the sync PR, translate the caller's current literals into variables — org-level when most repos
+share the value, repo-level otherwise — or the synced caller silently falls back to the action's
+defaults (`base-branch` = `main`, no `rounds-by-type`, `wait-for-copilot-seconds` = 0):
+
+```bash
+gh variable list --org <org>
+gh variable list --repo <owner>/<repo>
+gh variable set STRSPC_PR_AUTO_APPROVE_BASE_BRANCH --repo <owner>/<repo> --body develop
+```
+
 ## 3. Per-repo values that are never copy-paste
 
 The rollout showed these differ per repo and are the usual cause of a caller that does nothing:
 
-- **Default branch** — must agree in three places: `on.pull_request_target.branches`, the `if:`
-  `base.ref` check, and the `base-branch` input.
+- **Default branch** — set `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` (repo or org). The template has no
+  `branches:` filter; the variable feeds both the `if:` pre-filter and the `base-branch` input.
 - **Gating workflow names** in `workflow_run.workflows` — use that repo's real workflow `name:`
   values, and list **all** PR-gating workflows. Each fires its own event, and only the last to
   finish will see every other check complete.
@@ -50,8 +64,8 @@ The rollout showed these differ per repo and are the usual cause of a caller tha
   the PR head with secrets in scope — a token-exfiltration path. Never add an `actions/checkout`
   step to this workflow; that is the property making `pull_request_target` safe here.
 - **Keep the fork guard.** Under `pull_request_target` it is load-bearing, not defensive.
-- **`bot-login` as a literal.** An unset variable makes the loop guard `actor != ''` — always true,
-  silently disabled.
+- **`bot-login` and the loop guard read the same expression.** A literal in one and an unset
+  variable in the other makes the guard `actor != ''` — always true, silently disabled.
 - **Self-exclusion by job name.** Callers use `github.event.check_run.name != '<job-name>'` to break
   the feedback loop. The template's job is `auto-approve`; renaming the job means updating that
   string too.

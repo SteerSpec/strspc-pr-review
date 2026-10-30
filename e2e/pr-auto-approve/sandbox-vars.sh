@@ -193,10 +193,14 @@ EOF
 
 status() {
   log "org variables ($ORG)"
-  local v
+  local v out
   for v in $ORG_VARS; do
-    gh api "orgs/$ORG/actions/variables/$P$v" --jq '"    \(.name)=\(.value)  [\(.visibility)]"' 2>/dev/null \
-      || echo "    $P$v (unset)"
+    # gh api writes a 404's error body to stdout, so capture and print only on success.
+    if out=$(gh api "orgs/$ORG/actions/variables/$P$v" --jq '"    \(.name)=\(.value)  [\(.visibility)]"' 2>/dev/null); then
+      echo "$out"
+    else
+      echo "    $P$v (unset)"
+    fi
   done
   log "repo variables ($REPO)"
   gh api --paginate "repos/$REPO/actions/variables" --jq '.variables[] | "    \(.name)=\(.value)"'

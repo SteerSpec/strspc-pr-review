@@ -162,6 +162,10 @@ runs:
         github.event_name == 'pull_request' &&
         (github.event.action == 'opened' || github.event.action == 'ready_for_review' || github.event.action == 'reopened')
       uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+      env:
+        # Through env, never interpolated into the script: bot-login can come from
+        # an Actions variable, and a quote in it would otherwise inject code.
+        BOT_LOGIN: ${{ inputs.bot-login }}
       with:
         # The workflow token, not the PAT. Requesting a review FROM the bot does
         # not have to be done BY the bot -- any token with pull-requests: write
@@ -177,7 +181,7 @@ runs:
           // is decided by the evaluate step below regardless. A token without
           // pull-requests: write 403s here, which previously failed the whole job
           // BEFORE the evaluation ever ran.
-          const botLogin = '${{ inputs.bot-login }}';
+          const botLogin = process.env.BOT_LOGIN;
           try {
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;

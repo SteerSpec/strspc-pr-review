@@ -82,14 +82,18 @@ contents API: GitHub signs the former, while a contents-API commit made with a u
 unsigned and cannot merge into a branch whose ruleset has `required_signatures`.
 
 ```bash
-base=$(gh api repos/{owner}/{repo}/git/ref/heads/<default-branch> --jq .object.sha)
-gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/ci/auto-approve" -f sha="$base"
+# Reuse the branch if a previous attempt (or its open PR) left it; expectedHeadOid must be its
+# current head, or the mutation is rejected as stale.
+if ! head=$(gh api repos/{owner}/{repo}/git/ref/heads/ci/auto-approve --jq .object.sha 2>/dev/null); then
+  head=$(gh api repos/{owner}/{repo}/git/ref/heads/<default-branch> --jq .object.sha)
+  gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/ci/auto-approve" -f sha="$head"
+fi
 
 # openssl, not base64: `base64 -i/-o` is BSD/macOS-only — on GNU coreutils `-i`
 # means "ignore garbage" and `-o` is not a flag at all. `-A` keeps it on one line.
 openssl base64 -A -in workflow.yml -out workflow.b64
 
-jq -n --arg head "$base" --rawfile c workflow.b64 '{
+jq -n --arg head "$head" --rawfile c workflow.b64 '{
   query: "mutation($i: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $i) { commit { oid } } }",
   variables: {i: {
     branch: {repositoryNameWithOwner: "{owner}/{repo}", branchName: "ci/auto-approve"},

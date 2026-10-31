@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://steerspec.dev/schemas/realm/v1.json",
+  "title": "SteerSpec Realm Manifest Schema",
+  "description": "Schema for realm.json manifest files. Hand-maintained axiom.",
+  "type": "object",
+  "required": ["$schema", "realm"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "realm": {
+      "type": "object",
+      "required": ["id", "title", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["realm_id", "version"],
+        "properties": {
+          "realm_id": { "type": "string" },
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+          },
+          "source": {
+            "type": "string",
+            "description": "Fetch location for this dependency (e.g. github://owner/repo@version/path)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sub_realms": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*$",
+            "description": "Single directory name satisfying the realm-id segment grammar."
+          },
+          "uniqueItems": true
+        },
+        { "type": "null" }
+      ],
+      "description": "Subdirectory names of child Realms (RLM-010). Null or absent if none."
+    },
+    "rule_identifier_format": {
+      "description": "Overrides of the RLIFRMT defaults (RLMMNFST-004). Every field is optional and falls back to its default. For a top-level Realm, null keeps all defaults; for a sub-realm, null means the parent's format applies (RLM-015). Affects rendering only (RLIFRMT-008).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "brackets": {
+              "enum": ["(,)", "{,}", "[,]"],
+              "default": "[,]",
+              "description": "Opening and closing character pair (RLIFRMT-002)."
+            },
+            "euid_position": {
+              "enum": ["opening", "closing"],
+              "default": "opening",
+              "description": "Position of the Entity Unique Identifier (RLIFRMT-003); the Rule Set Unique Number takes the opposing position (RLIFRMT-004)."
+            },
+            "id_splitter": {
+              "enum": ["-", "_"],
+              "default": "-",
+              "description": "Separator between the Entity Unique Identifier and the Rule Set Unique Number (RLIFRMT-005)."
+            },
+            "revision_splitter": {
+              "enum": [".", "#"],
+              "default": ".",
+              "description": "Separator before the Rule Revision (RLIFRMT-006)."
+            },
+            "state_splitter": {
+              "enum": ["/", "\\", "|"],
+              "default": "/",
+              "description": "Separator before the Rule State (RLIFRMT-007)."
+            }
+          },
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

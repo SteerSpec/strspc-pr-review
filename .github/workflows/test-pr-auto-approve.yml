@@ -17,11 +17,43 @@ on:
       - '.github/workflows/test-pr-auto-approve.yml'
       - 'package.json'
       - 'package-lock.json'
+      - 'rules/**'
+      - '.strspc/**'
 
 permissions:
   contents: read
 
 jobs:
+  # In this workflow rather than a separate one: auto-approve.yml re-enters
+  # through workflow_run on this workflow's name alone, so a check that outlived
+  # this workflow would leave the PR at "check still running" with nothing to
+  # re-trigger the evaluation.
+  #
+  # Lifecycle transitions are validated one PR at a time on the way into
+  # develop. A release (the same-repository develop -> main PR) aggregates those
+  # steps, which rulediff reads as skipped states and body-edit-plus-promotion,
+  # so exactly that PR is exempt from the diff.
+  rules:
+    uses: SteerSpec/.github/.github/workflows/strspc-lint.yml@9263d52f18833179ea1ed4fbedbff5516547da2d # main
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      path: rules/
+      diff: >-
+        ${{ !(
+          github.event_name == 'pull_request'
+          && github.base_ref == 'main'
+          && github.head_ref == 'develop'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        ) }}
+
+  check:
+    uses: SteerSpec/.github/.github/workflows/strspc-check.yml@9263d52f18833179ea1ed4fbedbff5516547da2d # main
+    permissions:
+      contents: read
+      pull-requests: read
+
   test:
     name: node --test
     runs-on: ubuntu-latest

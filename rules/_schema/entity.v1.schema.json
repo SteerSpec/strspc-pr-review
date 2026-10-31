@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://steerspec.dev/schemas/entity/v1.json",
+  "title": "SteerSpec Entity File Schema",
+  "description": "Full schema for SteerSpec entity files. Generated from core rule JSON files by tools/build-schema.py. Do not edit manually.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "entity",
+    "rule_set",
+    "rules",
+    "notes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 18,
+          "pattern": "^[a-zA-Z0-9]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "inherits": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rule_set": {
+      "type": "object",
+      "required": [
+        "version",
+        "timestamp",
+        "hash"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+        },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}"
+        },
+        "hash": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^blake3:[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "revision",
+          "state",
+          "body",
+          "added_by",
+          "added_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]+-\\d{3}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "D",
+              "A",
+              "P",
+              "I",
+              "R",
+              "T"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "added_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "added_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "supersedes": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Z0-9]+-\\d{3}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overrides": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*:)?[A-Z0-9]+-\\d{3}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sub_entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule_ref",
+          "type",
+          "content",
+          "added_by",
+          "added_at",
+          "revision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]+-\\d{3}/\\d{2}$"
+          },
+          "rule_ref": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]+-\\d{3}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "rationale",
+              "example",
+              "counter_example",
+              "reference",
+              "applies_to",
+              "changelog",
+              "clarification",
+              "deprecation_notice",
+              "supersedes",
+              "extends",
+              "related"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "added_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "added_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

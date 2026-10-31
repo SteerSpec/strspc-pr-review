@@ -1,0 +1,196 @@
+{
+  "$schema": "./_schema/entity.v1.schema.json",
+  "entity": {
+    "id": "APPROVE",
+    "title": "Approval decisions",
+    "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
+  },
+  "rule_set": {
+    "version": "0.1.20",
+    "timestamp": "2026-10-31T08:10:26Z",
+    "hash": "blake3:312cd6665ee77726396f7770ac4f50a458710df196217324daa1835360907c83"
+  },
+  "rules": [
+    {
+      "id": "APPROVE-001",
+      "revision": 0,
+      "state": "D",
+      "body": "Apart from an unfinished Copilot check on a pull request that does not need a Copilot review, the action MUST NOT approve a pull request while any CI check on its head is unfinished or has concluded with anything other than success, neutral, skipped, cancelled or stale.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-002",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT approve a pull request with no CI checks on its head unless allow-no-checks is enabled.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-003",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT approve a pull request while the latest non-dismissed Copilot review requests changes, whatever the number of review rounds.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-004",
+      "revision": 0,
+      "state": "D",
+      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-005",
+      "revision": 0,
+      "state": "D",
+      "body": "Subject to APPROVE-003, the action MAY approve a pull request that has reached its rounds threshold whatever commit the latest Copilot review covers and whatever comments it carries, so that a review that never clears cannot wedge the pull request.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-006",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST identify Copilot by an exact allowlist of logins, never by a partial match.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-007",
+      "revision": 0,
+      "state": "D",
+      "body": "A rounds-by-type threshold below the default MUST apply only when the complete list of changed files is known, every file matches copilot-optional-paths and the diff has a merge base, because the pull request title alone is author-controlled.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-008",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST withdraw an approval stamped with a relaxed threshold, before applying any other gate, once the pull request needs more review rounds or its changed files cannot be listed.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-009",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST pin an approval to the head commit it evaluated, MUST re-read the head, base branch and title before and after approving, and MUST NOT let an approval stand if any of them changed.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-010",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT approve a pull request authored by the bot account, except in a repository listed in sandbox-repos.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-011",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT evaluate a pull request in response to the bot account's own review.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-012",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST fail the job, rather than skip, when bot-login is empty, because the caller loop guard cannot then stop the approval from re-triggering the workflow.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-013",
+      "revision": 0,
+      "state": "D",
+      "body": "An unexpected failure during evaluation MUST end in a skip, never in an approval.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-014",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST fail the job, rather than skip, when it cannot list reviews to find a stale approval or cannot withdraw one, because that approval may still stand.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-015",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST use bot-github-token only to post an approval or dismiss a review, and github-token for every other request.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-016",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT check out or execute pull request code.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-017",
+      "revision": 0,
+      "state": "D",
+      "body": "A draft pull request or a pull request from a fork MUST NOT be approved.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-018",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST approve only pull requests whose base branch exactly matches a configured base branch.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-019",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT approve a pull request whose author, commit author or committer is in a configured list of identities that require human review.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-020",
+      "revision": 0,
+      "state": "D",
+      "body": "A Copilot run that failed or was cancelled MUST NOT count as a Copilot review: it MUST NOT satisfy APPROVE-004 or count toward the rounds threshold.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    }
+  ],
+  "notes": []
+}

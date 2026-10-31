@@ -117,6 +117,9 @@ never checks out PR code.
 - `.github/workflows/sync-marketplace-pin.yml` — after a release, opens the PR in `SteerSpec/.claude`
   that moves that pin. It selects the marketplace entry by `source.url`, not by name.
 - `e2e/pr-auto-approve/` — synthetic end-to-end harness (`run.sh`, `lib.sh`) against a sandbox repo.
+- `rules/` — the `dev.steerspec.prreview` realm. `APPROVE` states what the approval logic must
+  guarantee, so a behaviour change in `decide.js` goes with a rule change. Edit it only through the
+  `strspc` CLI, and use a `chore(rules):` title: `feat:` or `fix:` would release the action.
 
 ## Conventions & Patterns
 

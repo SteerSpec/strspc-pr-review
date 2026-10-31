@@ -131,15 +131,14 @@ function countSuppressedComments(body) {
 // wording it has not seen is a skip, not silence. Same reasoning as the
 // suppressed-comment gate: a false skip is visible, and the rounds threshold
 // still releases the PR. That is why:
-//   - collapsed sections are an allowlist: an unknown one blocks;
+//   - collapsed sections are an allowlist: an unknown or unlabelled one blocks;
 //   - "No open issues" counts only before the first collapsed section, which is
 //     where the PR-derived text starts;
-//   - the checks below identification read the raw body, so a fence can only
-//     cause a false skip, never hide a finding;
-//   - the marker is matched on the raw body, anchored at its start, loosely
-//     enough to survive a new version, and a known verdict heading or an
-//     open-issue count identifies an overview without it.
-const OVERVIEW_MARKER_RE = /^\s*<!--\s*ccr-overview\b[^>]*-->/i;
+//   - what proves a review clean is read with fences removed, and what blocks it
+//     is read from the raw body, so a fence can only cause a false skip;
+//   - the marker is matched loosely enough to survive a new version, and a known
+//     verdict heading or an open-issue count identifies an overview without it.
+const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview\b[^>]*-->/i;
 const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
 const APPROVAL_VERDICT_RE = /Approval recommended$/i;
@@ -153,20 +152,22 @@ const SAFE_SECTION_RE = /^(?:What changed in this PR|\d+ resolved since last rev
 function overviewBlocker(body) {
   const raw = String(body || '');
   const unfenced = raw.replace(FENCED_CODE_RE, '');
-  const isOverview = OVERVIEW_MARKER_RE.test(raw)
+  const isOverview = OVERVIEW_MARKER_RE.test(unfenced)
     || KNOWN_VERDICT_RE.test(unfenced)
     || OPEN_ISSUES_RE.test(unfenced);
   if (!isOverview) return '';
-  const heading = FIRST_HEADING_RE.exec(raw);
+  const heading = FIRST_HEADING_RE.exec(unfenced);
   const verdict = heading ? heading[1] : '';
   if (!APPROVAL_VERDICT_RE.test(verdict)) return `has verdict '${verdict || 'none'}'`;
   const open = OPEN_ISSUES_RE.exec(raw);
   if (open) return `lists ${open[1]} open issue(s)`;
-  if (!NO_OPEN_ISSUES_RE.test(raw.split(/<details\b/i)[0])) return 'does not state no open issues';
-  for (const [, inner] of raw.matchAll(SECTION_RE)) {
+  if (!NO_OPEN_ISSUES_RE.test(unfenced.split(/<details\b/i)[0])) return 'does not state no open issues';
+  const sections = [...raw.matchAll(SECTION_RE)];
+  for (const [, inner] of sections) {
     const label = inner.replace(/<[^>]*>/g, '').trim();
     if (!SAFE_SECTION_RE.test(label)) return `has section '${label}'`;
   }
+  if ((raw.match(/<details\b/gi) || []).length > sections.length) return "has section 'unlabelled'";
   return '';
 }
 

@@ -1563,6 +1563,38 @@ test('skip: a marker that is not a plain version keeps the same rules', async ()
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: text before the overview marker does not hide the overview', async () => {
+  const body = `A new preamble.\n\n${overviewBody({ verdict: '🟣 Something new' })}`;
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a fenced approval verdict is not the review verdict', async () => {
+  const fence = ['```', '### 🟢 Approval recommended', '```'].join('\n');
+  const body = overviewBody({ verdict: '🟡 Changes recommended' })
+    .replace('<!-- ccr-overview-v2 -->', `<!-- ccr-overview-v2 -->\n\n${fence}`);
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /Changes recommended/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a fenced "No open issues" is not the statement', async () => {
+  const fence = ['```', NO_OPEN_ISSUES, '```'].join('\n');
+  const { result, calls } = await decideOnBody(overviewBody({ issues: fence }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no open issues/i);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a collapsed section with no summary is an unknown section', async () => {
+  const section = ['<details>', 'Content with no label.', '</details>'].join('\n');
+  const { result, calls } = await decideOnBody(overviewBody({ extra: section }));
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
 // Same escape hatch as the suppressed block above.
 test('3-rounds rule still approves despite an open issue in an overview review', async () => {
   const core = makeCore();

@@ -766,6 +766,17 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const { owner, repo } = context.repo;
   const prNumber = pr.number;
 
+  // pull_request_target and pull_request_review carry the PR in the payload, so
+  // the check_run and workflow_run gates above never saw it. The caller's `if:`
+  // filters these events too, but a caller that wrote its own `if:` may not, and
+  // on pull_request_target a fork PR would then reach approval with the bot
+  // token. A deleted head repo (null) cannot be shown to be this one, so it
+  // skips as well.
+  if (pr.draft) return setDecision('skip', 'PR is draft');
+  if (!pr.head || !pr.head.repo || pr.head.repo.full_name !== `${owner}/${repo}`) {
+    return setDecision('skip', 'PR head repo does not match current repo');
+  }
+
   // Never self-approve — GitHub blocks it anyway, and in prod this guard
   // is load-bearing. Exception: inside sandbox repos the e2e harness runs
   // as both PR author and synthetic reviewer, so without this bypass the
@@ -1155,7 +1166,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   //     push would leave it describing a commit that is no longer the head;
   //   - base.ref: the path gate compared headSha against this branch, so a
   //     retarget changes the diff it judged;
-  //   - title: it chose the threshold, so a retitle changes the rules.
+  //   - title: it chose the threshold, so a retitle changes the rules;
+  //   - draft: the event snapshot only proves the PR was ready when the run began.
   // base.sha is deliberately NOT compared: the base branch moves whenever
   // anything else merges, and the three-dot comparison is merge-base to head,
   // so the diff is the same for any base tip that has not been merged into
@@ -1175,6 +1187,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
   if (!current.base || current.base.ref !== pr.base.ref) {
     return setDecision('skip', `PR base changed from ${pr.base.ref} to ${current.base ? current.base.ref : ''} during evaluation`);
+  }
+  if (current.draft) {
+    return setDecision('skip', 'PR converted to draft during evaluation');
   }
   const rewritten = await mergeBaseMoved();
   if (rewritten) {
@@ -1222,9 +1237,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
     const same = after.head.sha === headSha &&
       Boolean(after.base) && after.base.ref === pr.base.ref &&
-      (after.title || '') === (pr.title || '');
+      (after.title || '') === (pr.title || '') &&
+      !after.draft;
     if (!same) {
-      changedWhileApproving = 'PR head, base or title changed while approving';
+      changedWhileApproving = 'PR head, base, title or draft state changed while approving';
     } else {
       const rewritten = await mergeBaseMoved();
       changedWhileApproving = rewritten ? `${rewritten} while approving` : '';

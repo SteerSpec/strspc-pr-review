@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.20",
-    "timestamp": "2026-10-31T08:10:26Z",
-    "hash": "blake3:312cd6665ee77726396f7770ac4f50a458710df196217324daa1835360907c83"
+    "version": "0.1.21",
+    "timestamp": "2026-10-31T08:38:36Z",
+    "hash": "blake3:e7adece687a12f2f9fdfc45d39ab4e0e926e932ba93c9fb7f4ec9dd5a9fa3fde"
   },
   "rules": [
     {
@@ -85,9 +85,9 @@
     },
     {
       "id": "APPROVE-009",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "The action MUST pin an approval to the head commit it evaluated, MUST re-read the head, base branch and title before and after approving, and MUST NOT let an approval stand if any of them changed.",
+      "body": "The action MUST pin an approval to the head commit it evaluated, MUST re-read the head, base branch, title and draft state before and after approving, and MUST NOT let an approval stand if any of them changed.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

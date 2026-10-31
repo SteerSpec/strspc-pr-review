@@ -474,7 +474,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 
 ## Responsible use
 
-This action rubber-stamps **Copilot's** verdict — it is not a substitute for human judgment where that matters. Keep required human reviewers (branch protection, `CODEOWNERS`) on sensitive paths; the bot's approval fills a review slot but shouldn't be your only gate. Treat `BOT_GITHUB_TOKEN` like any write-scoped credential: keep it in secrets, give it **`Pull requests: write` and nothing more** — that is genuinely all the action uses it for — and rotate it periodically.
+This action rubber-stamps **Copilot's** verdict — it is not a substitute for human judgment where that matters. Keep required human reviewers (branch protection, `CODEOWNERS`) on sensitive paths; the bot's approval fills a review slot but shouldn't be your only gate. The action reads your checks when it approves and doesn't enforce them afterwards: a check that fails later on the same commit, such as a PR title check after a retitle or a re-run, leaves the approval in place. Make any check that must block a merge a required status check in your branch protection or ruleset. Treat `BOT_GITHUB_TOKEN` like any write-scoped credential: keep it in secrets, give it **`Pull requests: write` and nothing more** — that is genuinely all the action uses it for — and rotate it periodically.
 
 ---
 

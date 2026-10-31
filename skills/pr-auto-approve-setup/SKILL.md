@@ -199,6 +199,13 @@ set `request-copilot-review: 'true'`.
 To retry automatically when Copilot's review errors ("unable to review this pull request"), set
 `copilot-error-retries: '2'`; the default `0` leaves the re-request to a human.
 
+### Make blocking checks required
+
+A failing check stops the action from approving, but it doesn't remove an approval already given. A
+check that fails later on the same commit, such as a PR title check after a retitle or a re-run,
+leaves the PR approved and mergeable. Make any check that must block a merge a required status check
+in the branch protection or ruleset.
+
 ## 4. Verify
 
 Open a **second** PR and touch nothing:

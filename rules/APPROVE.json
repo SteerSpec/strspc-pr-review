@@ -7,8 +7,8 @@
   },
   "rule_set": {
     "version": "0.1.24",
-    "timestamp": "2026-10-31T18:24:47Z",
-    "hash": "blake3:112d058c9fd77f2cad017752ac705930c17e9adebf70e7799fbd1cd78b3e0162"
+    "timestamp": "2026-10-31T18:34:08Z",
+    "hash": "blake3:f03c20fb686ea731001415c779b356fa0f6d1096b2fe7bd6aaa25ddac18c0a79"
   },
   "rules": [
     {
@@ -42,7 +42,7 @@
       "id": "APPROVE-004",
       "revision": 2,
       "state": "D",
-      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states no open or previously missed issues and an approval verdict, or the Needs a closer look verdict when the copilot-clean-on input is set to no-open-issues.",
+      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states no open or previously missed issues and gives either an approval verdict or, when the copilot-clean-on input is set to no-open-issues, the Needs a closer look verdict.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

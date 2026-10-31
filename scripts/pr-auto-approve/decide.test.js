@@ -1530,21 +1530,23 @@ test('getCopilotCleanOn: only an exact no-open-issues opts in', () => {
   }
 });
 
-for (const cleanOn of ['no-open-issues', 'verdict']) {
-  test(`skip: Changes recommended with no open issues, copilot-clean-on=${cleanOn}`, async () => {
+test('skip: Changes recommended with no open issues, in both copilot-clean-on modes', async () => {
+  for (const cleanOn of ['no-open-issues', 'verdict']) {
     const { result, calls } = await decideOnBody(overviewBody({ verdict: '🟡 Changes recommended' }), cleanOn);
-    assert.equal(result.decision, 'skip');
-    assert.match(result.reason, /Changes recommended/);
-    assert.equal(calls.createReview.length, 0);
-  });
+    assert.equal(result.decision, 'skip', cleanOn);
+    assert.match(result.reason, /Changes recommended/, cleanOn);
+    assert.equal(calls.createReview.length, 0, cleanOn);
+  }
+});
 
-  test(`skip: an unknown verdict with no open issues, copilot-clean-on=${cleanOn}`, async () => {
+test('skip: an unknown verdict with no open issues, in both copilot-clean-on modes', async () => {
+  for (const cleanOn of ['no-open-issues', 'verdict']) {
     const { result, calls } = await decideOnBody(overviewBody({ verdict: '🟣 Something new' }), cleanOn);
-    assert.equal(result.decision, 'skip');
-    assert.match(result.reason, /Something new/);
-    assert.equal(calls.createReview.length, 0);
-  });
-}
+    assert.equal(result.decision, 'skip', cleanOn);
+    assert.match(result.reason, /Something new/, cleanOn);
+    assert.equal(calls.createReview.length, 0, cleanOn);
+  }
+});
 
 test('skip: Needs a closer look still lists an open issue', async () => {
   const { result, calls } = await decideOnBody(

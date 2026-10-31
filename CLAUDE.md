@@ -129,7 +129,8 @@ never checks out PR code.
 - Merge methods are enforced by rulesets: squash only into `develop` (`merge-method-develop`), merge
   commit only into `main` (`merge-method-main`), so release-please sees each commit from `develop`.
   The squash commit takes the PR title when a PR has several commits, and the commit's own subject
-  when it has one (`squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`).
+  when it has one (`squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`), so CI requires a one-commit
+  PR's title to match that subject.
 - Conventional Commits (`@commitlint/config-conventional`), enforced by the husky `commit-msg`
   hook, and for PR titles by the `commits` CI job (120 characters at most). Use `docs:`/`chore:` for
   non-code changes so release-please does not cut a release for them.

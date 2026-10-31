@@ -69,6 +69,8 @@ A review is only "clean" when Copilot left no inline comments **and** its body c
 
 GitHub has changed that block's wording at least once (`Comments suppressed due to low confidence (N)` became `Suppressed comments (N)`), so the action matches both. Treat the markup as unstable rather than as a contract.
 
+Since October 2026 Copilot also opens its review body with an overview: a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. When a body has that overview, it's only clean if the verdict is `Approval recommended`, it states `No open issues`, and it lists no previously missed issue. Any other verdict, or a wording the action doesn't recognise, skips rather than approves.
+
 The review must also name the **current head commit**. A push dismisses the bot's approval under branch protection, but leaves Copilot's `COMMENTED` review in place — those aren't dismissed — so without this check the new commit would inherit a verdict on the old one. A review that carries no commit at all can't prove freshness either, and is treated the same way.
 
 The rounds threshold is unaffected by both rules: it remains an unconditional escape hatch, so neither a suppressed block that never clears nor a missing re-review can wedge a PR forever.
@@ -451,6 +453,7 @@ Not approving? Every run logs a `reason` (also the `reason` output). The common 
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED` — this always blocks. Address the feedback and push. |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue. |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the collapsed section, and act on it (or let more rounds accrue). |
+| `latest Copilot review has verdict '…'` / `lists N open issue(s)` / `lists a previously missed issue` / `does not state no open issues` | The review's overview doesn't show it as clean, even with no new inline comments. Read the review body, fix or resolve what it lists, and push for a new review (or let more rounds accrue). A verdict you don't recognise may mean Copilot changed its wording. |
 | `no Copilot review yet (its last attempt errored; …)` | Copilot's run failed ("unable to review this pull request"); that review is ignored, not counted as clean. The text after `;` says whether the action re-requested it (`copilot-error-retries`), ran out of retries, or you should re-request it by hand. |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit — no action needed. |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. Unexpected from real Copilot reviews — check the reviewer really is Copilot and not a synthetic review posted without a `commit_id`. |
@@ -488,7 +491,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 196 unit tests, no external dependencies
+npm test            # 206 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

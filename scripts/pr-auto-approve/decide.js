@@ -112,6 +112,50 @@ function countSuppressedComments(body) {
   return parseInt(m[1], 10) || 1;
 }
 
+// Since 2026-10 Copilot opens its review body with an overview: a marker, a
+// verdict heading, then the issues still open across all rounds (verified on
+// SteerSpec/strspc-pr-review#127 and #128 and SteerSpec/strspc-manager#177):
+//
+//   <!-- ccr-overview-v2 -->
+//   ### 🟢 Approval recommended
+//   **No open issues** 🎉
+//
+// or "<summary><strong>2 open issues</strong></summary>", and findings withheld
+// from the inline comments under "<summary><strong>1 previously missed
+// issue</strong></summary>". None of that reaches listCommentsForReview, and the
+// suppressed-comment patterns above do not match it, so such a review used to
+// read as clean. A green verdict is not enough on its own: #127 had one over an
+// open High issue. "Needs a closer look" can also come with no open issues.
+//
+// This gate proves a review clean rather than looking for known problems, so a
+// wording it has not seen is a skip, not silence. Same reasoning as the
+// suppressed-comment gate: a false skip is visible, and the rounds threshold
+// still releases the PR. The marker version is not pinned, and a known verdict
+// heading is recognised without the marker, so neither change reads as an
+// ordinary clean body.
+const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview-v\d+\s*-->/i;
+const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)\s*$/im;
+const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
+const APPROVAL_VERDICT_RE = /Approval recommended$/i;
+const OPEN_ISSUES_RE = /<summary>[^\n]*?(\d+)\s+open issues?\b/i;
+const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
+const PREVIOUSLY_MISSED_RE = /<summary>[^\n]*previously missed/i;
+
+// Why an overview review body blocks approval; '' when it does not, which
+// includes every body that is not an overview. Completes "latest Copilot review …".
+function overviewBlocker(body) {
+  const text = String(body || '').replace(FENCED_CODE_RE, '');
+  if (!OVERVIEW_MARKER_RE.test(text) && !KNOWN_VERDICT_RE.test(text)) return '';
+  const heading = FIRST_HEADING_RE.exec(text);
+  const verdict = heading ? heading[1] : '';
+  if (!APPROVAL_VERDICT_RE.test(verdict)) return `has verdict '${verdict || 'none'}'`;
+  const open = OPEN_ISSUES_RE.exec(text);
+  if (open) return `lists ${open[1]} open issue(s)`;
+  if (!NO_OPEN_ISSUES_RE.test(text)) return 'does not state no open issues';
+  if (PREVIOUSLY_MISSED_RE.test(text)) return 'lists a previously missed issue';
+  return '';
+}
+
 // Copilot posts a COMMENTED review with zero inline comments when its run fails
 // (observed 2026-10-29, SteerSpec/strspc-rules#83): "Copilot encountered an
 // error and was unable to review this pull request. You can try again by
@@ -1156,6 +1200,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         `latest Copilot review has ${suppressed} suppressed comment(s)`,
       );
     }
+    // Absent from the rounds-threshold branch for the same reason as above.
+    const blocker = overviewBlocker(latest.body);
+    if (blocker) return setDecision('skip', `latest Copilot review ${blocker}`);
     reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
@@ -1277,6 +1324,7 @@ module.exports.isCopilot = isCopilot;
 module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
 module.exports.countSuppressedComments = countSuppressedComments;
+module.exports.overviewBlocker = overviewBlocker;
 module.exports.getBaseBranches = getBaseBranches;
 module.exports.parseCommitType = parseCommitType;
 module.exports.parseRoundsByType = parseRoundsByType;

@@ -1368,6 +1368,163 @@ test('3-rounds rule still approves despite a suppressed-comments block', async (
   assert.equal(calls.createReview.length, 1);
 });
 
+// Shape of the review bodies Copilot posts since 2026-10, trimmed from real
+// reviews: SteerSpec/strspc-pr-review#127 and #128, SteerSpec/strspc-manager#177.
+const NO_OPEN_ISSUES = '**No open issues** 🎉';
+const OPEN_ISSUES = [
+  '<details open>',
+  '<summary><strong>1 open issue</strong></summary>',
+  '',
+  '- <picture><img alt="High severity"></picture> [Prevent approval before title checks finish](https://example.test/r1)',
+  '</details>',
+].join('\n');
+const PREVIOUSLY_MISSED = [
+  '<details>',
+  '<summary><strong>1 previously missed issue</strong></summary>',
+  '',
+  'In code that hasn\'t changed since last review',
+  '</details>',
+].join('\n');
+function overviewBody({ verdict = '🟢 Approval recommended', issues = NO_OPEN_ISSUES, extra = '' } = {}) {
+  return [
+    '<!-- ccr-overview-v2 -->',
+    '',
+    `### ${verdict}`,
+    '',
+    'The review summary sentence.',
+    '',
+    issues,
+    '',
+    extra,
+    '',
+    '<details>',
+    '<summary><strong>What changed in this PR</strong></summary>',
+    '',
+    'This pull request changes things.',
+    '</details>',
+    '',
+    '<sub>Review effort: Lite</sub>',
+  ].join('\n');
+}
+
+async function decideOnBody(body) {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      {
+        id: 7,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+        body,
+      },
+    ],
+    reviewComments: { 7: [] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  return { result, calls };
+}
+
+test('approve: overview review with an approval verdict and no open issues', async () => {
+  const { result, calls } = await decideOnBody(overviewBody());
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /copilot-clean/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('skip: overview review still lists an open issue', async () => {
+  // Real case, #127: a green verdict over a High issue left from an earlier
+  // round. The inline-comment count is 0 because the review added no new thread.
+  const { result, calls } = await decideOnBody(overviewBody({ issues: OPEN_ISSUES }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /1 open issue/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: overview review with a previously missed issue only in the body', async () => {
+  const { result, calls } = await decideOnBody(overviewBody({ extra: PREVIOUSLY_MISSED }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /previously missed/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: overview verdict is not an approval, even with no open issues', async () => {
+  // Real case, strspc-manager#177.
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: '🔵 Needs a closer look' }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /Needs a closer look/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: overview review with a verdict this code has never seen', async () => {
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: '🟣 Something new' }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /Something new/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: overview review that stops saying it has no open issues', async () => {
+  const { result, calls } = await decideOnBody(overviewBody({ issues: 'Nothing else to report.' }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no open issues/i);
+  assert.equal(calls.createReview.length, 0);
+});
+
+// The failure that already shipped twice is a format change reading as clean, so
+// a later marker version and a dropped marker must both still be recognised.
+test('skip: a later overview marker version keeps the same rules', async () => {
+  const body = overviewBody({ verdict: '🟡 Changes recommended' })
+    .replace('ccr-overview-v2', 'ccr-overview-v3');
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a verdict heading with the marker removed keeps the same rules', async () => {
+  const body = overviewBody({ verdict: '🟡 Changes recommended' })
+    .replace('<!-- ccr-overview-v2 -->', '');
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: an overview quoted in a code fence is not a review verdict', async () => {
+  const body = [
+    '## Pull request overview',
+    '',
+    'Copilot reviewed 3 out of 3 changed files in this pull request and generated no new comments.',
+    '',
+    '```',
+    overviewBody({ verdict: '🟡 Changes recommended', issues: OPEN_ISSUES }),
+    '```',
+  ].join('\n');
+  const { result } = await decideOnBody(body);
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+});
+
+// Same escape hatch as the suppressed block above.
+test('3-rounds rule still approves despite an open issue in an overview review', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-04-15T08:00:00Z', user: cp },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-04-15T09:00:00Z', user: cp },
+      {
+        id: 3,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-15T10:00:00Z',
+        user: cp,
+        body: overviewBody({ verdict: '🟡 Changes recommended', issues: OPEN_ISSUES }),
+      },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.match(result.reason, /3-rounds \(3 Copilot reviews\)/);
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('top-level try/catch: checks.listForRef throws → clean skip', async () => {
   const core = makeCore();
   const err = new Error('Bad credentials');

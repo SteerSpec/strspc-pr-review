@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.26",
-    "timestamp": "2026-10-31T19:32:08Z",
-    "hash": "blake3:eae2b7f9680fd5593762b4de88a20de3805914fa99e16c46465778d7924544e2"
+    "version": "0.1.27",
+    "timestamp": "2026-10-31T20:35:57Z",
+    "hash": "blake3:ce986a2c6f713c2cdfcb5a43bef9e0338eb3674de034989f7386e66ecd881da6"
   },
   "rules": [
     {
@@ -205,6 +205,15 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST withdraw an earlier bot approval of a different head before it evaluates a promotion pull request.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-023",
+      "revision": 0,
+      "state": "D",
+      "body": "A release-please pull request into a configured base MUST bypass the Copilot rules, and the action MUST approve it only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

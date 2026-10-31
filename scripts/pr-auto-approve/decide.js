@@ -14,6 +14,10 @@
 //   AUTO_APPROVE_PROMOTION_BRANCHES — comma-separated head:base pairs that take
 //                               the promotion path instead of the Copilot rules;
 //                               see promotion.js
+//   AUTO_APPROVE_RELEASE_BRANCHES — comma-separated source:base pairs, or a bare
+//                               base, whose release-please PRs take the release
+//                               path; see release.js
+//   AUTO_APPROVE_RELEASE_AUTHOR — login that must have authored a release PR
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');
@@ -25,6 +29,14 @@ const {
   promotionTitleBlocker,
   checkProvenance,
 } = require('./promotion.js');
+const {
+  getReleaseRoutes,
+  getReleaseAuthor,
+  findReleaseRoute,
+  releaseAuthorBlocker,
+  checkReleasePr,
+  checkUnpromoted,
+} = require('./release.js');
 
 // Production Copilot reviewer identities. Strict allowlist of known logins
 // — a substring-match fallback could be spoofed by any third-party bot with
@@ -624,8 +636,8 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   try {
     const { owner, repo } = context.repo;
     const pr = context.payload.pull_request;
-    if (findPromotionPair(pr, getPromotionPairs(env))) {
-      core.info('pr-auto-approve: promotion PR does not need Copilot; not requesting a review');
+    if (findPromotionPair(pr, getPromotionPairs(env)) || findReleaseRoute(pr, getReleaseRoutes(env))) {
+      core.info('pr-auto-approve: promotion or release PR does not need Copilot; not requesting a review');
       return 'skipped';
     }
     // Only a 0 can make the review unnecessary; any other relaxed type still
@@ -959,11 +971,11 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return null;
   };
 
-  // A promotion's approval rests on gates that a later head or title can fail.
-  // Withdraw it before skipping, for a repo that does not dismiss stale approvals.
-  // Unstamped approvals too: a bot approval from the Copilot path, given before
-  // promotion-branches was set, was never proven under these gates.
-  const refusePromotion = async (reason) => {
+  // A promotion's or release PR's approval rests on gates that a later head or
+  // title can fail. Withdraw it before skipping, for a repo that does not dismiss
+  // stale approvals. Unstamped approvals too: a bot approval from the Copilot path,
+  // given before the path was configured, was never proven under these gates.
+  const refuseRouted = async (reason) => {
     if (BOT_LOGIN) {
       const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
       if (failed) return failed;
@@ -980,12 +992,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   };
 
   // Matched here, before anything Copilot: the threshold of 0 below is what skips
-  // the waits and the review rules. Provenance runs further down, after the
-  // gates that cost fewer API calls.
-  const promotion = findPromotionPair(
-    pr,
-    getPromotionPairs(process.env, typeof core.warning === 'function' ? core.warning.bind(core) : undefined),
-  );
+  // the waits and the review rules. Provenance and the unpromoted check run
+  // further down, after the gates that cost fewer API calls.
+  const warn = typeof core.warning === 'function' ? core.warning.bind(core) : undefined;
+  const promotion = findPromotionPair(pr, getPromotionPairs(process.env, warn));
+  const release = promotion ? null : findReleaseRoute(pr, getReleaseRoutes(process.env, warn));
+  let releaseConfig = null;
 
   // The type's threshold, unless the type is relaxed and the diff reaches
   // outside copilot-optional-paths, in which case the default applies. 0 means
@@ -999,14 +1011,17 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // approvals. Withdraw every stamped approval first, then let the top-level
   // catch report the failed request as usual.
   let gate;
-  if (promotion) {
-    const titleBlocker = promotionTitleBlocker(pr.title);
-    if (titleBlocker) return refusePromotion(titleBlocker);
+  if (promotion || release) {
+    const blocker = promotion
+      ? promotionTitleBlocker(pr.title)
+      : releaseAuthorBlocker(pr, getReleaseAuthor());
+    if (blocker) return refuseRouted(blocker);
+    const headRef = pr.head.ref;
     let tip;
     try {
-      ({ data: tip } = await github.rest.git.getRef({ owner, repo, ref: `heads/${promotion.head}` }));
+      ({ data: tip } = await github.rest.git.getRef({ owner, repo, ref: `heads/${headRef}` }));
     } catch (err) {
-      const failed = await withdrawAfterFailedRead(err, `the tip of ${promotion.head} could not be read`);
+      const failed = await withdrawAfterFailedRead(err, `the tip of ${headRef} could not be read`);
       if (failed) return failed;
       throw err;
     }
@@ -1015,21 +1030,40 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     if (tip.object.sha !== pr.head.sha) {
       return setDecision(
         'skip',
-        `head ${pr.head.sha.slice(0, 8)} is not the tip of ${promotion.head} (${tip.object.sha.slice(0, 8)}); the next run re-evaluates it`,
+        `head ${pr.head.sha.slice(0, 8)} is not the tip of ${headRef} (${tip.object.sha.slice(0, 8)}); the next run re-evaluates it`,
       );
     }
     // Proof covers one head. In a repo that does not dismiss stale approvals, one
     // of an older head would read as APPROVED, and the skips below would return
-    // before provenance ever looked at the new commits.
+    // before the path's own gates ever looked at the new commits.
     if (BOT_LOGIN) {
       const failed = await withdrawStampedApprovals(
         (_, r) => r.commit_id !== pr.head.sha,
-        `Withdrawn: ${pr.head.sha.slice(0, 8)} is a new head, so the promotion has to be proven again.`,
+        `Withdrawn: ${pr.head.sha.slice(0, 8)} is a new head, so the approval has to be earned again.`,
         { unstamped: true },
       );
       if (failed) return failed;
     }
     gate = { threshold: 0, type: parseCommitType(pr.title), note: '', mergeBase: null };
+    if (release) {
+      let proof;
+      try {
+        const { names, mergeBase } = await compareHead({
+          github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha,
+        });
+        proof = await checkReleasePr({
+          github, owner, repo, pr, author: getReleaseAuthor(), names, mergeBase,
+        });
+        // The approval rests on the file list, so mergeBaseMoved re-reads it.
+        gate.mergeBase = mergeBase;
+      } catch (err) {
+        const failed = await withdrawAfterFailedRead(err, 'the release PR could not be verified');
+        if (failed) return failed;
+        throw err;
+      }
+      if (!proof.ok) return refuseRouted(proof.reason);
+      releaseConfig = proof.config;
+    }
   } else {
     try {
       gate = await applyPathGate({
@@ -1292,8 +1326,23 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       if (failed) return failed;
       throw err;
     }
-    if (!proof.ok) return refusePromotion(proof.reason);
+    if (!proof.ok) return refuseRouted(proof.reason);
     reason = `promotion (${promotion.head} to ${promotion.base}, ${proof.commits} commit(s) from ${proof.prs} approved PR(s))`;
+  } else if (release) {
+    if (release.source) {
+      let proof;
+      try {
+        proof = await checkUnpromoted({
+          github, owner, repo, base: release.base, source: release.source, config: releaseConfig,
+        });
+      } catch (err) {
+        const failed = await withdrawAfterFailedRead(err, 'the unpromoted commits could not be read');
+        if (failed) return failed;
+        throw err;
+      }
+      if (!proof.ok) return refuseRouted(proof.reason);
+    }
+    reason = `release-pr (${pr.head.ref}${release.source ? `, nothing unpromoted on ${release.source}` : ''})`;
   } else if (copilotOptional) {
     reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
   } else if (copilotReviews.length >= threshold) {

@@ -72,6 +72,14 @@ test('promotion-branches reaches the evaluate and request steps', () => {
   }
 });
 
+test('release-branches and release-author reach the steps that read them', () => {
+  const src = read('action.yml');
+  const step = (name) => src.split(`- name: ${name}`)[1].split('- name: ')[0];
+  assert.match(step('Evaluate and approve'), /AUTO_APPROVE_RELEASE_BRANCHES: \$\{\{ inputs\.release-branches \}\}/);
+  assert.match(step('Evaluate and approve'), /AUTO_APPROVE_RELEASE_AUTHOR: \$\{\{ inputs\.release-author \}\}/);
+  assert.match(step('Request Copilot review'), /AUTO_APPROVE_RELEASE_BRANCHES: \$\{\{ inputs\.release-branches \}\}/);
+});
+
 test('the template reads no STRSPC_PR_AUTO_APPROVE_ variable that matches no input', () => {
   const known = new Set(declaredInputs().map(varName));
   const used = [...read('templates/pr-auto-approve.yml').matchAll(/vars\.(STRSPC_PR_AUTO_APPROVE_[A-Z_]+)/g)]

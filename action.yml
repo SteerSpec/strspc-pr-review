@@ -35,8 +35,8 @@ inputs:
       shipped template grants all three. `contents: read` is for the commit
       comparison that lists a PR's changed files when rounds-by-type relaxes
       its type (the list is pinned to the evaluated head SHA that way), and for
-      the branch tip and commit lookups of promotion-branches. Override only if
-      you have a reason to read as someone else.
+      the branch, commit and config lookups of promotion-branches and
+      release-branches. Override only if you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'
@@ -102,6 +102,25 @@ inputs:
       a head that is the branch tip, green checks, and every commit from a merged
       PR into the head branch with a standing approval. Each base must also be in
       base-branch. Empty (default) turns this off.
+  release-branches:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated source:base pairs, e.g. 'develop:main', whose release-please
+      PRs into base are approved without a Copilot review. A bare base such as
+      'main' does the same with no source branch to check, for a repo without
+      develop. Needs release-author. The PR must come from release-author, have a
+      head that is the branch tip, change only files release-please owns (read from
+      release-please-config.json at the base), have green checks, and the source
+      branch must hold no commit the changelog would show. Each base must also be
+      in base-branch. Empty (default) turns this off.
+  release-author:
+    required: false
+    default: ''
+    description: >-
+      Login that must have authored a release PR and all its commits, e.g.
+      'my-release-app[bot]'. Anyone with write access can push a branch with the
+      release-please name, so release-branches refuses every release PR without it.
   request-copilot-review:
     required: false
     default: 'false'
@@ -231,6 +250,7 @@ runs:
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
+        AUTO_APPROVE_RELEASE_BRANCHES: ${{ inputs.release-branches }}
         ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.github-token }}
@@ -251,6 +271,8 @@ runs:
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         AUTO_APPROVE_COPILOT_CLEAN_ON: ${{ inputs.copilot-clean-on }}
         AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
+        AUTO_APPROVE_RELEASE_BRANCHES: ${{ inputs.release-branches }}
+        AUTO_APPROVE_RELEASE_AUTHOR: ${{ inputs.release-author }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_COPILOT_ERROR_RETRIES: ${{ inputs.copilot-error-retries }}

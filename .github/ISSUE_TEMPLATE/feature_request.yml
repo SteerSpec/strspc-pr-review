@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        The action deliberately stays small: it rubber-stamps Copilot's verdict, or mechanical proof that a promotion's code was already approved, and nothing else.
+        The action deliberately stays small: it rubber-stamps Copilot's verdict, or mechanical proof that a promotion or release PR holds nothing new to review, and nothing else.
         Proposals that keep the decision logic explainable in one table have the best odds.
 
   - type: textarea

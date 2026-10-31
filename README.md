@@ -38,8 +38,8 @@ This action fills that slot with something that looked at the diff. It earns its
 | **Solo-maintained repos** | A ruleset requires a review nobody is available to give |
 | **Internal repos** | The review requirement is org policy rather than a second pair of eyes |
 
-It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, or the proof that
-the code was already approved, and neither is a reviewer for those. Keep `CODEOWNERS` and required human reviewers on sensitive paths: the bot's
+It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, or mechanical proof
+that a promotion or release PR holds nothing new to review, and neither is a reviewer for those. Keep `CODEOWNERS` and required human reviewers on sensitive paths: the bot's
 approval fills a slot, and it shouldn't be your only gate.
 
 ## How it works
@@ -139,6 +139,45 @@ approves the promotion.
 The action approves and never merges, so the decision to release stays with a person. A later push
 withdraws a stamped bot approval of the older head, even in a repo that doesn't dismiss stale
 approvals, and the new head has to pass again.
+
+### Release PRs
+
+release-please PRs hit the same gap as promotions, and merging one at the wrong moment also loses
+changelog entries: release-please stops at the last release commit, so anything still on `develop`
+when the release PR merges is left out for good. A left-behind `feat:` or `fix:` can change or suppress
+the version bump.
+
+Set [`release-branches`](#approval-rules) to a pair such as `develop:main`, and
+[`release-author`](#approval-rules) to the login that opens your release PRs, such as
+`my-release-app[bot]`. `main` must also be in `base-branch`. A repo with no `develop` uses a bare
+`main`, which drops the last gate. Otherwise a release-please PR into a configured base is approved
+when all of these hold, with no Copilot review requested or waited for:
+
+| Gate | What it stops |
+| ---- | ------------- |
+| **Same repo, with the `release-please--branches--<base>` head** (plus `--components--<name>` if the package has one) | Another branch or a fork using the release path |
+| **`release-author` wrote the PR and every commit, each with a verified signature** | A person pushing a branch with that name, a commit on top of a real release PR, or a local commit with a forged git author. It isn't proof against someone deliberately abusing write access |
+| **Head is the tip of the head branch** | Approving a commit that isn't the branch tip |
+| **Every changed file belongs to release-please** | Code getting into a release PR without review |
+| **All checks green** | Releasing a broken head |
+| **The source branch holds no commit the changelog would show** | The silent loss described above |
+
+The owned files and the visible types both come from `release-please-config.json`, read at the base
+branch so a PR can't widen its own list. That covers the changelog and manifest, `version-file`,
+`extra-files`, `package.json` and its lockfiles for `node`, and `version.txt` for `simple` when no
+`version-file` is set. Any other release type's version file fails the gate and is named in the
+reason, and a repo with no config skips. With no
+`changelog-sections`, release-please's defaults apply: `feat`, `fix`, `perf` and `revert`. A hidden
+`feat` or `fix` still blocks, because those types set the version, and so does any type marked
+breaking or with a `BREAKING CHANGE:` or `Release-As:` footer.
+
+> [!WARNING]
+> Promote first, then merge the release PR. The last gate runs when the PR is evaluated, and a commit
+> merged to `develop` after that re-evaluates nothing, so the approval can go stale. Check that
+> `develop` has nothing new before you merge.
+
+As with a promotion, the action approves and never merges, and a `CHANGES_REQUESTED` review still
+blocks.
 
 ### What always blocks
 
@@ -256,6 +295,8 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON` | `copilot-clean-on` |
 | `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` | `promotion-branches` |
+| `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |
+| `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR` | `release-author` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
@@ -429,6 +470,8 @@ requirement: everything they do is documented on this page.
 | `copilot-optional-paths` | `**/*.md,docs/**/*.md` | Globs. A type mapped below the default (`0` included) applies only when every changed file matches, otherwise the PR uses the default (`default` entry, else `rounds-threshold`). Stops a code change from borrowing a relaxed title |
 | `copilot-clean-on` | `verdict` | Which verdicts in Copilot's review overview can pass as clean. `verdict` passes only `Approval recommended`. `no-open-issues` also passes `Needs a closer look` when the body states `No open issues`. An unrecognised value reads as `verdict` and logs a warning. See [Passing Needs a closer look](#passing-needs-a-closer-look) |
 | `promotion-branches` | `''` | Comma-separated `head:base` pairs approved without a Copilot review, such as `develop:main`. Each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Promotion PRs](#promotion-prs) |
+| `release-branches` | `''` | Comma-separated `source:base` pairs whose release-please PRs are approved without a Copilot review, such as `develop:main`, or a bare base for a repo with no source branch. Needs `release-author`, and each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Release PRs](#release-prs) |
+| `release-author` | `''` | Login that must have authored a release PR and all its commits, such as `my-release-app[bot]`. Without it, `release-branches` refuses every release PR |
 | `allow-no-checks` | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA, such as docs-only PRs |
 
 ### Copilot
@@ -551,6 +594,18 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `promotion has 250 commits or more…` | The commit list may be partial, so nothing can be proven. Promote more often, or have a human approve this one |
 | `commit list does not include the evaluated head …` | The head was force-pushed during the run. The next run re-evaluates it |
 
+### Release PRs that skip
+
+| `reason` | Cause and fix |
+| -------- | ------------- |
+| `release-author is not set…` | `release-branches` needs `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR`. Set it to the login on your release PRs |
+| `release PR author … is not release-author`<br>`commit … is not by release-author` | Someone other than release-please wrote this. Check `release-author`, including the `[bot]` suffix, then have a human review what changed |
+| `cannot read release-please-config.json at …`<br>`… is not valid JSON`<br>`… has no packages` | The action needs that file on the base branch to know what release-please owns. Add it, or have a human approve |
+| `release PR changes …, which release-please does not own` | A file outside the changelog, manifest and configured version files. If it's a version file, add it to `version-file` or `extra-files`. Otherwise have a human review it |
+| `release PR changes 300 files or more…`<br>`release PR has 250 commits or more…`<br>`the comparison reported no merge base…` | Nothing can be proven from what the API returned. Have a human review it |
+| `… has N unpromoted commit(s): …; promote first`<br>`… commits ahead of …; promote first` | Those commits would be lost from this release. Merge the promotion, and release-please updates this PR, which re-evaluates it |
+| `cannot compare … with … (404)…` | The source branch doesn't exist. Use a bare base in `release-branches` |
+
 ### Waiting on CI
 
 | `reason` | Cause and fix |
@@ -593,8 +648,8 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 
 ## Responsible use
 
-This action rubber-stamps **Copilot's** verdict, or the proof that a promotion's code was already
-approved, and it isn't a substitute for human judgment where that matters.
+This action rubber-stamps **Copilot's** verdict, or mechanical proof that a promotion or release PR
+holds nothing new to review, and it isn't a substitute for human judgment where that matters.
 
 - **Keep required human reviewers** (branch protection, `CODEOWNERS`) on sensitive paths. The bot's
   approval fills a review slot but shouldn't be your only gate.
@@ -602,8 +657,8 @@ approved, and it isn't a substitute for human judgment where that matters.
   ruleset. The action reads your checks when it approves and doesn't enforce them afterwards: a check
   that fails later on the same commit, such as a PR title check after a retitle or a re-run, leaves
   the approval in place. The action withdraws a stamped bot approval when a retitle or a push raises
-  the PR's rounds threshold above the stamp, or when a promotion gets a new head or fails its title
-  or provenance gate, but a failing check on its own never does.
+  the PR's rounds threshold above the stamp, or when a promotion or release PR gets a new head or
+  fails one of its own gates, but a failing check on its own never does.
 - **Treat `BOT_GITHUB_TOKEN` like any write-scoped credential.** Keep it in secrets, give it
   **`Pull requests: write` and nothing more**, and rotate it periodically.
 
@@ -645,7 +700,8 @@ flowchart LR
    **merge commit**, so [release-please](https://github.com/googleapis/release-please) sees each
    commit.
 3. release-please opens a release pull request against `main`. Merging it tags `vX.Y.Z`, following
-   [semver](https://semver.org/), and moves `@v1`.
+   [semver](https://semver.org/), and moves `@v1`. Promote first, then merge the release PR: a commit
+   still on `develop` at that point is left out of the changelog for good.
 4. A `chore: sync develop with vX.Y.Z` pull request copies the changelog, manifest and package files
    from `main` to `develop`. Separately, `sync-marketplace-pin.yml` opens the pull request in
    `SteerSpec/.claude` that moves the skills pin to the new release.
@@ -668,7 +724,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 290 unit tests, no external dependencies
+npm test               # 345 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
@@ -689,6 +745,8 @@ strspc-pr-review/
 │   │   ├── docs.test.js              # guards this README against drifting from action.yml
 │   │   ├── promotion.js              # the promotion path's own gates
 │   │   ├── promotion.test.js         # unit tests for that path, through decide.js too
+│   │   ├── release.js                # the release path's own gates
+│   │   ├── release.test.js           # unit tests for that path, through decide.js too
 │   │   ├── skills.test.js            # guards skills/ against drifting from action.yml
 │   │   └── template.test.js          # guards the template against drifting from action.yml
 │   └── validate-issue-forms.py       # GitHub drops a malformed issue form silently

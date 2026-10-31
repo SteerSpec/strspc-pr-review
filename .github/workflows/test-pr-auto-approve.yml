@@ -7,6 +7,9 @@ on:
   # so gating every PR is cheaper than setting allow-no-checks and weakening the
   # gate. The push: filter below is left in place — it only affects branch CI.
   pull_request:
+    # edited: the commits job checks the title, which can change right before a
+    # squash. The default types would leave that check green on the old title.
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [develop]
     paths:
@@ -53,6 +56,42 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+
+  # PRs are squashed into develop, so the title can become the commit
+  # release-please reads, and a mistyped title is a wrong release. The husky
+  # commit-msg hook is local and never sees a title. No ruleset requires this
+  # job, so a failure only stops a new auto-approval. A retitle withdraws a bot
+  # approval only when it raises the rounds threshold; any other approval stands
+  # whatever this job concludes. It is in this workflow, not its own, because
+  # auto-approve.yml re-enters on this workflow's name alone.
+  commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # A one-commit PR squashes to that commit's subject, not its title
+          # (squash_merge_commit_title is COMMIT_OR_PR_TITLE), so the two must agree.
+          validateSingleCommit: true
+          validateSingleCommitMatchesPrTitle: true
+      # Same limit and unit as header-max-length in .commitlintrc.yml: commitlint
+      # counts UTF-16 code units, which node's length does and ${#TITLE} does not.
+      # Read through the API because a re-run keeps its original event's title.
+      - name: Title length
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          TITLE=$(gh pr view "$PR_URL" --json title --jq .title)
+          LENGTH=$(TITLE="$TITLE" node -p 'process.env.TITLE.length')
+          if [ "$LENGTH" -gt 120 ]; then
+            echo "::error::PR title is $LENGTH characters, the limit is 120"
+            exit 1
+          fi
 
   test:
     name: node --test

@@ -126,8 +126,14 @@ never checks out PR code.
 
 - Branch from `develop` and open PRs against `develop`; `main` only receives release promotions.
   release-please tags `vX.Y.Z` on merge to `main` and moves the `@v1` tag.
+- Merge methods are enforced by rulesets: squash only into `develop` (`merge-method-develop`), merge
+  commit only into `main` (`merge-method-main`), so release-please sees each commit from `develop`.
+  The squash commit takes the PR title when a PR has several commits, and the commit's own subject
+  when it has one (`squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`), so CI requires a one-commit
+  PR's title to match that subject.
 - Conventional Commits (`@commitlint/config-conventional`), enforced by the husky `commit-msg`
-  hook. Use `docs:`/`chore:` for non-code changes so release-please does not cut a release for them.
+  hook, and for PR titles by the `commits` CI job (120 characters at most). Use `docs:`/`chore:` for
+  non-code changes so release-please does not cut a release for them.
 - Docs are tested against the code: `docs.test.js` fails if `README.md`'s Inputs/Outputs tables
   drift from `action.yml`; `skills.test.js` only checks that every input named in a
   `skills/*/SKILL.md` YAML snippet exists in `action.yml` (it does not cover outputs or require

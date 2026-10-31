@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.10.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.3...v1.10.0) (2026-10-31)
+
+
+### Features
+
+* add copilot-clean-on to pass 'Needs a closer look' with no open issues ([#138](https://github.com/SteerSpec/strspc-pr-review/issues/138)) ([a8162a1](https://github.com/SteerSpec/strspc-pr-review/commit/a8162a16d7b075704cd4198d2b05222d60cf5e30))
+* approve develop-to-main promotions without a Copilot review ([#139](https://github.com/SteerSpec/strspc-pr-review/issues/139)) ([e0e4512](https://github.com/SteerSpec/strspc-pr-review/commit/e0e4512514ff990b199b702b3fb38420cf3c634f)), closes [#123](https://github.com/SteerSpec/strspc-pr-review/issues/123)
+* approve release-please PRs without a Copilot review ([#140](https://github.com/SteerSpec/strspc-pr-review/issues/140)) ([b738b01](https://github.com/SteerSpec/strspc-pr-review/commit/b738b01e7f646f3df72eb6a57acf46eeba04ec7f)), closes [#124](https://github.com/SteerSpec/strspc-pr-review/issues/124)
+
 ## [1.9.3](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.2...v1.9.3) (2026-10-31)
 
 

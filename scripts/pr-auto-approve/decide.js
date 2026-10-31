@@ -1166,7 +1166,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   //     push would leave it describing a commit that is no longer the head;
   //   - base.ref: the path gate compared headSha against this branch, so a
   //     retarget changes the diff it judged;
-  //   - title: it chose the threshold, so a retitle changes the rules.
+  //   - title: it chose the threshold, so a retitle changes the rules;
+  //   - draft: the event snapshot only proves the PR was ready when the run began.
   // base.sha is deliberately NOT compared: the base branch moves whenever
   // anything else merges, and the three-dot comparison is merge-base to head,
   // so the diff is the same for any base tip that has not been merged into
@@ -1186,6 +1187,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
   if (!current.base || current.base.ref !== pr.base.ref) {
     return setDecision('skip', `PR base changed from ${pr.base.ref} to ${current.base ? current.base.ref : ''} during evaluation`);
+  }
+  if (current.draft) {
+    return setDecision('skip', 'PR converted to draft during evaluation');
   }
   const rewritten = await mergeBaseMoved();
   if (rewritten) {
@@ -1233,9 +1237,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
     const same = after.head.sha === headSha &&
       Boolean(after.base) && after.base.ref === pr.base.ref &&
-      (after.title || '') === (pr.title || '');
+      (after.title || '') === (pr.title || '') &&
+      !after.draft;
     if (!same) {
-      changedWhileApproving = 'PR head, base or title changed while approving';
+      changedWhileApproving = 'PR head, base, title or draft state changed while approving';
     } else {
       const rewritten = await mergeBaseMoved();
       changedWhileApproving = rewritten ? `${rewritten} while approving` : '';

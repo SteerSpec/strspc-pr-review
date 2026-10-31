@@ -3026,6 +3026,44 @@ test('PR retargeted mid-run: approval is skipped, not granted against the old ba
   });
 });
 
+// The event snapshot said ready for review; a conversion to draft after that has
+// to stop the approval the same way a push or a retarget does.
+test('PR converted to draft mid-run: approval is skipped', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [],
+      getPrImpl: (num) => {
+        const { data } = getPrWithTitle('docs: x')(num);
+        return { data: { ...data, draft: true } };
+      },
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'PR converted to draft during evaluation');
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('approval is withdrawn if the PR is converted to draft right after it is posted', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => {
+      const { data } = getPrWithTitle('docs: x')(num);
+      return { data: { ...data, draft: gets++ !== 0 } };
+    },
+  });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
+  assert.equal(dismissed[0].review_id, 999);
+});
+
 test('approval is withdrawn if the base changes right after it is posted', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
@@ -3041,9 +3079,9 @@ test('approval is withdrawn if the base changes right after it is posted', async
   github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
   const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
   assert.equal(result.decision, 'skip');
-  assert.equal(result.reason, 'PR head, base or title changed while approving; approval withdrawn');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
   assert.equal(dismissed[0].review_id, 999);
-  assert.match(dismissed[0].message, /^Withdrawn: PR head, base or title changed while approving\.$/);
+  assert.match(dismissed[0].message, /^Withdrawn: PR head, base, title or draft state changed while approving\.$/);
 });
 
 test('a head SHA the compare endpoint no longer knows is a clean skip that names the request', async () => {

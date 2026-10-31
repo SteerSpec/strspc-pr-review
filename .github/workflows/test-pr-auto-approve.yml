@@ -60,8 +60,9 @@ jobs:
   # PRs are squashed into develop, so the title can become the commit
   # release-please reads, and a mistyped title is a wrong release. The husky
   # commit-msg hook is local and never sees a title. No ruleset requires this
-  # job: a failure blocks merging only by blocking the auto-approval, like every
-  # other job here. In this workflow for the reason given above the rules job.
+  # job, so a failure only stops a new auto-approval: an approval already given
+  # stands after a retitle, because only a push dismisses it. In this workflow
+  # for the reason given above the rules job.
   commits:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

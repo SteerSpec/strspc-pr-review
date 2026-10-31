@@ -588,7 +588,9 @@ flowchart LR
    commit.
 3. release-please opens a release pull request against `main`. Merging it tags `vX.Y.Z`, following
    [semver](https://semver.org/), and moves `@v1`.
-4. A sync pull request brings the release commit back to `develop`.
+4. A `chore: sync develop with vX.Y.Z` pull request copies the changelog, manifest and package files
+   from `main` to `develop`. Separately, `sync-marketplace-pin.yml` opens the pull request in
+   `SteerSpec/.claude` that moves the skills pin to the new release.
 
 Title types set the version:
 

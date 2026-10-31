@@ -1588,6 +1588,31 @@ test('skip: a fenced "No open issues" is not the statement', async () => {
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: a verdict that only ends in the approval wording', async () => {
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: 'Not Approval recommended' }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /Not Approval recommended/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: an unknown verdict with the marker removed', async () => {
+  const body = overviewBody({ verdict: '🟣 Something new' })
+    .replace('<!-- ccr-overview-v2 -->', '');
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /Something new/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a previously missed issue outside a collapsed section', async () => {
+  const { result, calls } = await decideOnBody(
+    overviewBody({ extra: '1 previously missed issue: a finding in plain text.' }),
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /previously missed/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('skip: a collapsed section with no summary is an unknown section', async () => {
   const section = ['<details>', 'Content with no label.', '</details>'].join('\n');
   const { result, calls } = await decideOnBody(overviewBody({ extra: section }));

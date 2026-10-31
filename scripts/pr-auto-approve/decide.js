@@ -137,11 +137,12 @@ function countSuppressedComments(body) {
 //   - what proves a review clean is read with fences removed, and what blocks it
 //     is read from the raw body, so a fence can only cause a false skip;
 //   - the marker is matched loosely enough to survive a new version, and a known
-//     verdict heading or an open-issue count identifies an overview without it.
+//     verdict heading or an open-issues statement identifies an overview without it.
 const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview\b[^>]*-->/i;
 const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
-const APPROVAL_VERDICT_RE = /Approval recommended$/i;
+const APPROVAL_VERDICT_RE = /^[^\p{L}\p{N}]*Approval recommended$/iu;
+const PREVIOUSLY_MISSED_RE = /\b[1-9]\d*\s+previously missed/i;
 const OPEN_ISSUES_RE = /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*?(\d+)\s+open issues?\b/i;
 const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
 const SECTION_RE = /<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;
@@ -154,7 +155,8 @@ function overviewBlocker(body) {
   const unfenced = raw.replace(FENCED_CODE_RE, '');
   const isOverview = OVERVIEW_MARKER_RE.test(unfenced)
     || KNOWN_VERDICT_RE.test(unfenced)
-    || OPEN_ISSUES_RE.test(unfenced);
+    || OPEN_ISSUES_RE.test(unfenced)
+    || NO_OPEN_ISSUES_RE.test(unfenced);
   if (!isOverview) return '';
   const heading = FIRST_HEADING_RE.exec(unfenced);
   const verdict = heading ? heading[1] : '';
@@ -162,6 +164,7 @@ function overviewBlocker(body) {
   const open = OPEN_ISSUES_RE.exec(raw);
   if (open) return `lists ${open[1]} open issue(s)`;
   if (!NO_OPEN_ISSUES_RE.test(unfenced.split(/<details\b/i)[0])) return 'does not state no open issues';
+  if (PREVIOUSLY_MISSED_RE.test(raw)) return 'lists a previously missed issue';
   const sections = [...raw.matchAll(SECTION_RE)];
   for (const [, inner] of sections) {
     const label = inner.replace(/<[^>]*>/g, '').trim();

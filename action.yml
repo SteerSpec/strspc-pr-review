@@ -82,6 +82,16 @@ inputs:
       rounds-threshold; a 0 is always gated, so 'default:0' falls back to
       rounds-threshold for code) and the reason says so. The title is
       author-controlled, so this stops a code change from borrowing a relaxed type.
+  copilot-clean-on:
+    required: false
+    default: 'verdict'
+    description: >-
+      Which verdicts in Copilot's review overview can pass as clean. 'verdict'
+      (default): only 'Approval recommended'. 'no-open-issues': also 'Needs a
+      closer look', when the body states 'No open issues'. That statement covers
+      published threads only, so the verdict sentence can still name a finding.
+      'Changes recommended' and unknown verdicts never pass, and an unrecognised
+      value reads as 'verdict'.
   request-copilot-review:
     required: false
     default: 'false'
@@ -228,6 +238,7 @@ runs:
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
+        AUTO_APPROVE_COPILOT_CLEAN_ON: ${{ inputs.copilot-clean-on }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_COPILOT_ERROR_RETRIES: ${{ inputs.copilot-error-retries }}

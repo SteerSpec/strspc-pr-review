@@ -201,6 +201,11 @@ jobs:
           # rounds-by-type to apply (default: '**/*.md,docs/**/*.md').
           copilot-optional-paths: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS }}
 
+          # Which verdicts in Copilot's overview can pass as clean (default:
+          # 'verdict', only 'Approval recommended'). 'no-open-issues' also passes
+          # 'Needs a closer look', whose sentence can still name a finding.
+          copilot-clean-on: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON }}
+
           # 'true' to approve when no external check runs exist (e.g. docs-only
           # PRs that skip CI via path filters). Default 'false'.
           allow-no-checks: ${{ vars.STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS }}

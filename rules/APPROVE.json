@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.23",
-    "timestamp": "2026-10-31T10:46:48Z",
-    "hash": "blake3:732f12c54d17c75548a8ffd9aa359754fefba148f8af653f9b7b0fbf79ef0a52"
+    "version": "0.1.24",
+    "timestamp": "2026-10-31T18:24:47Z",
+    "hash": "blake3:112d058c9fd77f2cad017752ac705930c17e9adebf70e7799fbd1cd78b3e0162"
   },
   "rules": [
     {
@@ -40,9 +40,9 @@
     },
     {
       "id": "APPROVE-004",
-      "revision": 1,
+      "revision": 2,
       "state": "D",
-      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states an approval verdict with no open or previously missed issues.",
+      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states no open or previously missed issues and an approval verdict, or the Needs a closer look verdict when the copilot-clean-on input is set to no-open-issues.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

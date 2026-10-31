@@ -82,7 +82,7 @@ it did. See [Troubleshooting](#troubleshooting).
 | ----- | --- |
 | **No inline comments** | Copilot left nothing to resolve |
 | **No suppressed-comments block in the body** | Copilot's summary can read as clean while findings sit in a collapsed block, and those comments are absent from the review-comments API, so only a body scan sees them |
-| **A clean overview, when the body has one** | Since October 2026 Copilot opens its review body with a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. The verdict must be `Approval recommended`, the body must state `No open issues`, list no previously missed issue, and collapse only the change summary and resolved issues. Any other verdict, section or wording skips |
+| **A clean overview, when the body has one** | Since October 2026 Copilot opens its review body with a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. The verdict must be `Approval recommended`, the body must state `No open issues`, list no previously missed issue, and collapse only the change summary and resolved issues. Any other verdict, section or wording skips. [`copilot-clean-on`](#approval-rules) can also pass `Needs a closer look`; see [Passing Needs a closer look](#passing-needs-a-closer-look) |
 | **The review names the current head commit** | A push dismisses the bot's approval under branch protection but leaves Copilot's `COMMENTED` review in place, so without this the new commit would inherit a verdict on the old one. A review with no commit can't prove freshness and is treated the same way |
 
 GitHub has changed the suppressed block's wording at least once (`Comments suppressed due to low
@@ -97,6 +97,18 @@ suppressed block that never clears nor a missing re-review can wedge a PR foreve
 > satisfy it at once. The clean, suppressed-comment and freshness rules are then never evaluated, and
 > the action degrades to "approve as soon as Copilot has reviewed at all, on whatever commit". Keep
 > it at 2 or higher unless that is what you want.
+
+#### Passing Needs a closer look
+
+`Needs a closer look` with `No open issues` skips by default, and often there's nothing in the PR to
+fix: Copilot is asking a human to verify something it can't see. With no second maintainer, that PR
+waits for the rounds threshold or a bypass. Setting `copilot-clean-on` to `no-open-issues` approves it
+instead, as long as every other check above still passes.
+
+The risk is that `No open issues` covers published threads only. The sentence under the verdict can
+still name a finding, and the action doesn't read that sentence. In a sample of 352 SteerSpec PRs
+(October 2026), 25 of 70 such reviews named a concrete defect or finding there, such as "Two hidden
+findings [...] were omitted from the published review".
 
 ### What always blocks
 
@@ -212,6 +224,7 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_THRESHOLD` | `rounds-threshold` |
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE` | `rounds-by-type` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
+| `STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON` | `copilot-clean-on` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
@@ -383,6 +396,7 @@ requirement: everything they do is documented on this page.
 | `rounds-threshold` | `3` | Copilot review rounds before approving regardless of inline comments |
 | `rounds-by-type` | `''` | Rounds per Conventional Commit type, read from the PR title, such as `docs:1,chore:0,fix:3,default:3`. `0` means Copilot isn't required for that type (approve on green CI). A type below the default applies only when every changed file matches `copilot-optional-paths`. Empty uses `rounds-threshold` for all PRs. See [Per-type rounds](#per-type-rounds) |
 | `copilot-optional-paths` | `**/*.md,docs/**/*.md` | Globs. A type mapped below the default (`0` included) applies only when every changed file matches, otherwise the PR uses the default (`default` entry, else `rounds-threshold`). Stops a code change from borrowing a relaxed title |
+| `copilot-clean-on` | `verdict` | Which verdicts in Copilot's review overview can pass as clean. `verdict` passes only `Approval recommended`. `no-open-issues` also passes `Needs a closer look` when the body states `No open issues`. An unrecognised value reads as `verdict` and logs a warning. See [Passing Needs a closer look](#passing-needs-a-closer-look) |
 | `allow-no-checks` | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA, such as docs-only PRs |
 
 ### Copilot
@@ -490,7 +504,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED`, which always blocks. Address the feedback and push |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the section, and act on it, or let more rounds accrue |
-| `latest Copilot review has verdict '…'`<br>`lists N open issue(s)`<br>`lists a previously missed issue`<br>`has section '…'`<br>`does not state no open issues` | The review's overview doesn't show it as clean, even with no new inline comments. Read the review body, fix or resolve what it lists, and push for a new review, or let more rounds accrue. A verdict or section you don't recognise may mean Copilot changed its wording |
+| `latest Copilot review has verdict '…'`<br>`lists N open issue(s)`<br>`lists a previously missed issue`<br>`has section '…'`<br>`does not state no open issues` | The review's overview doesn't show it as clean, even with no new inline comments. Read the review body, fix or resolve what it lists, and push for a new review, or let more rounds accrue. `Needs a closer look` often leaves nothing to fix: read the sentence under the verdict, then have a human approve, or see [Passing Needs a closer look](#passing-needs-a-closer-look). A verdict or section you don't recognise may mean Copilot changed its wording |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. This is unexpected from real Copilot reviews, so check the reviewer really is Copilot and not a synthetic review posted without a `commit_id` |
 
@@ -610,7 +624,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 221 unit tests, no external dependencies
+npm test               # 234 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

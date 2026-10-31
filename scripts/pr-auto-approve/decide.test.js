@@ -109,15 +109,19 @@ function makeFakeGithub({
 function makeCore() {
   const outputs = {};
   const summaryBuffer = [];
+  const warnings = [];
   return {
     outputs,
     summaryBuffer,
+    warnings,
     setOutput: (k, v) => {
       outputs[k] = v;
     },
     info: () => {},
     error: () => {},
-    warning: () => {},
+    warning: (m) => {
+      warnings.push(m);
+    },
     summary: {
       addRaw(s) {
         summaryBuffer.push(s);
@@ -1407,7 +1411,8 @@ function overviewBody({ verdict = '🟢 Approval recommended', issues = NO_OPEN_
   ].join('\n');
 }
 
-async function decideOnBody(body) {
+// `cleanOn` sets copilot-clean-on for this run; leave it out for the default.
+async function decideOnBody(body, cleanOn) {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
     reviews: [
@@ -1421,8 +1426,16 @@ async function decideOnBody(body) {
     ],
     reviewComments: { 7: [] },
   });
-  const result = await decide({ github, context: makeContext(), core });
-  return { result, calls };
+  const prev = process.env.AUTO_APPROVE_COPILOT_CLEAN_ON;
+  if (cleanOn === undefined) delete process.env.AUTO_APPROVE_COPILOT_CLEAN_ON;
+  else process.env.AUTO_APPROVE_COPILOT_CLEAN_ON = cleanOn;
+  try {
+    const result = await decide({ github, context: makeContext(), core });
+    return { result, calls, core };
+  } finally {
+    if (prev === undefined) delete process.env.AUTO_APPROVE_COPILOT_CLEAN_ON;
+    else process.env.AUTO_APPROVE_COPILOT_CLEAN_ON = prev;
+  }
 }
 
 test('approve: overview review with an approval verdict and no open issues', async () => {
@@ -1448,12 +1461,144 @@ test('skip: overview review with a previously missed issue only in the body', as
   assert.equal(calls.createReview.length, 0);
 });
 
-test('skip: overview verdict is not an approval, even with no open issues', async () => {
-  // Real case, strspc-manager#177.
-  const { result, calls } = await decideOnBody(overviewBody({ verdict: '🔵 Needs a closer look' }));
+const CLOSER_LOOK = '🔵 Needs a closer look';
+
+test('skip: Needs a closer look with no open issues, by default', async () => {
+  // A sample of 352 SteerSpec PRs found 70 such reviews, 25 of which named a
+  // concrete defect or finding in the verdict sentence, e.g. .github#9: "Two hidden
+  // findings ... were omitted from the published review". `No open issues` covers
+  // published threads only, so passing this verdict has to be a repo's own choice.
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: CLOSER_LOOK }));
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /Needs a closer look/);
+  assert.equal(result.reason, `latest Copilot review has verdict '${CLOSER_LOOK}'`);
   assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a blank copilot-clean-on is the default, because an unset variable sends blank', async () => {
+  const { result, calls, core } = await decideOnBody(overviewBody({ verdict: CLOSER_LOOK }), '');
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+  assert.deepEqual(core.warnings, []);
+});
+
+test('approve: copilot-clean-on=no-open-issues passes Needs a closer look and names it', async () => {
+  // Real case, SteerSpec/strspc-CLI#177: nothing to fix, and the author cannot approve.
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: CLOSER_LOOK }), 'no-open-issues');
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(result.reason, "copilot-clean (review 7, verdict 'Needs a closer look', no open issues)");
+  assert.equal(calls.createReview.length, 1);
+  assert.match(calls.createReview[0].body, /verdict 'Needs a closer look', no open issues/);
+});
+
+test('skip: copilot-clean-on=verdict keeps Needs a closer look from approving', async () => {
+  const { result, calls } = await decideOnBody(overviewBody({ verdict: CLOSER_LOOK }), 'verdict');
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, `latest Copilot review has verdict '${CLOSER_LOOK}'`);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: the default still passes an approval verdict', async () => {
+  const { result } = await decideOnBody(overviewBody());
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(result.reason, "copilot-clean (review 7, verdict 'Approval recommended', no open issues)");
+});
+
+test('skip: an unrecognised copilot-clean-on takes the strict reading and warns', async () => {
+  // A typo must not quietly opt in to the looser reading.
+  const { result, calls, core } = await decideOnBody(overviewBody({ verdict: CLOSER_LOOK }), 'no-open-issue');
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+  assert.ok(
+    core.warnings.some((w) => w.includes('copilot-clean-on') && w.includes('no-open-issue')),
+    `expected a warning naming the value, got ${JSON.stringify(core.warnings)}`,
+  );
+});
+
+test('getCopilotCleanOn: only an exact no-open-issues opts in', () => {
+  for (const [raw, want] of [
+    [undefined, 'verdict'],
+    ['', 'verdict'],
+    ['   ', 'verdict'],
+    ['no-open-issues', 'no-open-issues'],
+    [' No-Open-Issues ', 'no-open-issues'],
+    ['verdict', 'verdict'],
+    [' VERDICT ', 'verdict'],
+    ['verdicts', 'verdict'],
+    ['true', 'verdict'],
+  ]) {
+    assert.equal(decide.getCopilotCleanOn({ AUTO_APPROVE_COPILOT_CLEAN_ON: raw }), want, String(raw));
+  }
+});
+
+for (const cleanOn of ['no-open-issues', 'verdict']) {
+  test(`skip: Changes recommended with no open issues, copilot-clean-on=${cleanOn}`, async () => {
+    const { result, calls } = await decideOnBody(overviewBody({ verdict: '🟡 Changes recommended' }), cleanOn);
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /Changes recommended/);
+    assert.equal(calls.createReview.length, 0);
+  });
+
+  test(`skip: an unknown verdict with no open issues, copilot-clean-on=${cleanOn}`, async () => {
+    const { result, calls } = await decideOnBody(overviewBody({ verdict: '🟣 Something new' }), cleanOn);
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /Something new/);
+    assert.equal(calls.createReview.length, 0);
+  });
+}
+
+test('skip: Needs a closer look still lists an open issue', async () => {
+  const { result, calls } = await decideOnBody(
+    overviewBody({ verdict: CLOSER_LOOK, issues: OPEN_ISSUES }),
+    'no-open-issues',
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /1 open issue/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: Needs a closer look that stops saying it has no open issues', async () => {
+  const { result, calls } = await decideOnBody(
+    overviewBody({ verdict: CLOSER_LOOK, issues: 'Nothing else to report.' }),
+    'no-open-issues',
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no open issues/i);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: Needs a closer look with a previously missed issue', async () => {
+  const { result, calls } = await decideOnBody(
+    overviewBody({ verdict: CLOSER_LOOK, extra: PREVIOUSLY_MISSED }),
+    'no-open-issues',
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /previously missed/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: Needs a closer look with a collapsed section this code has never seen', async () => {
+  const section = ['<details>', '<summary>Why a human should look</summary>', '', 'Text.', '</details>'].join('\n');
+  const { result, calls } = await decideOnBody(
+    overviewBody({ verdict: CLOSER_LOOK, extra: section }),
+    'no-open-issues',
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /has section 'Why a human should look'/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a verdict that only contains the closer-look wording', async () => {
+  for (const verdict of ['Not Needs a closer look', 'Needs a closer look at the auth change']) {
+    const { result, calls } = await decideOnBody(overviewBody({ verdict }), 'no-open-issues');
+    assert.equal(result.decision, 'skip', verdict);
+    assert.equal(calls.createReview.length, 0, verdict);
+  }
+});
+
+test('approve: a review with no overview keeps the plain copilot-clean reason', async () => {
+  const { result } = await decideOnBody('## Pull request overview\n\nLooks fine.');
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(result.reason, 'copilot-clean (review 7, state=COMMENTED)');
 });
 
 test('skip: overview review with a verdict this code has never seen', async () => {

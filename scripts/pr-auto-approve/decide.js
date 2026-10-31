@@ -9,6 +9,8 @@
 //   AUTO_APPROVE_SANDBOX_REPOS — comma-separated repo full names where bot-authored
 //                               PRs are allowed (for e2e testing); production repos
 //                               must not appear here
+//   AUTO_APPROVE_COPILOT_CLEAN_ON — which overview verdicts can pass: verdict
+//                               (default) or no-open-issues; see getCopilotCleanOn
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');
@@ -125,7 +127,16 @@ function countSuppressedComments(body) {
 // issue</strong></summary>". None of that reaches listCommentsForReview, and the
 // suppressed-comment patterns above do not match it, so such a review used to
 // read as clean. A green verdict is not enough on its own: #127 had one over an
-// open High issue. "Needs a closer look" can also come with no open issues.
+// open High issue.
+//
+// "Needs a closer look" with no open issues passes only when copilot-clean-on is
+// `no-open-issues`, the one verdict that setting touches. Often it just asks a
+// human to verify something, and no commit can answer that (strspc-CLI#177). But
+// "No open issues" covers published threads only: in a sample of 352 SteerSpec PRs
+// (2026-10-31), 25 of 70 such reviews named a concrete defect or finding in the
+// verdict sentence, e.g. .github#9, "Two hidden findings ... were omitted from the
+// published review". So it is a repo's choice, not the default. That sentence is
+// free prose, and is deliberately not parsed to tell the two apart.
 //
 // This gate proves a review clean rather than looking for known problems, so a
 // wording it has not seen is a skip, not silence. Same reasoning as the
@@ -142,6 +153,7 @@ const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview\b[^>]*-->/i;
 const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
 const APPROVAL_VERDICT_RE = /^[^\p{L}\p{N}]*Approval recommended$/iu;
+const CLOSER_LOOK_VERDICT_RE = /^[^\p{L}\p{N}]*Needs a closer look$/iu;
 // Both wordings Copilot has used. Not the bare phrase: review summaries of PRs
 // about this gate use it in prose, which would skip them for nothing.
 const PREVIOUSLY_MISSED_RE = /\b[1-9]\d*\s+previously missed|previously missed\s*\((?!0\))/i;
@@ -150,19 +162,42 @@ const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
 const SECTION_RE = /<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;
 const SAFE_SECTION_RE = /^(?:What changed in this PR|\d+ resolved since last review)$/i;
 
-// Why an overview review body blocks approval; '' when it does not, which
-// includes every body that is not an overview. Completes "latest Copilot review …".
-function overviewBlocker(body) {
-  const raw = String(body || '');
-  const unfenced = raw.replace(FENCED_CODE_RE, '');
+// copilot-clean-on, normalised. Only an exact `no-open-issues` opts in. Blank is
+// the default, `verdict`, because a caller passing an unset variable sends ''
+// rather than the action's default. Anything else also reads as `verdict`, with a
+// warning, so a typo cannot select the looser reading.
+function getCopilotCleanOn(env = process.env, warn) {
+  const raw = String(env.AUTO_APPROVE_COPILOT_CLEAN_ON || '').trim().toLowerCase();
+  if (raw === 'no-open-issues') return raw;
+  if (raw !== '' && raw !== 'verdict' && typeof warn === 'function') {
+    warn(`pr-auto-approve: unrecognised copilot-clean-on ${JSON.stringify(raw)}, using 'verdict'`);
+  }
+  return 'verdict';
+}
+
+// The verdict heading of an overview review body, '' when it has none. null when
+// the body is not an overview.
+function overviewVerdict(body) {
+  const unfenced = String(body || '').replace(FENCED_CODE_RE, '');
   const isOverview = OVERVIEW_MARKER_RE.test(unfenced)
     || KNOWN_VERDICT_RE.test(unfenced)
     || OPEN_ISSUES_RE.test(unfenced)
     || NO_OPEN_ISSUES_RE.test(unfenced);
-  if (!isOverview) return '';
+  if (!isOverview) return null;
   const heading = FIRST_HEADING_RE.exec(unfenced);
-  const verdict = heading ? heading[1] : '';
-  if (!APPROVAL_VERDICT_RE.test(verdict)) return `has verdict '${verdict || 'none'}'`;
+  return heading ? heading[1] : '';
+}
+
+// Why an overview review body blocks approval; '' when it does not, which
+// includes every body that is not an overview. Completes "latest Copilot review …".
+function overviewBlocker(body, cleanOn = 'verdict') {
+  const verdict = overviewVerdict(body);
+  if (verdict === null) return '';
+  const verdictPasses = APPROVAL_VERDICT_RE.test(verdict)
+    || (cleanOn === 'no-open-issues' && CLOSER_LOOK_VERDICT_RE.test(verdict));
+  if (!verdictPasses) return `has verdict '${verdict || 'none'}'`;
+  const raw = String(body || '');
+  const unfenced = raw.replace(FENCED_CODE_RE, '');
   const open = OPEN_ISSUES_RE.exec(raw);
   if (open) return `lists ${open[1]} open issue(s)`;
   if (!NO_OPEN_ISSUES_RE.test(unfenced.split(/<details\b/i)[0])) return 'does not state no open issues';
@@ -1221,9 +1256,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       );
     }
     // Absent from the rounds-threshold branch for the same reason as above.
-    const blocker = overviewBlocker(latest.body);
+    const cleanOn = getCopilotCleanOn(process.env, (m) => core.warning(m));
+    const blocker = overviewBlocker(latest.body, cleanOn);
     if (blocker) return setDecision('skip', `latest Copilot review ${blocker}`);
-    reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
+    // Names the verdict the approval relied on. Only a verdict that passed gets
+    // here, so nothing PR-derived reaches the approval's body.
+    const verdict = overviewVerdict(latest.body);
+    reason = verdict
+      ? `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`
+      : `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
   // Every PR field the decision above was computed from is re-read here, so a
@@ -1345,6 +1386,7 @@ module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
 module.exports.countSuppressedComments = countSuppressedComments;
 module.exports.overviewBlocker = overviewBlocker;
+module.exports.getCopilotCleanOn = getCopilotCleanOn;
 module.exports.getBaseBranches = getBaseBranches;
 module.exports.parseCommitType = parseCommitType;
 module.exports.parseRoundsByType = parseRoundsByType;

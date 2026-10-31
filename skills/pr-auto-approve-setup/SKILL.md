@@ -59,7 +59,7 @@ itself is the `workflow_run.workflows` list (below). Every other setting comes f
 
 The template reads each input from an Actions variable named `STRSPC_PR_AUTO_APPROVE_<INPUT>`
 (`..._BOT_LOGIN`, `..._BASE_BRANCH`, `..._ROUNDS_THRESHOLD`, `..._ROUNDS_BY_TYPE`,
-`..._COPILOT_OPTIONAL_PATHS`, `..._ALLOW_NO_CHECKS`, `..._REQUEST_COPILOT_REVIEW`,
+`..._COPILOT_OPTIONAL_PATHS`, `..._COPILOT_CLEAN_ON`, `..._ALLOW_NO_CHECKS`, `..._REQUEST_COPILOT_REVIEW`,
 `..._WAIT_FOR_COPILOT_SECONDS`, `..._COPILOT_ERROR_RETRIES`, `..._SLACK_CHANNEL`). Set the org-wide policy once, then override
 it only in a repo that differs:
 

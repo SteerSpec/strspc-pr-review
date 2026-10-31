@@ -1,7 +1,7 @@
 # SteerSpec configuration for strspc-pr-review.
 # Schema: https://steerspec.dev/schemas/config/v1.json
 rules:
-  - source: github://SteerSpec/strspc-rules@v1.12.0/rules/core
+  - source: github://SteerSpec/strspc-rules@v1.13.0/rules/core
     scope: global
 
   # This repository's own rules (dev.steerspec.prreview realm). They govern the

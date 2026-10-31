@@ -40,6 +40,14 @@
         },
         "inherits": {
           "type": "string"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "protected",
+            "public"
+          ]
         }
       },
       "additionalProperties": false

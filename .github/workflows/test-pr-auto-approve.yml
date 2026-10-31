@@ -53,8 +53,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   test:
     name: node --test

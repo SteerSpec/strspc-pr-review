@@ -11,7 +11,9 @@ rules:
     scope: global
 
 evaluator:
-  provider: claude  # requires ANTHROPIC_API_KEY; the check is static-only without it
+  # No AI evaluation yet: every rule is Draft, so nothing can fail on it, and a
+  # same-repository PR controls this workflow, so it gets no evaluator key.
+  provider: null
 
 cache:
   ttl: 24h

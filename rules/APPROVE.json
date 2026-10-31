@@ -6,14 +6,14 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.22",
-    "timestamp": "2026-10-31T08:09:53Z",
-    "hash": "blake3:431a20383b117342f1806add08fa79e3bb811eff58329a22d2000abc5b03f43c"
+    "version": "0.1.20",
+    "timestamp": "2026-10-31T08:10:26Z",
+    "hash": "blake3:312cd6665ee77726396f7770ac4f50a458710df196217324daa1835360907c83"
   },
   "rules": [
     {
       "id": "APPROVE-001",
-      "revision": 2,
+      "revision": 0,
       "state": "D",
       "body": "Apart from an unfinished Copilot check on a pull request that does not need a Copilot review, the action MUST NOT approve a pull request while any CI check on its head is unfinished or has concluded with anything other than success, neutral, skipped, cancelled or stale.",
       "added_by": "@pleberre",

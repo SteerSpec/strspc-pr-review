@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.1...v1.9.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* re-check the draft state around the approval ([98e87df](https://github.com/SteerSpec/strspc-pr-review/commit/98e87dfa3dd8f8a3040b22790fa73f870393140a))
+* refuse draft and fork PRs on every event ([42ff8ec](https://github.com/SteerSpec/strspc-pr-review/commit/42ff8ec804b1e79b0339202e5b93171c65ed9fec))
+* refuse draft and fork PRs on every event ([62787f0](https://github.com/SteerSpec/strspc-pr-review/commit/62787f05238f0cd62bf2b0c679bfa55087be194b))
+
 ## [1.9.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.0...v1.9.1) (2026-10-30)
 
 

@@ -1,6 +1,6 @@
 # Protected paths design
 
-Status: awaiting owner approval. Tracks issue #125 and, for this repository, bead `strspc-pr-review-0np`.
+Status: approved by the owner on 2026-10-31. Tracks issue #125 and, for this repository, bead `strspc-pr-review-0np`.
 
 ## Why
 

@@ -511,7 +511,7 @@ scripts/
 .github/workflows/
   auto-approve.yml             # this repo running the action on itself
   pr-auto-approve.yml          # reusable workflow (deprecated, kept for compat)
-  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck + issue forms
+  test-pr-auto-approve.yml     # CI: tests + actionlint + shellcheck + issue forms + PR title
   release-please.yml           # semver tagging on main
   sync-marketplace-pin.yml     # moves the skills pin in SteerSpec/.claude on release
   dependabot.yml               # keeps the SHA-pinned actions and dev deps current

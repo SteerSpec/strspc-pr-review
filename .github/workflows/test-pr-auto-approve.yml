@@ -34,7 +34,7 @@ jobs:
   # steps, which rulediff reads as skipped states and body-edit-plus-promotion,
   # so exactly that PR is exempt from the diff.
   rules:
-    uses: SteerSpec/.github/.github/workflows/strspc-lint.yml@main
+    uses: SteerSpec/.github/.github/workflows/strspc-lint.yml@9263d52f18833179ea1ed4fbedbff5516547da2d # main
     permissions:
       contents: read
       pull-requests: read
@@ -49,7 +49,7 @@ jobs:
         ) }}
 
   check:
-    uses: SteerSpec/.github/.github/workflows/strspc-check.yml@main
+    uses: SteerSpec/.github/.github/workflows/strspc-check.yml@9263d52f18833179ea1ed4fbedbff5516547da2d # main
     permissions:
       contents: read
       pull-requests: read

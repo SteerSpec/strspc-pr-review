@@ -201,6 +201,25 @@ jobs:
           # rounds-by-type to apply (default: '**/*.md,docs/**/*.md').
           copilot-optional-paths: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS }}
 
+          # Which verdicts in Copilot's overview can pass as clean (default:
+          # 'verdict', only 'Approval recommended'). 'no-open-issues' also passes
+          # 'Needs a closer look', whose sentence can still name a finding.
+          copilot-clean-on: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON }}
+
+          # head:base pairs approved without a Copilot review, e.g. 'develop:main'
+          # (default: off). The action proves every commit came from an approved
+          # PR, and each base must also be in base-branch.
+          promotion-branches: ${{ vars.STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES }}
+
+          # source:base pairs whose release-please PRs are approved without a
+          # Copilot review, e.g. 'develop:main', or a bare 'main' for a repo with no
+          # source branch (default: off). Each base must also be in base-branch.
+          release-branches: ${{ vars.STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES }}
+
+          # Required by release-branches: the login that authors release PRs, e.g.
+          # 'my-release-app[bot]'. The branch name alone proves nothing.
+          release-author: ${{ vars.STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR }}
+
           # 'true' to approve when no external check runs exist (e.g. docs-only
           # PRs that skip CI via path filters). Default 'false'.
           allow-no-checks: ${{ vars.STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS }}

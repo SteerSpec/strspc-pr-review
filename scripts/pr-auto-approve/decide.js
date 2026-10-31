@@ -9,10 +9,34 @@
 //   AUTO_APPROVE_SANDBOX_REPOS — comma-separated repo full names where bot-authored
 //                               PRs are allowed (for e2e testing); production repos
 //                               must not appear here
+//   AUTO_APPROVE_COPILOT_CLEAN_ON — which overview verdicts can pass: verdict
+//                               (default) or no-open-issues; see getCopilotCleanOn
+//   AUTO_APPROVE_PROMOTION_BRANCHES — comma-separated head:base pairs that take
+//                               the promotion path instead of the Copilot rules;
+//                               see promotion.js
+//   AUTO_APPROVE_RELEASE_BRANCHES — comma-separated source:base pairs, or a bare
+//                               base, whose release-please PRs take the release
+//                               path; see release.js
+//   AUTO_APPROVE_RELEASE_AUTHOR — login that must have authored a release PR
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');
 //   await decide({ github, context, core });
+
+const {
+  getPromotionPairs,
+  findPromotionPair,
+  promotionTitleBlocker,
+  checkProvenance,
+} = require('./promotion.js');
+const {
+  getReleaseRoutes,
+  getReleaseAuthor,
+  findReleaseRoute,
+  releaseAuthorBlocker,
+  checkReleasePr,
+  checkUnpromoted,
+} = require('./release.js');
 
 // Production Copilot reviewer identities. Strict allowlist of known logins
 // — a substring-match fallback could be spoofed by any third-party bot with
@@ -125,7 +149,16 @@ function countSuppressedComments(body) {
 // issue</strong></summary>". None of that reaches listCommentsForReview, and the
 // suppressed-comment patterns above do not match it, so such a review used to
 // read as clean. A green verdict is not enough on its own: #127 had one over an
-// open High issue. "Needs a closer look" can also come with no open issues.
+// open High issue.
+//
+// "Needs a closer look" with no open issues passes only when copilot-clean-on is
+// `no-open-issues`, the one verdict that setting touches. Often it just asks a
+// human to verify something, and no commit can answer that (strspc-CLI#177). But
+// "No open issues" covers published threads only: in a sample of 352 SteerSpec PRs
+// (2026-10-31), 25 of 70 such reviews named a concrete defect or finding in the
+// verdict sentence, e.g. .github#9, "Two hidden findings ... were omitted from the
+// published review". So it is a repo's choice, not the default. That sentence is
+// free prose, and is deliberately not parsed to tell the two apart.
 //
 // This gate proves a review clean rather than looking for known problems, so a
 // wording it has not seen is a skip, not silence. Same reasoning as the
@@ -142,6 +175,7 @@ const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview\b[^>]*-->/i;
 const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
 const APPROVAL_VERDICT_RE = /^[^\p{L}\p{N}]*Approval recommended$/iu;
+const CLOSER_LOOK_VERDICT_RE = /^[^\p{L}\p{N}]*Needs a closer look$/iu;
 // Both wordings Copilot has used. Not the bare phrase: review summaries of PRs
 // about this gate use it in prose, which would skip them for nothing.
 const PREVIOUSLY_MISSED_RE = /\b[1-9]\d*\s+previously missed|previously missed\s*\((?!0\))/i;
@@ -150,19 +184,42 @@ const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
 const SECTION_RE = /<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;
 const SAFE_SECTION_RE = /^(?:What changed in this PR|\d+ resolved since last review)$/i;
 
-// Why an overview review body blocks approval; '' when it does not, which
-// includes every body that is not an overview. Completes "latest Copilot review …".
-function overviewBlocker(body) {
-  const raw = String(body || '');
-  const unfenced = raw.replace(FENCED_CODE_RE, '');
+// copilot-clean-on, normalised. Only an exact `no-open-issues` opts in. Blank is
+// the default, `verdict`, because a caller passing an unset variable sends ''
+// rather than the action's default. Anything else also reads as `verdict`, with a
+// warning, so a typo cannot select the looser reading.
+function getCopilotCleanOn(env = process.env, warn) {
+  const raw = String(env.AUTO_APPROVE_COPILOT_CLEAN_ON || '').trim().toLowerCase();
+  if (raw === 'no-open-issues') return raw;
+  if (raw !== '' && raw !== 'verdict' && typeof warn === 'function') {
+    warn(`pr-auto-approve: unrecognised copilot-clean-on ${JSON.stringify(raw)}, using 'verdict'`);
+  }
+  return 'verdict';
+}
+
+// The verdict heading of an overview review body, '' when it has none. null when
+// the body is not an overview.
+function overviewVerdict(body) {
+  const unfenced = String(body || '').replace(FENCED_CODE_RE, '');
   const isOverview = OVERVIEW_MARKER_RE.test(unfenced)
     || KNOWN_VERDICT_RE.test(unfenced)
     || OPEN_ISSUES_RE.test(unfenced)
     || NO_OPEN_ISSUES_RE.test(unfenced);
-  if (!isOverview) return '';
+  if (!isOverview) return null;
   const heading = FIRST_HEADING_RE.exec(unfenced);
-  const verdict = heading ? heading[1] : '';
-  if (!APPROVAL_VERDICT_RE.test(verdict)) return `has verdict '${verdict || 'none'}'`;
+  return heading ? heading[1] : '';
+}
+
+// Why an overview review body blocks approval; '' when it does not, which
+// includes every body that is not an overview. Completes "latest Copilot review …".
+function overviewBlocker(body, cleanOn = 'verdict') {
+  const verdict = overviewVerdict(body);
+  if (verdict === null) return '';
+  const verdictPasses = APPROVAL_VERDICT_RE.test(verdict)
+    || (cleanOn === 'no-open-issues' && CLOSER_LOOK_VERDICT_RE.test(verdict));
+  if (!verdictPasses) return `has verdict '${verdict || 'none'}'`;
+  const raw = String(body || '');
+  const unfenced = raw.replace(FENCED_CODE_RE, '');
   const open = OPEN_ISSUES_RE.exec(raw);
   if (open) return `lists ${open[1]} open issue(s)`;
   if (!NO_OPEN_ISSUES_RE.test(unfenced.split(/<details\b/i)[0])) return 'does not state no open issues';
@@ -579,6 +636,10 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   try {
     const { owner, repo } = context.repo;
     const pr = context.payload.pull_request;
+    if (findPromotionPair(pr, getPromotionPairs(env)) || findReleaseRoute(pr, getReleaseRoutes(env))) {
+      core.info('pr-auto-approve: promotion or release PR does not need Copilot; not requesting a review');
+      return 'skipped';
+    }
     // Only a 0 can make the review unnecessary; any other relaxed type still
     // needs Copilot, so the file listing is spent on 0 alone.
     let { threshold, type } = resolveThreshold(pr.title, env);
@@ -881,7 +942,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     if (typeof core.setFailed === 'function') core.setFailed(reason);
     return setDecision('error', reason);
   };
-  const withdrawStampedApprovals = async (isStale, message) => {
+  const withdrawStampedApprovals = async (isStale, message, { unstamped = false } = {}) => {
     try {
       reviews = await loadReviews();
     } catch (err) {
@@ -892,7 +953,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     for (const r of reviews) {
       const stamped = stampedThreshold(r);
-      if (stamped === null || !isStale(stamped)) continue;
+      const isBotApproval = r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED';
+      if (unstamped ? !isBotApproval : stamped === null) continue;
+      if (!isStale(stamped, r)) continue;
       try {
         await dismissReview({
           github, botGithub, params: { owner, repo, pull_number: prNumber, review_id: r.id, message },
@@ -908,6 +971,34 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return null;
   };
 
+  // A promotion's or release PR's approval rests on gates that a later head or
+  // title can fail. Withdraw it before skipping, for a repo that does not dismiss
+  // stale approvals. Unstamped approvals too: a bot approval from the Copilot path,
+  // given before the path was configured, was never proven under these gates.
+  const refuseRouted = async (reason) => {
+    if (BOT_LOGIN) {
+      const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
+      if (failed) return failed;
+    }
+    return setDecision('skip', reason);
+  };
+  // As with the file listing below: the top-level catch is a skip, which would
+  // leave standing an approval this run could not re-prove. Returns an error
+  // decision if the withdrawal fails, otherwise null and the caller rethrows.
+  const withdrawAfterFailedRead = async (err, what) => {
+    if (!BOT_LOGIN) return null;
+    const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+    return withdrawStampedApprovals(() => true, `Withdrawn: ${what} (${detail}).`, { unstamped: true });
+  };
+
+  // Matched here, before anything Copilot: the threshold of 0 below is what skips
+  // the waits and the review rules. Provenance and the unpromoted check run
+  // further down, after the gates that cost fewer API calls.
+  const warn = typeof core.warning === 'function' ? core.warning.bind(core) : undefined;
+  const promotion = findPromotionPair(pr, getPromotionPairs(process.env, warn));
+  const release = promotion ? null : findReleaseRoute(pr, getReleaseRoutes(process.env, warn));
+  let releaseConfig = null;
+
   // The type's threshold, unless the type is relaxed and the diff reaches
   // outside copilot-optional-paths, in which case the default applies. 0 means
   // Copilot is not required: nothing to wait for, and the review rules below
@@ -920,21 +1011,76 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // approvals. Withdraw every stamped approval first, then let the top-level
   // catch report the failed request as usual.
   let gate;
-  try {
-    gate = await applyPathGate({
-      github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
-    });
-  } catch (err) {
+  if (promotion || release) {
+    const blocker = promotion
+      ? promotionTitleBlocker(pr.title)
+      : releaseAuthorBlocker(pr, getReleaseAuthor());
+    if (blocker) return refuseRouted(blocker);
+    const headRef = pr.head.ref;
+    let tip;
+    try {
+      ({ data: tip } = await github.rest.git.getRef({ owner, repo, ref: `heads/${headRef}` }));
+    } catch (err) {
+      const failed = await withdrawAfterFailedRead(err, `the tip of ${headRef} could not be read`);
+      if (failed) return failed;
+      throw err;
+    }
+    // A plain skip, not a refusal: an event older than the branch tip says nothing
+    // about an approval of a newer head.
+    if (tip.object.sha !== pr.head.sha) {
+      return setDecision(
+        'skip',
+        `head ${pr.head.sha.slice(0, 8)} is not the tip of ${headRef} (${tip.object.sha.slice(0, 8)}); the next run re-evaluates it`,
+      );
+    }
+    // Proof covers one head. In a repo that does not dismiss stale approvals, one
+    // of an older head would read as APPROVED, and the skips below would return
+    // before the path's own gates ever looked at the new commits.
     if (BOT_LOGIN) {
-      const detail = [err.status, err.message || err].filter(Boolean).join(' ');
       const failed = await withdrawStampedApprovals(
-        () => true,
-        `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be listed (${detail}), ` +
-          'so a relaxed approval cannot be verified.',
+        (_, r) => r.commit_id !== pr.head.sha,
+        `Withdrawn: ${pr.head.sha.slice(0, 8)} is a new head, so the approval has to be earned again.`,
+        { unstamped: true },
       );
       if (failed) return failed;
     }
-    throw err;
+    gate = { threshold: 0, type: parseCommitType(pr.title), note: '', mergeBase: null };
+    if (release) {
+      let proof;
+      try {
+        const { names, mergeBase } = await compareHead({
+          github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha,
+        });
+        proof = await checkReleasePr({
+          github, owner, repo, pr, author: getReleaseAuthor(), names, mergeBase,
+        });
+        // The approval rests on the file list, so mergeBaseMoved re-reads it.
+        gate.mergeBase = mergeBase;
+      } catch (err) {
+        const failed = await withdrawAfterFailedRead(err, 'the release PR could not be verified');
+        if (failed) return failed;
+        throw err;
+      }
+      if (!proof.ok) return refuseRouted(proof.reason);
+      releaseConfig = proof.config;
+    }
+  } else {
+    try {
+      gate = await applyPathGate({
+        github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
+      });
+    } catch (err) {
+      if (BOT_LOGIN) {
+        const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+        const failed = await withdrawStampedApprovals(
+          () => true,
+          `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be listed (${detail}), ` +
+            'so a relaxed approval cannot be verified.',
+        );
+        if (failed) return failed;
+      }
+      throw err;
+    }
   }
   const { threshold, type: commitType } = gate;
   if (gate.note) {
@@ -1169,7 +1315,35 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
 
   let reason = '';
-  if (copilotOptional) {
+  if (promotion) {
+    let proof;
+    try {
+      proof = await checkProvenance({
+        github, owner, repo, prNumber, headRef: promotion.head, headSha,
+      });
+    } catch (err) {
+      const failed = await withdrawAfterFailedRead(err, `the provenance of ${headSha.slice(0, 8)} could not be proven`);
+      if (failed) return failed;
+      throw err;
+    }
+    if (!proof.ok) return refuseRouted(proof.reason);
+    reason = `promotion (${promotion.head} to ${promotion.base}, ${proof.commits} commit(s) from ${proof.prs} approved PR(s))`;
+  } else if (release) {
+    if (release.source) {
+      let proof;
+      try {
+        proof = await checkUnpromoted({
+          github, owner, repo, base: release.base, source: release.source, config: releaseConfig,
+        });
+      } catch (err) {
+        const failed = await withdrawAfterFailedRead(err, 'the unpromoted commits could not be read');
+        if (failed) return failed;
+        throw err;
+      }
+      if (!proof.ok) return refuseRouted(proof.reason);
+    }
+    reason = `release-pr (${pr.head.ref}${release.source ? `, nothing unpromoted on ${release.source}` : ''})`;
+  } else if (copilotOptional) {
     reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
   } else if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
@@ -1221,9 +1395,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       );
     }
     // Absent from the rounds-threshold branch for the same reason as above.
-    const blocker = overviewBlocker(latest.body);
+    const cleanOn = getCopilotCleanOn(process.env, (m) => core.warning(m));
+    const blocker = overviewBlocker(latest.body, cleanOn);
     if (blocker) return setDecision('skip', `latest Copilot review ${blocker}`);
-    reason = `copilot-clean (review ${latest.id}, state=${latest.state})`;
+    // Names the verdict the approval relied on. Only a verdict that passed gets
+    // here, so nothing PR-derived reaches the approval's body.
+    const verdict = overviewVerdict(latest.body);
+    reason = verdict
+      ? `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`
+      : `copilot-clean (review ${latest.id}, state=${latest.state})`;
   }
 
   // Every PR field the decision above was computed from is re-read here, so a
@@ -1345,6 +1525,7 @@ module.exports.makeIsCopilot = makeIsCopilot;
 module.exports.parseTestLogins = parseTestLogins;
 module.exports.countSuppressedComments = countSuppressedComments;
 module.exports.overviewBlocker = overviewBlocker;
+module.exports.getCopilotCleanOn = getCopilotCleanOn;
 module.exports.getBaseBranches = getBaseBranches;
 module.exports.parseCommitType = parseCommitType;
 module.exports.parseRoundsByType = parseRoundsByType;

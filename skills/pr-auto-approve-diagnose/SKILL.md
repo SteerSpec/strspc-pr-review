@@ -41,13 +41,23 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `latest Copilot review requested changes` | `CHANGES_REQUESTED` always blocks, regardless of round count |
 | `latest Copilot review has N comments` | Inline comments present and round count below `rounds-threshold` |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed block in the review **body**. Open the review and expand it |
-| `latest Copilot review has verdict '…'` / `lists N open issue(s)` / `lists a previously missed issue` / `has section '…'` / `does not state no open issues` | The overview in the review **body** doesn't show the PR as clean, even with no new inline comments. Read the body. A verdict or section you don't recognise may mean Copilot changed its wording |
+| `latest Copilot review has verdict '…'` / `lists N open issue(s)` / `lists a previously missed issue` / `has section '…'` / `does not state no open issues` | The overview in the review **body** doesn't show the PR as clean, even with no new inline comments. Read the body. `Needs a closer look` skips unless `copilot-clean-on` is `no-open-issues`, and its sentence can name a finding even with `No open issues`. A verdict or section you don't recognise may mean Copilot changed its wording |
 | `latest Copilot review is for an older commit (…)` | You pushed after Copilot reviewed. Wait for re-review — no action needed |
 | `latest Copilot review has no commit_id…` | Freshness can't be proven. Check the reviewer really is Copilot |
 | `PR author is the bot itself` | Self-approval is blocked by GitHub. Expected |
 | `PR already approved (reviewDecision=APPROVED)` / `bot already approved head <sha>` | Idempotent no-op. Already done |
 | `check_run:` / `workflow_run:` prefixed skips | The event carried no usable PR — draft, fork, wrong base, or a non-PR run |
 | `PR base ref '<ref>' not in [...]` | The PR targets a branch outside `base-branch`. See [§2c](#2c-which-variable-value-won) |
+| `promotion title …` | A PR matching `promotion-branches` needs a plain `chore:` title. Retitle it |
+| `head … is not the tip of …` | The head branch moved. The `synchronize` run re-evaluates it — no action needed |
+| `commit … has no merged PR into …` / `commit … came from #N, which has no standing approval` | Provenance failed: that code reached the head branch without an approval, possibly through a bypass. A human reviews it and approves the promotion |
+| `promotion has 250 commits or more…` | The commit list may be partial. A human approves this one |
+| `no Copilot review yet` on a PR into `main` | On a repo with a `develop` default branch, Copilot doesn't review PRs into `main`. Set `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` to `develop:main`, and for release PRs `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` to `develop:main` with `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR` |
+| `release-author is not set…` / `release PR author … is not release-author` / `commit … is not by release-author` | The release path needs its author pinned. Check the value, including `[bot]`. A real mismatch means a person wrote this, so a human reviews it |
+| `release PR changes …, which release-please does not own` | Not a generated file. If it's a version file, add it to `version-file` or `extra-files` in `release-please-config.json`. Otherwise a human reviews it |
+| `cannot read release-please-config.json at …` / `… is not valid JSON` / `… has no packages` | The file must exist on the base branch |
+| `… has N unpromoted commit(s): …; promote first` | Merging now would lose those from the changelog. Merge the promotion: release-please updates the PR, which re-evaluates it |
+| `cannot compare … with … (404)…` | No such source branch. Use a bare base in `release-branches` |
 | `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message |
 
 ## 2a. Copilot's check is red but its review is clean

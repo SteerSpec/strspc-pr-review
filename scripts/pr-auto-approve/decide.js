@@ -11,10 +11,20 @@
 //                               must not appear here
 //   AUTO_APPROVE_COPILOT_CLEAN_ON — which overview verdicts can pass: verdict
 //                               (default) or no-open-issues; see getCopilotCleanOn
+//   AUTO_APPROVE_PROMOTION_BRANCHES — comma-separated head:base pairs that take
+//                               the promotion path instead of the Copilot rules;
+//                               see promotion.js
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');
 //   await decide({ github, context, core });
+
+const {
+  getPromotionPairs,
+  findPromotionPair,
+  promotionTitleBlocker,
+  checkProvenance,
+} = require('./promotion.js');
 
 // Production Copilot reviewer identities. Strict allowlist of known logins
 // — a substring-match fallback could be spoofed by any third-party bot with
@@ -614,6 +624,10 @@ async function requestCopilotReview({ github, context, core, env = process.env }
   try {
     const { owner, repo } = context.repo;
     const pr = context.payload.pull_request;
+    if (findPromotionPair(pr, getPromotionPairs(env))) {
+      core.info('pr-auto-approve: promotion PR does not need Copilot; not requesting a review');
+      return 'skipped';
+    }
     // Only a 0 can make the review unnecessary; any other relaxed type still
     // needs Copilot, so the file listing is spent on 0 alone.
     let { threshold, type } = resolveThreshold(pr.title, env);
@@ -916,7 +930,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     if (typeof core.setFailed === 'function') core.setFailed(reason);
     return setDecision('error', reason);
   };
-  const withdrawStampedApprovals = async (isStale, message) => {
+  const withdrawStampedApprovals = async (isStale, message, { unstamped = false } = {}) => {
     try {
       reviews = await loadReviews();
     } catch (err) {
@@ -927,7 +941,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     for (const r of reviews) {
       const stamped = stampedThreshold(r);
-      if (stamped === null || !isStale(stamped)) continue;
+      const isBotApproval = r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED';
+      if (unstamped ? !isBotApproval : stamped === null) continue;
+      if (!isStale(stamped, r)) continue;
       try {
         await dismissReview({
           github, botGithub, params: { owner, repo, pull_number: prNumber, review_id: r.id, message },
@@ -943,6 +959,34 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return null;
   };
 
+  // A promotion's approval rests on gates that a later head or title can fail.
+  // Withdraw it before skipping, for a repo that does not dismiss stale approvals.
+  // Unstamped approvals too: a bot approval from the Copilot path, given before
+  // promotion-branches was set, was never proven under these gates.
+  const refusePromotion = async (reason) => {
+    if (BOT_LOGIN) {
+      const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
+      if (failed) return failed;
+    }
+    return setDecision('skip', reason);
+  };
+  // As with the file listing below: the top-level catch is a skip, which would
+  // leave standing an approval this run could not re-prove. Returns an error
+  // decision if the withdrawal fails, otherwise null and the caller rethrows.
+  const withdrawAfterFailedRead = async (err, what) => {
+    if (!BOT_LOGIN) return null;
+    const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+    return withdrawStampedApprovals(() => true, `Withdrawn: ${what} (${detail}).`, { unstamped: true });
+  };
+
+  // Matched here, before anything Copilot: the threshold of 0 below is what skips
+  // the waits and the review rules. Provenance runs further down, after the
+  // gates that cost fewer API calls.
+  const promotion = findPromotionPair(
+    pr,
+    getPromotionPairs(process.env, typeof core.warning === 'function' ? core.warning.bind(core) : undefined),
+  );
+
   // The type's threshold, unless the type is relaxed and the diff reaches
   // outside copilot-optional-paths, in which case the default applies. 0 means
   // Copilot is not required: nothing to wait for, and the review rules below
@@ -955,21 +999,54 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // approvals. Withdraw every stamped approval first, then let the top-level
   // catch report the failed request as usual.
   let gate;
-  try {
-    gate = await applyPathGate({
-      github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
-    });
-  } catch (err) {
+  if (promotion) {
+    const titleBlocker = promotionTitleBlocker(pr.title);
+    if (titleBlocker) return refusePromotion(titleBlocker);
+    let tip;
+    try {
+      ({ data: tip } = await github.rest.git.getRef({ owner, repo, ref: `heads/${promotion.head}` }));
+    } catch (err) {
+      const failed = await withdrawAfterFailedRead(err, `the tip of ${promotion.head} could not be read`);
+      if (failed) return failed;
+      throw err;
+    }
+    // A plain skip, not a refusal: an event older than the branch tip says nothing
+    // about an approval of a newer head.
+    if (tip.object.sha !== pr.head.sha) {
+      return setDecision(
+        'skip',
+        `head ${pr.head.sha.slice(0, 8)} is not the tip of ${promotion.head} (${tip.object.sha.slice(0, 8)}); the next run re-evaluates it`,
+      );
+    }
+    // Proof covers one head. In a repo that does not dismiss stale approvals, one
+    // of an older head would read as APPROVED, and the skips below would return
+    // before provenance ever looked at the new commits.
     if (BOT_LOGIN) {
-      const detail = [err.status, err.message || err].filter(Boolean).join(' ');
       const failed = await withdrawStampedApprovals(
-        () => true,
-        `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be listed (${detail}), ` +
-          'so a relaxed approval cannot be verified.',
+        (_, r) => r.commit_id !== pr.head.sha,
+        `Withdrawn: ${pr.head.sha.slice(0, 8)} is a new head, so the promotion has to be proven again.`,
+        { unstamped: true },
       );
       if (failed) return failed;
     }
-    throw err;
+    gate = { threshold: 0, type: parseCommitType(pr.title), note: '', mergeBase: null };
+  } else {
+    try {
+      gate = await applyPathGate({
+        github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
+      });
+    } catch (err) {
+      if (BOT_LOGIN) {
+        const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+        const failed = await withdrawStampedApprovals(
+          () => true,
+          `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be listed (${detail}), ` +
+            'so a relaxed approval cannot be verified.',
+        );
+        if (failed) return failed;
+      }
+      throw err;
+    }
   }
   const { threshold, type: commitType } = gate;
   if (gate.note) {
@@ -1204,7 +1281,20 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   }
 
   let reason = '';
-  if (copilotOptional) {
+  if (promotion) {
+    let proof;
+    try {
+      proof = await checkProvenance({
+        github, owner, repo, prNumber, headRef: promotion.head, headSha,
+      });
+    } catch (err) {
+      const failed = await withdrawAfterFailedRead(err, `the provenance of ${headSha.slice(0, 8)} could not be proven`);
+      if (failed) return failed;
+      throw err;
+    }
+    if (!proof.ok) return refusePromotion(proof.reason);
+    reason = `promotion (${promotion.head} to ${promotion.base}, ${proof.commits} commit(s) from ${proof.prs} approved PR(s))`;
+  } else if (copilotOptional) {
     reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
   } else if (copilotReviews.length >= threshold) {
     reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;

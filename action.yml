@@ -34,8 +34,9 @@ inputs:
       `pull-requests: write` and `contents: read` from it and nothing else; the
       shipped template grants all three. `contents: read` is for the commit
       comparison that lists a PR's changed files when rounds-by-type relaxes
-      its type (the list is pinned to the evaluated head SHA that way). Override
-      only if you have a reason to read as someone else.
+      its type (the list is pinned to the evaluated head SHA that way), and for
+      the branch tip and commit lookups of promotion-branches. Override only if
+      you have a reason to read as someone else.
   base-branch:
     required: false
     default: 'main'
@@ -92,6 +93,15 @@ inputs:
       published threads only, so the verdict sentence can still name a finding.
       'Changes recommended' and unknown verdicts never pass, and an unrecognised
       value reads as 'verdict'.
+  promotion-branches:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated head:base pairs that are approved without a Copilot review,
+      e.g. 'develop:main'. A PR matching a pair exactly must have a chore: title,
+      a head that is the branch tip, green checks, and every commit from a merged
+      PR into the head branch with a standing approval. Each base must also be in
+      base-branch. Empty (default) turns this off.
   request-copilot-review:
     required: false
     default: 'false'
@@ -220,6 +230,7 @@ runs:
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
+        AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
         ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.github-token }}
@@ -239,6 +250,7 @@ runs:
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
         AUTO_APPROVE_COPILOT_CLEAN_ON: ${{ inputs.copilot-clean-on }}
+        AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_COPILOT_ERROR_RETRIES: ${{ inputs.copilot-error-retries }}

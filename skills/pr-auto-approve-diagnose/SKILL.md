@@ -48,6 +48,11 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `PR already approved (reviewDecision=APPROVED)` / `bot already approved head <sha>` | Idempotent no-op. Already done |
 | `check_run:` / `workflow_run:` prefixed skips | The event carried no usable PR — draft, fork, wrong base, or a non-PR run |
 | `PR base ref '<ref>' not in [...]` | The PR targets a branch outside `base-branch`. See [§2c](#2c-which-variable-value-won) |
+| `promotion title …` | A PR matching `promotion-branches` needs a plain `chore:` title. Retitle it |
+| `head … is not the tip of …` | The head branch moved. The `synchronize` run re-evaluates it — no action needed |
+| `commit … has no merged PR into …` / `commit … came from #N, which has no standing approval` | Provenance failed: that code reached the head branch without an approval, possibly through a bypass. A human reviews it and approves the promotion |
+| `promotion has 250 commits or more…` | The commit list may be partial. A human approves this one |
+| `no Copilot review yet` on a PR into `main` | On a repo with a `develop` default branch, Copilot doesn't review PRs into `main`. Set `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` to `develop:main` |
 | `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message |
 
 ## 2a. Copilot's check is red but its review is clean

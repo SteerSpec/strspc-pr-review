@@ -202,6 +202,11 @@ jobs:
           # 'Needs a closer look', whose sentence can still name a finding.
           copilot-clean-on: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON }}
 
+          # head:base pairs approved without a Copilot review, e.g. 'develop:main'
+          # (default: off). The action proves every commit came from an approved
+          # PR, and each base must also be in base-branch.
+          promotion-branches: ${{ vars.STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES }}
+
           # 'true' to approve when no external check runs exist (e.g. docs-only
           # PRs that skip CI via path filters). Default 'false'.
           allow-no-checks: ${{ vars.STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS }}

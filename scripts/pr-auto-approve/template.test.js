@@ -63,6 +63,15 @@ test('copilot-clean-on reaches the evaluate step', () => {
   assert.match(step, /AUTO_APPROVE_COPILOT_CLEAN_ON: \$\{\{ inputs\.copilot-clean-on \}\}/);
 });
 
+// Both steps read it: the request step must not ask Copilot to review a promotion.
+test('promotion-branches reaches the evaluate and request steps', () => {
+  const src = read('action.yml');
+  for (const name of ['Evaluate and approve', 'Request Copilot review']) {
+    const step = src.split(`- name: ${name}`)[1].split('- name: ')[0];
+    assert.match(step, /AUTO_APPROVE_PROMOTION_BRANCHES: \$\{\{ inputs\.promotion-branches \}\}/, name);
+  }
+});
+
 test('the template reads no STRSPC_PR_AUTO_APPROVE_ variable that matches no input', () => {
   const known = new Set(declaredInputs().map(varName));
   const used = [...read('templates/pr-auto-approve.yml').matchAll(/vars\.(STRSPC_PR_AUTO_APPROVE_[A-Z_]+)/g)]

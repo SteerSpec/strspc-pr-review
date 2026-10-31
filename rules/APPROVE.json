@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.21",
-    "timestamp": "2026-10-31T08:38:36Z",
-    "hash": "blake3:e7adece687a12f2f9fdfc45d39ab4e0e926e932ba93c9fb7f4ec9dd5a9fa3fde"
+    "version": "0.1.23",
+    "timestamp": "2026-10-31T10:46:48Z",
+    "hash": "blake3:732f12c54d17c75548a8ffd9aa359754fefba148f8af653f9b7b0fbf79ef0a52"
   },
   "rules": [
     {
@@ -40,18 +40,18 @@
     },
     {
       "id": "APPROVE-004",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments.",
+      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states an approval verdict with no open or previously missed issues.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
     {
       "id": "APPROVE-005",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "Subject to APPROVE-003, the action MAY approve a pull request that has reached its rounds threshold whatever commit the latest Copilot review covers and whatever comments it carries, so that a review that never clears cannot wedge the pull request.",
+      "body": "Subject to APPROVE-003, the action MAY approve a pull request that has reached its rounds threshold whatever commit the latest Copilot review covers and whatever comments, issues or verdict it carries, so that a review that never clears cannot wedge the pull request.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

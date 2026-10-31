@@ -166,6 +166,61 @@ test('skip: no pull_request payload', async () => {
   assert.match(result.reason, /no pull_request/);
 });
 
+// Would be approved if the gate let it through: a clean Copilot review on green
+// CI. Without one, the tests below would skip for the wrong reason and pass.
+function makeApprovableGithub() {
+  return makeFakeGithub({
+    reviews: [{
+      id: 1,
+      state: 'COMMENTED',
+      commit_id: 'deadbeef',
+      submitted_at: '2026-04-16T10:00:00Z',
+      user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+    }],
+    reviewComments: { 1: [] },
+  });
+}
+
+test('skip: draft PR in the event payload, without a caller guard', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({ prOverrides: { draft: true } });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /PR is draft/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: fork PR in the event payload, without a caller guard', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({
+    prOverrides: { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } },
+  });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /head repo does not match/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: PR whose head repo was deleted cannot be shown to be same-repo', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({ prOverrides: { head: { sha: 'deadbeef', repo: null } } });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /head repo does not match/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: same-repo non-draft PR in the event payload still reaches approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('skip: PR author is the bot (in production repo)', async () => {
   const core = makeCore();
   const ctx = makeContext({

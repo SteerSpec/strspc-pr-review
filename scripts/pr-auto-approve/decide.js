@@ -766,6 +766,17 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const { owner, repo } = context.repo;
   const prNumber = pr.number;
 
+  // pull_request_target and pull_request_review carry the PR in the payload, so
+  // the check_run and workflow_run gates above never saw it. The caller's `if:`
+  // filters these events too, but a caller that wrote its own `if:` may not, and
+  // on pull_request_target a fork PR would then reach approval with the bot
+  // token. A deleted head repo (null) cannot be shown to be this one, so it
+  // skips as well.
+  if (pr.draft) return setDecision('skip', 'PR is draft');
+  if (!pr.head || !pr.head.repo || pr.head.repo.full_name !== `${owner}/${repo}`) {
+    return setDecision('skip', 'PR head repo does not match current repo');
+  }
+
   // Never self-approve — GitHub blocks it anyway, and in prod this guard
   // is load-bearing. Exception: inside sandbox repos the e2e harness runs
   // as both PR author and synthetic reviewer, so without this bypass the

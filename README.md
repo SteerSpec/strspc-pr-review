@@ -75,7 +75,7 @@ The rounds threshold is unaffected by both rules: it remains an unconditional es
 
 > **Configuration tradeoff.** That escape hatch is what `rounds-threshold` tunes, so setting it to `1` makes *every* Copilot review satisfy it immediately — the clean, suppressed-comment, and freshness rules are then never evaluated, and the action degrades to "approve as soon as Copilot has reviewed at all, on whatever commit". Keep it at 2 or higher unless that is genuinely what you want.
 
-Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The draft and fork gates are enforced by the caller workflow's `if:` (see [Usage](#usage)) for `pull_request_target`/`pull_request_review` events, and re-applied by the action itself when it re-hydrates a PR from a `check_run`/`workflow_run` event — so if you write your own caller `if:` instead of the template, keep those conditions. The base-branch gate is enforced by the action for every event; the caller's `if:` only pre-filters on it. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
+Only PRs targeting the configured base branch(es) are eligible; draft PRs, fork PRs, and PRs the bot itself authored are skipped. The draft, fork and base-branch gates are enforced by the action for every event; the caller's `if:` (see [Usage](#usage)) pre-filters on them so a skipped PR costs no run. The fork guard in the caller still matters: it stops a fork-associated run from starting with your secrets at all, so keep it if you write your own `if:`. The bot never approves its own PR (except in test `sandbox-repos`). `CHANGES_REQUESTED` always blocks, regardless of round count. Approvals are idempotent and bound to the head commit — once the bot holds an `APPROVED` review for the current SHA the action exits cleanly, and a new push re-triggers evaluation.
 
 Every run records a one-line `reason` (also exposed as the [`reason` output](#outputs)) explaining what it did — see [Troubleshooting](#troubleshooting).
 
@@ -487,7 +487,7 @@ Releases follow [semver](https://semver.org/) and are tagged `vX.Y.Z` via [relea
 
 ```bash
 npm install
-npm test            # 190 unit tests, no external dependencies
+npm test            # 194 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint        # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

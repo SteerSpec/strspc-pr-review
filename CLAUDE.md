@@ -108,8 +108,9 @@ never checks out PR code.
 - `scripts/pr-auto-approve/decide.js` — all approval rules. CI passed, Copilot reviewed the current
   head, zero inline comments and no suppressed-comments block, or the rounds threshold reached;
   `CHANGES_REQUESTED` always blocks. Every run emits a one-line `reason`.
-- `templates/pr-auto-approve.yml` — the caller workflow repos copy. The base-branch, draft and fork
-  gates live in its `if:`, so changes to the trigger set must be mirrored there and in callers.
+- `templates/pr-auto-approve.yml` — the caller workflow repos copy. Its `if:` pre-filters the base-branch,
+  draft and fork gates that `decide.js` also enforces, so changes to the trigger set must be mirrored
+  there and in callers.
 - `.github/workflows/pr-auto-approve.yml` — the older reusable workflow, deprecated but kept for
   compatibility.
 - `skills/` — Claude Code skills (setup, diagnose, caller-sync), published through the

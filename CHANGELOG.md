@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.3](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.2...v1.9.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* read Copilot's review overview before calling a review clean ([#132](https://github.com/SteerSpec/strspc-pr-review/issues/132)) ([8632270](https://github.com/SteerSpec/strspc-pr-review/commit/863227026e5ae7ec94e816e510a8f030e8e21dfe))
+
 ## [1.9.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.9.1...v1.9.2) (2026-10-31)
 
 

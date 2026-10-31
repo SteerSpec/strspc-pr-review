@@ -44,9 +44,10 @@ approval fills a slot, and it shouldn't be your only gate.
 
 ## How it works
 
-When a PR opens, the action requests `bot-login` as a reviewer and lets Copilot's automatic review
-run. On every relevant event afterwards (new commits, a submitted Copilot review, a completed CI
-check) it re-evaluates:
+The action lets Copilot's review run, then evaluates the PR on every relevant event: a new commit, a
+submitted Copilot review, a completed CI check. A caller on `pull_request` also gets `bot-login`
+requested as a reviewer when the PR opens. The template runs on `pull_request_target`, so that request
+doesn't happen there, and the bot can approve without it.
 
 ```mermaid
 flowchart TD
@@ -113,7 +114,7 @@ the current SHA the action exits cleanly, and a new push re-triggers evaluation.
 
 | You need | Details |
 | -------- | ------- |
-| **Copilot code review, set to review PRs automatically** | The action reads Copilot's verdict and doesn't trigger Copilot itself, so if Copilot never reviews, every run skips with `no Copilot review yet`. Enable it under **Settings → Code review → Copilot**, or with an org or repo ruleset that requests Copilot on PRs |
+| **Copilot code review, set to review PRs automatically** | By default the action reads Copilot's verdict and doesn't trigger Copilot itself, so if Copilot never reviews, every run skips with `no Copilot review yet`. Enable it under **Settings → Code review → Copilot**, or with an org or repo ruleset that requests Copilot on PRs. To have the action request the review instead, set [`request-copilot-review`](#copilot) |
 | **A dedicated bot GitHub account** | Not your own: GitHub blocks self-approval, so the approving account must differ from PR authors. Add it to the repo as a **collaborator with write access**. Its login is `bot-login` |
 | **A fine-grained PAT for that account** | Stored as the `BOT_GITHUB_TOKEN` secret, with **`Pull requests: write` and nothing else**. It posts the approval, which must come from an account that isn't the PR author. The classic-PAT equivalent is `repo`, which also works but grants far more than this action can use |
 
@@ -497,7 +498,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 
 | `reason` | Cause and fix |
 | -------- | ------------- |
-| `check still running: <name>`<br>`no checks on head SHA yet` | CI hasn't finished. The action re-runs on `check_run` completion, so no action is needed |
+| `check still running: <name>`<br>`no checks on head SHA yet` | CI hasn't finished. The action re-runs when it completes: through `workflow_run` for GitHub Actions CI, or `check_run` for third-party checks. If it never re-runs, see [If your CI is GitHub Actions](#if-your-ci-is-github-actions-you-need-workflow_run) |
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI: approval requires all checks green |
 
 ### The PR changed during the run

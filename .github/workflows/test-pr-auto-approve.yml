@@ -60,10 +60,10 @@ jobs:
   # PRs are squashed into develop, so the title can become the commit
   # release-please reads, and a mistyped title is a wrong release. The husky
   # commit-msg hook is local and never sees a title. No ruleset requires this
-  # job, so a failure only stops a new auto-approval: an approval already given
-  # stands after a retitle, because only a push dismisses it. It is in this
-  # workflow, not its own, because auto-approve.yml re-enters on this workflow's
-  # name alone.
+  # job, so a failure only stops a new auto-approval. A retitle withdraws a bot
+  # approval only when it raises the rounds threshold; any other approval stands
+  # whatever this job concludes. It is in this workflow, not its own, because
+  # auto-approve.yml re-enters on this workflow's name alone.
   commits:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

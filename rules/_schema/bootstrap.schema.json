@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://steerspec.dev/schemas/entity/bootstrap.json",
+  "title": "SteerSpec Entity File — Bootstrap Schema",
+  "description": "Minimal structural validation for entity files. No business logic. This is the axiom.",
+  "type": "object",
+  "required": ["$schema", "entity", "rule_set", "rules", "notes"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "entity": {
+      "type": "object",
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "parent": { "type": "string" }
+      }
+    },
+    "rule_set": {
+      "type": "object",
+      "required": ["version", "timestamp", "hash"],
+      "properties": {
+        "version": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "hash": { "type": ["string", "null"] }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "revision", "state", "body", "added_by", "added_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "revision": { "type": "integer", "minimum": 0 },
+          "state": { "type": "string", "enum": ["D", "A", "P", "I", "R", "T"] },
+          "body": { "type": "string" },
+          "added_by": { "type": "string" },
+          "added_at": { "type": "string" },
+          "supersedes": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "sub_entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "rule_ref", "type", "content"],
+        "properties": {
+          "id": { "type": "string" },
+          "rule_ref": { "type": "string" },
+          "type": { "type": "string" },
+          "content": { "type": "string" },
+          "added_by": { "type": "string" },
+          "added_at": { "type": "string" },
+          "revision": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

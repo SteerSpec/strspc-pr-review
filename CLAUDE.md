@@ -108,8 +108,9 @@ never checks out PR code.
 - `scripts/pr-auto-approve/decide.js` — all approval rules. CI passed, Copilot reviewed the current
   head, zero inline comments and no suppressed-comments block, or the rounds threshold reached;
   `CHANGES_REQUESTED` always blocks. Every run emits a one-line `reason`.
-- `templates/pr-auto-approve.yml` — the caller workflow repos copy. The base-branch, draft and fork
-  gates live in its `if:`, so changes to the trigger set must be mirrored there and in callers.
+- `templates/pr-auto-approve.yml` — the caller workflow repos copy. Its `if:` pre-filters the base-branch,
+  draft and fork gates that `decide.js` also enforces, so changes to the trigger set must be mirrored
+  there and in callers.
 - `.github/workflows/pr-auto-approve.yml` — the older reusable workflow, deprecated but kept for
   compatibility.
 - `skills/` — Claude Code skills (setup, diagnose, caller-sync), published through the
@@ -117,13 +118,22 @@ never checks out PR code.
 - `.github/workflows/sync-marketplace-pin.yml` — after a release, opens the PR in `SteerSpec/.claude`
   that moves that pin. It selects the marketplace entry by `source.url`, not by name.
 - `e2e/pr-auto-approve/` — synthetic end-to-end harness (`run.sh`, `lib.sh`) against a sandbox repo.
+- `rules/` — the `dev.steerspec.prreview` realm. `APPROVE` states what the approval logic must
+  guarantee, so a behaviour change in `decide.js` goes with a rule change. Edit it only through the
+  `strspc` CLI, and use a `chore(rules):` title: `feat:` or `fix:` would release the action.
 
 ## Conventions & Patterns
 
 - Branch from `develop` and open PRs against `develop`; `main` only receives release promotions.
   release-please tags `vX.Y.Z` on merge to `main` and moves the `@v1` tag.
+- Merge methods are enforced by rulesets: squash only into `develop` (`merge-method-develop`), merge
+  commit only into `main` (`merge-method-main`), so release-please sees each commit from `develop`.
+  The squash commit takes the PR title when a PR has several commits, and the commit's own subject
+  when it has one (`squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`), so CI requires a one-commit
+  PR's title to match that subject.
 - Conventional Commits (`@commitlint/config-conventional`), enforced by the husky `commit-msg`
-  hook. Use `docs:`/`chore:` for non-code changes so release-please does not cut a release for them.
+  hook, and for PR titles by the `commits` CI job (120 characters at most). Use `docs:`/`chore:` for
+  non-code changes so release-please does not cut a release for them.
 - Docs are tested against the code: `docs.test.js` fails if `README.md`'s Inputs/Outputs tables
   drift from `action.yml`; `skills.test.js` only checks that every input named in a
   `skills/*/SKILL.md` YAML snippet exists in `action.yml` (it does not cover outputs or require

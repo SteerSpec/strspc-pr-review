@@ -166,6 +166,61 @@ test('skip: no pull_request payload', async () => {
   assert.match(result.reason, /no pull_request/);
 });
 
+// Would be approved if the gate let it through: a clean Copilot review on green
+// CI. Without one, the tests below would skip for the wrong reason and pass.
+function makeApprovableGithub() {
+  return makeFakeGithub({
+    reviews: [{
+      id: 1,
+      state: 'COMMENTED',
+      commit_id: 'deadbeef',
+      submitted_at: '2026-04-16T10:00:00Z',
+      user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
+    }],
+    reviewComments: { 1: [] },
+  });
+}
+
+test('skip: draft PR in the event payload, without a caller guard', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({ prOverrides: { draft: true } });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /PR is draft/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: fork PR in the event payload, without a caller guard', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({
+    prOverrides: { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } },
+  });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /head repo does not match/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: PR whose head repo was deleted cannot be shown to be same-repo', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const ctx = makeContext({ prOverrides: { head: { sha: 'deadbeef', repo: null } } });
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /head repo does not match/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: same-repo non-draft PR in the event payload still reaches approval', async () => {
+  const core = makeCore();
+  const { github, calls } = makeApprovableGithub();
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('skip: PR author is the bot (in production repo)', async () => {
   const core = makeCore();
   const ctx = makeContext({
@@ -2971,6 +3026,44 @@ test('PR retargeted mid-run: approval is skipped, not granted against the old ba
   });
 });
 
+// The event snapshot said ready for review; a conversion to draft after that has
+// to stop the approval the same way a push or a retarget does.
+test('PR converted to draft mid-run: approval is skipped', async () => {
+  await withRoundsByType('docs:0', async () => {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [],
+      getPrImpl: (num) => {
+        const { data } = getPrWithTitle('docs: x')(num);
+        return { data: { ...data, draft: true } };
+      },
+    });
+    const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'PR converted to draft during evaluation');
+    assert.equal(calls.createReview.length, 0);
+  });
+});
+
+test('approval is withdrawn if the PR is converted to draft right after it is posted', async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  let gets = 0;
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: (num) => {
+      const { data } = getPrWithTitle('docs: x')(num);
+      return { data: { ...data, draft: gets++ !== 0 } };
+    },
+  });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
+  assert.equal(dismissed[0].review_id, 999);
+});
+
 test('approval is withdrawn if the base changes right after it is posted', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
@@ -2986,9 +3079,9 @@ test('approval is withdrawn if the base changes right after it is posted', async
   github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
   const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
   assert.equal(result.decision, 'skip');
-  assert.equal(result.reason, 'PR head, base or title changed while approving; approval withdrawn');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
   assert.equal(dismissed[0].review_id, 999);
-  assert.match(dismissed[0].message, /^Withdrawn: PR head, base or title changed while approving\.$/);
+  assert.match(dismissed[0].message, /^Withdrawn: PR head, base, title or draft state changed while approving\.$/);
 });
 
 test('a head SHA the compare endpoint no longer knows is a clean skip that names the request', async () => {

@@ -1,0 +1,22 @@
+# SteerSpec configuration for strspc-pr-review.
+# Schema: https://steerspec.dev/schemas/config/v1.json
+rules:
+  - source: github://SteerSpec/strspc-rules@v1.12.0/rules/core
+    scope: global
+
+  # This repository's own rules (dev.steerspec.prreview realm). They govern the
+  # action and its scripts, so the scope is global: "local" would limit them to
+  # files under rules/ itself.
+  - source: ./rules/
+    scope: global
+
+evaluator:
+  # No AI evaluation yet: every rule is Draft, so nothing can fail on it, and a
+  # same-repository PR controls this workflow, so it gets no evaluator key.
+  provider: null
+
+cache:
+  ttl: 24h
+
+fail_on:
+  - I

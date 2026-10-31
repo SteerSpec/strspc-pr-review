@@ -38,8 +38,8 @@ This action fills that slot with something that looked at the diff. It earns its
 | **Solo-maintained repos** | A ruleset requires a review nobody is available to give |
 | **Internal repos** | The review requirement is org policy rather than a second pair of eyes |
 
-It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, and Copilot isn't a
-reviewer for those. Keep `CODEOWNERS` and required human reviewers on sensitive paths: the bot's
+It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, or the proof that
+the code was already approved, and neither is a reviewer for those. Keep `CODEOWNERS` and required human reviewers on sensitive paths: the bot's
 approval fills a slot, and it shouldn't be your only gate.
 
 ## How it works
@@ -109,6 +109,36 @@ The risk is that `No open issues` covers published threads only. The sentence un
 still name a finding, and the action doesn't read that sentence. In a sample of 352 SteerSpec PRs
 (October 2026), 25 of 70 such reviews named a concrete defect or finding there, such as "Two hidden
 findings [...] were omitted from the published review".
+
+### Promotion PRs
+
+Copilot only reviews PRs into the default branch, so with a `develop` default it never reviews
+`develop` to `main`, and a required approval on `main` can't be met without a bypass. Set
+[`promotion-branches`](#approval-rules) to a pair such as `develop:main`, with `main` also in
+`base-branch`, and a PR that matches a pair exactly doesn't need a Copilot review. The action doesn't
+request one or wait for one, though a `CHANGES_REQUESTED` review still blocks. A human approval that
+already satisfies the PR is left alone, and the action skips. Otherwise it approves when all of these
+hold:
+
+| Gate | What it stops |
+| ---- | ------------- |
+| **Same repo** | A fork branch named `develop` qualifying |
+| **`chore:` title, not marked breaking** | release-please counting the same changes twice through the merge commit |
+| **Head is the tip of the head branch** | Approving a commit that isn't the branch tip |
+| **All checks green** | Promoting a broken head |
+| **Every commit came from a merged PR into the head branch with a standing approval** | Unreviewed commits, such as a push that bypassed review |
+
+A standing approval names the commit that merged, was submitted before the merge, and comes from
+someone with push access, while no reviewer still requested changes. A bot approval counts, because
+it means that PR passed these rules. An approval given after a PR merged doesn't.
+
+Expect some promotions to skip at first. Replayed over 24 recent SteerSpec promotions, 17 pass, and
+the other 7 each hold a PR that merged with no standing approval. A person reviews those and
+approves the promotion.
+
+The action approves and never merges, so the decision to release stays with a person. A later push
+withdraws a stamped bot approval of the older head, even in a repo that doesn't dismiss stale
+approvals, and the new head has to pass again.
 
 ### What always blocks
 
@@ -225,6 +255,7 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE` | `rounds-by-type` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON` | `copilot-clean-on` |
+| `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` | `promotion-branches` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
@@ -397,6 +428,7 @@ requirement: everything they do is documented on this page.
 | `rounds-by-type` | `''` | Rounds per Conventional Commit type, read from the PR title, such as `docs:1,chore:0,fix:3,default:3`. `0` means Copilot isn't required for that type (approve on green CI). A type below the default applies only when every changed file matches `copilot-optional-paths`. Empty uses `rounds-threshold` for all PRs. See [Per-type rounds](#per-type-rounds) |
 | `copilot-optional-paths` | `**/*.md,docs/**/*.md` | Globs. A type mapped below the default (`0` included) applies only when every changed file matches, otherwise the PR uses the default (`default` entry, else `rounds-threshold`). Stops a code change from borrowing a relaxed title |
 | `copilot-clean-on` | `verdict` | Which verdicts in Copilot's review overview can pass as clean. `verdict` passes only `Approval recommended`. `no-open-issues` also passes `Needs a closer look` when the body states `No open issues`. An unrecognised value reads as `verdict` and logs a warning. See [Passing Needs a closer look](#passing-needs-a-closer-look) |
+| `promotion-branches` | `''` | Comma-separated `head:base` pairs approved without a Copilot review, such as `develop:main`. Each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Promotion PRs](#promotion-prs) |
 | `allow-no-checks` | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA, such as docs-only PRs |
 
 ### Copilot
@@ -508,6 +540,17 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. This is unexpected from real Copilot reviews, so check the reviewer really is Copilot and not a synthetic review posted without a `commit_id` |
 
+### Promotions that skip
+
+| `reason` | Cause and fix |
+| -------- | ------------- |
+| `promotion title type '…' would be counted twice…`<br>`promotion title is marked breaking…`<br>`promotion title is not a Conventional Commit…` | Retitle the PR `chore: promote develop to main` |
+| `head … is not the tip of …` | The head branch has moved. The `synchronize` run re-evaluates the new head, so there's nothing to do |
+| `commit … has no merged PR into …` | The commit reached the head branch without a PR. Review it, then have a human approve the promotion |
+| `commit … came from #N, which has no standing approval` | That PR merged without a [standing approval](#promotion-prs): none at all, a dismissed one, one given after the merge, or one of an earlier commit. Have a human review what it changed and approve the promotion |
+| `promotion has 250 commits or more…` | The commit list may be partial, so nothing can be proven. Promote more often, or have a human approve this one |
+| `commit list does not include the evaluated head …` | The head was force-pushed during the run. The next run re-evaluates it |
+
 ### Waiting on CI
 
 | `reason` | Cause and fix |
@@ -550,8 +593,8 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 
 ## Responsible use
 
-This action rubber-stamps **Copilot's** verdict, and it isn't a substitute for human judgment where
-that matters.
+This action rubber-stamps **Copilot's** verdict, or the proof that a promotion's code was already
+approved, and it isn't a substitute for human judgment where that matters.
 
 - **Keep required human reviewers** (branch protection, `CODEOWNERS`) on sensitive paths. The bot's
   approval fills a review slot but shouldn't be your only gate.
@@ -559,7 +602,8 @@ that matters.
   ruleset. The action reads your checks when it approves and doesn't enforce them afterwards: a check
   that fails later on the same commit, such as a PR title check after a retitle or a re-run, leaves
   the approval in place. The action withdraws a stamped bot approval when a retitle or a push raises
-  the PR's rounds threshold above the stamp, but a failing check on its own never does.
+  the PR's rounds threshold above the stamp, or when a promotion gets a new head or fails its title
+  or provenance gate, but a failing check on its own never does.
 - **Treat `BOT_GITHUB_TOKEN` like any write-scoped credential.** Keep it in secrets, give it
   **`Pull requests: write` and nothing more**, and rotate it periodically.
 
@@ -624,7 +668,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 236 unit tests, no external dependencies
+npm test               # 290 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
@@ -643,6 +687,8 @@ strspc-pr-review/
 │   │   ├── decide.js                 # all approval rules
 │   │   ├── decide.test.js            # unit tests (Node native test runner)
 │   │   ├── docs.test.js              # guards this README against drifting from action.yml
+│   │   ├── promotion.js              # the promotion path's own gates
+│   │   ├── promotion.test.js         # unit tests for that path, through decide.js too
 │   │   ├── skills.test.js            # guards skills/ against drifting from action.yml
 │   │   └── template.test.js          # guards the template against drifting from action.yml
 │   └── validate-issue-forms.py       # GitHub drops a malformed issue form silently

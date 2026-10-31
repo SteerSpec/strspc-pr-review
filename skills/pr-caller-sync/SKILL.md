@@ -50,6 +50,8 @@ The rollout showed these differ per repo and are the usual cause of a caller tha
 
 - **Default branch** — set `STRSPC_PR_AUTO_APPROVE_BASE_BRANCH` (repo or org). The template has no
   `branches:` filter; the variable feeds both the `if:` pre-filter and the `base-branch` input.
+  With a `develop` default, also set `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` to `develop:main`
+  and keep `main` in the base branch set, or promotions can't get an approval.
 - **Gating workflow names** in `workflow_run.workflows` — use that repo's real workflow `name:`
   values, and list **all** PR-gating workflows. Each fires its own event, and only the last to
   finish will see every other check complete.

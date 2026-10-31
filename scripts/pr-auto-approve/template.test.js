@@ -57,6 +57,12 @@ test('every configurable input is wired to its STRSPC_PR_AUTO_APPROVE_ variable'
   assert.deepEqual(wrong, [], `inputs not read from their variable: ${wrong.join(', ')}`);
 });
 
+// An input the step does not forward is a setting that silently does nothing.
+test('copilot-clean-on reaches the evaluate step', () => {
+  const step = read('action.yml').split('- name: Evaluate and approve')[1].split('- name: ')[0];
+  assert.match(step, /AUTO_APPROVE_COPILOT_CLEAN_ON: \$\{\{ inputs\.copilot-clean-on \}\}/);
+});
+
 test('the template reads no STRSPC_PR_AUTO_APPROVE_ variable that matches no input', () => {
   const known = new Set(declaredInputs().map(varName));
   const used = [...read('templates/pr-auto-approve.yml').matchAll(/vars\.(STRSPC_PR_AUTO_APPROVE_[A-Z_]+)/g)]

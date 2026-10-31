@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.19",
-    "timestamp": "2026-10-31T08:03:12Z",
-    "hash": "blake3:844e06c7d1983c70e3884b6956815a0357eac666ab19a8ffb1198c5dccc76fac"
+    "version": "0.1.20",
+    "timestamp": "2026-10-31T08:08:42Z",
+    "hash": "blake3:c472376133fbf168f50cd8fe4d6b82fd86912233f696c0a930a685f3d8a0674a"
   },
   "rules": [
     {
@@ -178,6 +178,15 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT approve a pull request whose author, commit author or committer is in a configured list of identities that require human review.",
+      "added_by": "@pleberre",
+      "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-020",
+      "revision": 0,
+      "state": "D",
+      "body": "A Copilot run that failed or was cancelled MUST NOT count as a Copilot review: it MUST NOT satisfy APPROVE-004 or count toward the rounds threshold.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

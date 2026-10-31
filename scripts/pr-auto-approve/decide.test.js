@@ -1502,6 +1502,67 @@ test('approve: an overview quoted in a code fence is not a review verdict', asyn
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
 });
 
+test('approve: a resolved-issues section does not block an overview review', async () => {
+  // Real case, #128's last round.
+  const resolved = [
+    '<details>',
+    '<summary><strong>2 resolved since last review</strong></summary>',
+    '',
+    '- [Document both exceptions](https://example.test/r2)',
+    '</details>',
+  ].join('\n');
+  const { result } = await decideOnBody(overviewBody({ extra: resolved }));
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+});
+
+test('skip: overview review with a collapsed section this code has never seen', async () => {
+  const section = [
+    '<details>',
+    '<summary><strong>2 deferred concerns</strong></summary>',
+    '',
+    'Something Copilot started reporting after this code was written.',
+    '</details>',
+  ].join('\n');
+  const { result, calls } = await decideOnBody(overviewBody({ extra: section }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /2 deferred concerns/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a summary tag with attributes still counts as a section', async () => {
+  const section = '<details>\n<summary class="x">1 previously missed issue</summary>\n</details>';
+  const { result, calls } = await decideOnBody(overviewBody({ extra: section }));
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /previously missed/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a fence cannot hide an open issue inside an overview review', async () => {
+  const fenced = ['```', OPEN_ISSUES, '```'].join('\n');
+  const { result, calls } = await decideOnBody(overviewBody({ extra: fenced }));
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: "No open issues" only counts before the collapsed sections', async () => {
+  const quoted = ['<details>', '**No open issues**', '</details>'].join('\n');
+  const { result, calls } = await decideOnBody(
+    overviewBody({ issues: 'Nothing else to report.', extra: quoted }),
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no open issues/i);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: a marker that is not a plain version keeps the same rules', async () => {
+  // An unknown verdict, so the marker alone has to identify the overview.
+  const body = overviewBody({ verdict: '🟣 Something new' })
+    .replace('ccr-overview-v2', 'ccr-overview-v3-beta');
+  const { result, calls } = await decideOnBody(body);
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
 // Same escape hatch as the suppressed block above.
 test('3-rounds rule still approves despite an open issue in an overview review', async () => {
   const core = makeCore();

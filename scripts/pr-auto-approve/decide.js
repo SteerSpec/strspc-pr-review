@@ -130,29 +130,43 @@ function countSuppressedComments(body) {
 // This gate proves a review clean rather than looking for known problems, so a
 // wording it has not seen is a skip, not silence. Same reasoning as the
 // suppressed-comment gate: a false skip is visible, and the rounds threshold
-// still releases the PR. The marker version is not pinned, and a known verdict
-// heading is recognised without the marker, so neither change reads as an
-// ordinary clean body.
-const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview-v\d+\s*-->/i;
-const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)\s*$/im;
+// still releases the PR. That is why:
+//   - collapsed sections are an allowlist: an unknown one blocks;
+//   - "No open issues" counts only before the first collapsed section, which is
+//     where the PR-derived text starts;
+//   - the checks below identification read the raw body, so a fence can only
+//     cause a false skip, never hide a finding;
+//   - the marker is matched on the raw body, anchored at its start, loosely
+//     enough to survive a new version, and a known verdict heading or an
+//     open-issue count identifies an overview without it.
+const OVERVIEW_MARKER_RE = /^\s*<!--\s*ccr-overview\b[^>]*-->/i;
+const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
 const APPROVAL_VERDICT_RE = /Approval recommended$/i;
-const OPEN_ISSUES_RE = /<summary>[^\n]*?(\d+)\s+open issues?\b/i;
+const OPEN_ISSUES_RE = /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*?(\d+)\s+open issues?\b/i;
 const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
-const PREVIOUSLY_MISSED_RE = /<summary>[^\n]*previously missed/i;
+const SECTION_RE = /<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;
+const SAFE_SECTION_RE = /^(?:What changed in this PR|\d+ resolved since last review)$/i;
 
 // Why an overview review body blocks approval; '' when it does not, which
 // includes every body that is not an overview. Completes "latest Copilot review …".
 function overviewBlocker(body) {
-  const text = String(body || '').replace(FENCED_CODE_RE, '');
-  if (!OVERVIEW_MARKER_RE.test(text) && !KNOWN_VERDICT_RE.test(text)) return '';
-  const heading = FIRST_HEADING_RE.exec(text);
+  const raw = String(body || '');
+  const unfenced = raw.replace(FENCED_CODE_RE, '');
+  const isOverview = OVERVIEW_MARKER_RE.test(raw)
+    || KNOWN_VERDICT_RE.test(unfenced)
+    || OPEN_ISSUES_RE.test(unfenced);
+  if (!isOverview) return '';
+  const heading = FIRST_HEADING_RE.exec(raw);
   const verdict = heading ? heading[1] : '';
   if (!APPROVAL_VERDICT_RE.test(verdict)) return `has verdict '${verdict || 'none'}'`;
-  const open = OPEN_ISSUES_RE.exec(text);
+  const open = OPEN_ISSUES_RE.exec(raw);
   if (open) return `lists ${open[1]} open issue(s)`;
-  if (!NO_OPEN_ISSUES_RE.test(text)) return 'does not state no open issues';
-  if (PREVIOUSLY_MISSED_RE.test(text)) return 'lists a previously missed issue';
+  if (!NO_OPEN_ISSUES_RE.test(raw.split(/<details\b/i)[0])) return 'does not state no open issues';
+  for (const [, inner] of raw.matchAll(SECTION_RE)) {
+    const label = inner.replace(/<[^>]*>/g, '').trim();
+    if (!SAFE_SECTION_RE.test(label)) return `has section '${label}'`;
+  }
   return '';
 }
 

@@ -1613,6 +1613,23 @@ test('skip: a previously missed issue outside a collapsed section', async () => 
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: the earlier "Previously missed (N)" wording in plain text', async () => {
+  const { result, calls } = await decideOnBody(
+    overviewBody({ extra: '**Previously missed (1)** — in code that hasn\'t changed since the last review.' }),
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /previously missed/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: prose about previously missed issues is not a finding', async () => {
+  // Real wording from the summary of a review of this gate's own PR.
+  const { result } = await decideOnBody(
+    overviewBody({ extra: 'Adds overview parsing for verdicts, open issues, and previously missed issues.' }),
+  );
+  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
+});
+
 test('skip: a collapsed section with no summary is an unknown section', async () => {
   const section = ['<details>', 'Content with no label.', '</details>'].join('\n');
   const { result, calls } = await decideOnBody(overviewBody({ extra: section }));

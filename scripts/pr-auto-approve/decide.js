@@ -142,7 +142,9 @@ const OVERVIEW_MARKER_RE = /<!--\s*ccr-overview\b[^>]*-->/i;
 const KNOWN_VERDICT_RE = /^#{1,6}\s.*(?:Approval recommended|Changes recommended|Needs a closer look)/im;
 const FIRST_HEADING_RE = /^#{1,6}\s+(.+?)\s*$/m;
 const APPROVAL_VERDICT_RE = /^[^\p{L}\p{N}]*Approval recommended$/iu;
-const PREVIOUSLY_MISSED_RE = /\b[1-9]\d*\s+previously missed/i;
+// Both wordings Copilot has used. Not the bare phrase: review summaries of PRs
+// about this gate use it in prose, which would skip them for nothing.
+const PREVIOUSLY_MISSED_RE = /\b[1-9]\d*\s+previously missed|previously missed\s*\((?!0\))/i;
 const OPEN_ISSUES_RE = /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*?(\d+)\s+open issues?\b/i;
 const NO_OPEN_ISSUES_RE = /^\s*\*\*No open issues\*\*/im;
 const SECTION_RE = /<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;

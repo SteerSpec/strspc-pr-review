@@ -203,8 +203,9 @@ To retry automatically when Copilot's review errors ("unable to review this pull
 
 A failing check stops the action from approving, but it doesn't remove an approval already given. A
 check that fails later on the same commit, such as a PR title check after a retitle or a re-run,
-leaves the PR approved and mergeable. Make any check that must block a merge a required status check
-in the branch protection or ruleset.
+leaves the PR approved and mergeable. The one exception is a retitle that raises the PR's rounds
+threshold, which withdraws a bot approval stamped with a lower one. Make any check that must block a
+merge a required status check in the branch protection or ruleset.
 
 ## 4. Verify
 

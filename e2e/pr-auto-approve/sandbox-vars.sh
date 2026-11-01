@@ -32,7 +32,8 @@ REPO_NAME="${REPO_NAME:-strspc-pr-review-sandbox}"
 REPO="$ORG/$REPO_NAME"
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
 # No default: a pinned default went stale here and tested an old build unnoticed.
-ACTION_SHA="${ACTION_SHA:?set ACTION_SHA to the pushed commit to test}"
+# Only `up` needs it, so `status` and `down` still work without one.
+ACTION_SHA="${ACTION_SHA:-}"
 BOT_LOGIN="${BOT_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${REVIEWER_LOGIN:-pleberre}"
 STATE_DIR="${STATE_DIR:-$HOME/.cache/strspc-e2e/$ORG-$REPO_NAME}"
@@ -130,6 +131,7 @@ render_workflow() { # -> stdout
 }
 
 up() {
+  [[ -n "$ACTION_SHA" ]] || die "set ACTION_SHA to the pushed commit to test"
   preflight
   backup
 

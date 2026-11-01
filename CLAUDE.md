@@ -96,7 +96,9 @@ npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + iss
 ```
 
 `npm run lint` shells out to `actionlint`, `shellcheck` and `python3` — install them separately.
-End-to-end tests run against a sandbox repo; see `e2e/pr-auto-approve/README.md`.
+End-to-end tests run against the `testbed-multi-org` sandbox; see `e2e/pr-auto-approve/README.md`.
+A behaviour change or a new input ships with its scenario in `e2e/pr-auto-approve/scenarios.json`, and a
+new approval path passes there before any production repo enables it.
 
 ## Architecture Overview
 
@@ -117,7 +119,7 @@ never checks out PR code.
   `SteerSpec/.claude` marketplace at this repo's release tag.
 - `.github/workflows/sync-marketplace-pin.yml` — after a release, opens the PR in `SteerSpec/.claude`
   that moves that pin. It selects the marketplace entry by `source.url`, not by name.
-- `e2e/pr-auto-approve/` — synthetic end-to-end harness (`run.sh`, `lib.sh`) against a sandbox repo.
+- `e2e/pr-auto-approve/` — synthetic end-to-end suite (`scenarios.json`, `run.sh`, `lib.sh`, `sandbox.sh`).
 - `rules/` — the `dev.steerspec.prreview` realm. `APPROVE` states what the approval logic must
   guarantee, so a behaviour change in `decide.js` goes with a rule change. Edit it only through the
   `strspc` CLI, and use a `chore(rules):` title: `feat:` or `fix:` would release the action.

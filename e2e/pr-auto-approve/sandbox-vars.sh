@@ -31,7 +31,8 @@ ORG="${ORG:-testbed-multi-org}"
 REPO_NAME="${REPO_NAME:-strspc-pr-review-sandbox}"
 REPO="$ORG/$REPO_NAME"
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
-ACTION_SHA="${ACTION_SHA:-1ac1c4a810521418e1625b827b189efabd4cce1d}" # develop after #111
+# No default: a pinned default went stale here and tested an old build unnoticed.
+ACTION_SHA="${ACTION_SHA:?set ACTION_SHA to the pushed commit to test}"
 BOT_LOGIN="${BOT_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${REVIEWER_LOGIN:-pleberre}"
 STATE_DIR="${STATE_DIR:-$HOME/.cache/strspc-e2e/$ORG-$REPO_NAME}"

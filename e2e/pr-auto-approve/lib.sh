@@ -243,16 +243,15 @@ decision_lines() {
 # Any matching line counts: "check still running" comes first, and a run after
 # an approval reports that the bot already approved.
 wait_decision() {
-  local pr_num="$1" decision="$2" reason_re="$3" since="$4" deadline lines=""
+  local pr_num="$1" decision="$2" reason_re="$3" since="$4" deadline lines="" seen reason
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
     lines=$(decision_lines "$pr_num" "$since")
-    if printf '%s\n' "$lines" | awk -v d="$decision" -v re="$reason_re" '
-      { line = $0; sub(/^[a-z]+ /, "", line) }
-      $1 == d && line ~ re { found = 1 }
-      END { exit !found }'; then
-      return 0
-    fi
+    # Bash's own match: awk -v rewrites the regex's backslashes, and BSD awk then
+    # rejects `\(`. Keeps the same ERE scenarios.json is written in.
+    while read -r seen reason; do
+      [[ "$seen" == "$decision" && "$reason" =~ $reason_re ]] && return 0
+    done <<< "$lines"
     sleep "$POLL_INTERVAL"
   done
   warn "PR #$pr_num: no '$decision' decision matching /$reason_re/. Decisions seen:"
@@ -279,6 +278,7 @@ scenario_field() {
 # and the review proves GitHub holds what the action claims it did.
 expect_outcome() {
   local pr_num="$1" since="${2:-$SCENARIO_SINCE}" decision reason_re
+  # shellcheck disable=SC2153  # run_scenario in run.sh sets SCENARIO
   decision=$(scenario_field "$SCENARIO" decision)
   reason_re=$(scenario_field "$SCENARIO" reason)
   case "$decision" in

@@ -62,8 +62,6 @@ setup() {
   # bot would make every promotion scenario skip.
   gh api -X PUT "repos/$REPO/collaborators/$BOT_LOGIN" -f permission=push >/dev/null
   log "$BOT_LOGIN has write"
-  has_branch develop || gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/develop \
-    -f sha="$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)" >/dev/null
   ensure_ruleset pr-mandatory-main refs/heads/main 1 '["merge"]'
   ensure_ruleset pr-mandatory-develop refs/heads/develop 1 '["squash"]'
 }
@@ -170,16 +168,25 @@ reset_branches() {
   local sha branch
   sha=$(gh api "repos/$REPO/git/ref/tags/$BASELINE" -q .object.sha)
   for branch in main develop; do
-    gh api -X PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$sha" -F force=true >/dev/null
+    if has_branch "$branch"; then
+      gh api -X PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$sha" -F force=true >/dev/null
+    else
+      gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$sha" >/dev/null
+    fi
   done
+}
+
+ref_or_none() { # a 404's error body goes to stdout, so print only on success
+  local out
+  out=$(gh api "repos/$REPO/git/ref/$1" -q .object.sha 2>/dev/null) && echo "$out" || echo none
 }
 
 status() {
   log "repo: $REPO"
   raw "$REPO" "$WORKFLOW" main | grep -E '^[[:space:]]+- uses: ' | sed 's/^ */    /'
-  log "baseline: $(gh api "repos/$REPO/git/ref/tags/$BASELINE" -q .object.sha 2>/dev/null || echo none)"
-  log "main:     $(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)"
-  log "develop:  $(gh api "repos/$REPO/git/ref/heads/develop" -q .object.sha 2>/dev/null || echo none)"
+  log "baseline: $(ref_or_none "tags/$BASELINE")"
+  log "main:     $(ref_or_none heads/main)"
+  log "develop:  $(ref_or_none heads/develop)"
   gh variable list -R "$REPO"
 }
 

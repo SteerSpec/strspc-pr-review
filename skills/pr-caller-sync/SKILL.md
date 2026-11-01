@@ -24,6 +24,12 @@ cat templates/pr-auto-approve.yml   # the current recommended shape
 | New concurrency fallback | update the group expression |
 | New input | wire it to `vars.STRSPC_PR_AUTO_APPROVE_<INPUT>` like the others in the template |
 
+Callers carry a `(vX.Y.Z)` template version in their header comment, which the template doesn't have.
+Move it to the new release too.
+
+A new approval path must pass in the `testbed-multi-org` sandbox (`e2e/pr-auto-approve/README.md`)
+before any production repo turns it on. Sync callers once it has.
+
 ## 2. Find the callers
 
 ```bash

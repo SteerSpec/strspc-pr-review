@@ -82,6 +82,9 @@ render_caller() {
   raw "$ACTION_REPO" templates/pr-auto-approve.yml "$1" | awk \
     -v sha="$1" -v repo="$ACTION_REPO" -v reviewer="$REVIEWER_LOGIN" -v sandbox="$REPO" '
     $0 == "      - uses: " repo "@v1" { print "      - uses: " repo "@" sha; used = 1; next }
+    # The commit under test runs with this token, and it can be any PR'"'"'s code. So it
+    # must be the sandbox-only repo secret, never the org'"'"'s BOT_GITHUB_TOKEN.
+    /^          bot-github-token: / { sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX"); scoped = 1 }
     { print }
     /^          bot-github-token: / {
       print ""
@@ -91,7 +94,7 @@ render_caller() {
       print "          sandbox-repos: " sandbox
       added = 1
     }
-    END { if (!used || !added) exit 1 }'
+    END { if (!used || !added || !scoped) exit 1 }'
 }
 
 ci_workflow() {

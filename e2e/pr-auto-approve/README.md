@@ -47,7 +47,7 @@ fails if an `action.yml` input has neither a scenario nor an entry in `exemption
 
 ## Setup
 
-The sandbox is `testbed-multi-org/strspc-pr-review-sandbox`. Its org secret `BOT_GITHUB_TOKEN` is what
+The sandbox is `testbed-multi-org/strspc-pr-review-sandbox`. Its repo secret `BOT_TOKEN_SANDBOX` is what
 the caller approves with.
 
 ```bash
@@ -91,14 +91,18 @@ e2e/pr-auto-approve/run.sh copilot-clean   # just these
 
 `.github/workflows/e2e.yml` runs the whole suite against the commit under test: on PRs touching
 `action.yml`, `scripts/pr-auto-approve/`, `templates/` or `e2e/`, on every PR into `main`, and on dispatch.
-Runs are serial, because they share the sandbox. A third run displaces the one waiting, so re-run that one.
+Runs share the sandbox, so each waits for earlier ones, oldest first. It doesn't use a `concurrency:` group,
+which would cancel a displaced run, and `decide.js` counts a cancelled check as passed.
 
-It needs two repo secrets on `SteerSpec/strspc-pr-review`, both fine-grained tokens limited to the sandbox:
+Both secrets are fine-grained tokens limited to the sandbox:
 
-| Secret | Owner | Permissions |
-|---|---|---|
-| `E2E_ADMIN_TOKEN` | The enterprise owner | Contents, Pull requests, Variables and Workflows read and write; Actions read |
-| `BOT_TOKEN_SANDBOX` | The approver | Contents and Pull requests read and write |
+| Secret | Stored on | Owner | Permissions |
+|---|---|---|---|
+| `E2E_ADMIN_TOKEN` | `SteerSpec/strspc-pr-review` | The enterprise owner | Contents, Pull requests, Variables and Workflows read and write; Actions read |
+| `BOT_TOKEN_SANDBOX` | `SteerSpec/strspc-pr-review` and the sandbox | The approver | Contents and Pull requests read and write |
+
+**The sandbox's caller approves with `BOT_TOKEN_SANDBOX`, never an org secret.** It runs the commit under
+test, so a PR's action code can read that token. If it reached production, a PR could approve itself.
 
 ## Environment variables
 

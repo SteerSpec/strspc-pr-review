@@ -6,9 +6,10 @@ name: E2E
 # its own logic to approve itself.
 #
 # pull_request, not pull_request_target: this has to run the PR's own harness and
-# action. So a same-repo PR can read the two secrets by editing this file, which
-# is why both tokens reach only the sandbox and neither is the production
-# BOT_TOKEN. Fork PRs get no secrets, and the changes job turns them away.
+# action. So a same-repo PR can read the two secrets by editing this file, and its
+# action code runs in the sandbox with the sandbox's approval token. That is why
+# all three tokens reach only the sandbox and none is the production BOT_TOKEN.
+# Fork PRs get no secrets, and the changes job turns them away.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -49,7 +50,10 @@ jobs:
             run=false
           elif [ "$BASE" = main ]; then
             run=true
-          elif gh pr diff "$NUMBER" --repo "$REPO" --name-only |
+          # Runs when the list can't be read: a skipped check would pass the gate.
+          elif ! files=$(gh pr diff "$NUMBER" --repo "$REPO" --name-only); then
+            run=true
+          elif printf '%s\n' "$files" |
             grep -qE '^(action\.yml$|scripts/pr-auto-approve/|templates/|e2e/|\.github/workflows/e2e\.yml$)'; then
             run=true
           fi
@@ -60,12 +64,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # One sandbox serves every run. GitHub keeps one pending run per group, so a
-    # third run displaces the second, which then needs a re-run.
-    concurrency:
-      group: e2e-sandbox
-      cancel-in-progress: false
+    # Includes the wait for earlier runs.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
     env:
       # E2E_ADMIN_TOKEN belongs to the enterprise owner, which sandbox.sh needs for
       # its commits to main. It is also the reviewer identity.
@@ -75,6 +78,20 @@ jobs:
       E2E_REVIEWER_LOGIN: pleberre
       E2E_APPROVER_LOGIN: cnslr-bt
     steps:
+      # One sandbox serves every run, so they take turns, oldest first. Not a
+      # concurrency: group, which cancels a displaced run: decide.js counts a
+      # cancelled check as passed, so that run would look like a pass.
+      - name: Wait for earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while true; do
+            earlier=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e.yml \
+              --status in_progress --limit 50 --json databaseId \
+              --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID)] | length") || earlier=unknown
+            [ "$earlier" = 0 ] && break
+            sleep 60
+          done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.changes.outputs.sha }}

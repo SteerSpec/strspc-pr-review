@@ -8,8 +8,8 @@
   "dependencies": [
     {
       "realm_id": "dev.steerspec.core",
-      "version": "1.14.0",
-      "source": "github://SteerSpec/strspc-rules@v1.14.0/rules/core"
+      "version": "1.15.0",
+      "source": "github://SteerSpec/strspc-rules@v1.15.0/rules/core"
     }
   ],
   "rule_identifier_format": null

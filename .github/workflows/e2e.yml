@@ -5,64 +5,36 @@ name: E2E
 # runs action.yml from source: auto-approve.yml pins @v1 so that a PR cannot use
 # its own logic to approve itself.
 #
+# Only on PRs into main and on demand: the suite takes too long for PRs into
+# develop. On main it is the gate on a release. To check a branch before that,
+# dispatch this workflow on it, with scenarios to run only some.
+#
 # pull_request, not pull_request_target: this has to run the PR's own harness and
 # action. So a same-repo PR can read the two secrets by editing this file, and its
 # action code runs in the sandbox with the sandbox's approval token. That is why
 # all three tokens reach only the sandbox and none is the production BOT_TOKEN.
-# Fork PRs get no secrets, and the changes job turns them away.
+# Fork PRs get no secrets, so the job's if: skips them.
 on:
   pull_request:
+    branches: [main]
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      scenarios:
+        description: Scenario names, separated by spaces. Blank runs them all.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
-  # A required check must always report, so this decides rather than a paths
-  # filter, which would leave the check pending. A job skipped by if: counts as
-  # passed. Promotions and release PRs always run: this is the gate on a release.
-  changes:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      run: ${{ steps.decide.outputs.run }}
-      sha: ${{ steps.decide.outputs.sha }}
-    steps:
-      - id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.ref }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          run=false
-          sha="$HEAD_SHA"
-          if [ "$EVENT" = workflow_dispatch ]; then
-            run=true
-            sha="$GITHUB_SHA"
-          elif [ "$HEAD_REPO" != "$REPO" ]; then
-            run=false
-          elif [ "$BASE" = main ]; then
-            run=true
-          # Runs when the list can't be read: a skipped check would pass the gate.
-          elif ! files=$(gh pr diff "$NUMBER" --repo "$REPO" --name-only); then
-            run=true
-          elif printf '%s\n' "$files" |
-            grep -qE '^(action\.yml$|scripts/pr-auto-approve/|templates/|e2e/|\.github/workflows/e2e\.yml$)'; then
-            run=true
-          fi
-          echo "run=$run" >>"$GITHUB_OUTPUT"
-          echo "sha=$sha" >>"$GITHUB_OUTPUT"
-
   e2e:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
+    # A partial run reports under its own name, so it can't stand in for the full
+    # suite: as `e2e` on the same commit, it would replace a failed check.
+    name: ${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Longer than the steps' own timeouts added up, on purpose. A step timeout fails
     # the check. A job timeout cancels it, and decide.js counts cancelled as passed.
@@ -80,6 +52,7 @@ jobs:
       E2E_APPROVER_LOGIN: cnslr-bt
       # A sandbox run can sit queued for minutes, and the default 180s isn't enough.
       E2E_TIMEOUT: 420
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       # One sandbox serves every run, so they take turns, oldest first. Not a
       # concurrency: group, which cancels a displaced run: decide.js counts a
@@ -99,14 +72,16 @@ jobs:
           done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.changes.outputs.sha }}
+          ref: ${{ env.SHA }}
       - name: Put this commit under test
         timeout-minutes: 5
         run: e2e/pr-auto-approve/sandbox.sh sync "$SHA"
-        env:
-          SHA: ${{ needs.changes.outputs.sha }}
       - name: Run the suite
         timeout-minutes: 100
-        run: e2e/pr-auto-approve/run.sh
+        # run.sh rejects any name that isn't a scenario.
+        run: |
+          read -r -a selected <<<"$SCENARIOS"
+          e2e/pr-auto-approve/run.sh "${selected[@]}"
         env:
-          E2E_EXPECT_SHA: ${{ needs.changes.outputs.sha }}
+          E2E_EXPECT_SHA: ${{ env.SHA }}
+          SCENARIOS: ${{ inputs.scenarios }}

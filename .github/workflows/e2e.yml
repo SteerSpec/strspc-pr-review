@@ -1,0 +1,86 @@
+name: E2E
+
+# Runs the synthetic suite in e2e/pr-auto-approve against the sandbox in
+# testbed-multi-org, with the action pinned to the commit under test. Nothing else
+# runs action.yml from source: auto-approve.yml pins @v1 so that a PR cannot use
+# its own logic to approve itself.
+#
+# pull_request, not pull_request_target: this has to run the PR's own harness and
+# action. So a same-repo PR can read the two secrets by editing this file, which
+# is why both tokens reach only the sandbox and neither is the production
+# BOT_TOKEN. Fork PRs get no secrets, and the changes job turns them away.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A required check must always report, so this decides rather than a paths
+  # filter, which would leave the check pending. A job skipped by if: counts as
+  # passed. Promotions and release PRs always run: this is the gate on a release.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          run=false
+          sha="$HEAD_SHA"
+          if [ "$EVENT" = workflow_dispatch ]; then
+            run=true
+            sha="$GITHUB_SHA"
+          elif [ "$HEAD_REPO" != "$REPO" ]; then
+            run=false
+          elif [ "$BASE" = main ]; then
+            run=true
+          elif gh pr diff "$NUMBER" --repo "$REPO" --name-only |
+            grep -qE '^(action\.yml$|scripts/pr-auto-approve/|templates/|e2e/|\.github/workflows/e2e\.yml$)'; then
+            run=true
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # One sandbox serves every run. GitHub keeps one pending run per group, so a
+    # third run displaces the second, which then needs a re-run.
+    concurrency:
+      group: e2e-sandbox
+      cancel-in-progress: false
+    env:
+      # E2E_ADMIN_TOKEN belongs to the enterprise owner, which sandbox.sh needs for
+      # its commits to main. It is also the reviewer identity.
+      GH_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+      E2E_BOT_TOKEN: ${{ secrets.BOT_TOKEN_SANDBOX }}
+      E2E_REPO: testbed-multi-org/strspc-pr-review-sandbox
+      E2E_REVIEWER_LOGIN: pleberre
+      E2E_APPROVER_LOGIN: cnslr-bt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Put this commit under test
+        run: e2e/pr-auto-approve/sandbox.sh sync "$SHA"
+        env:
+          SHA: ${{ needs.changes.outputs.sha }}
+      - name: Run the suite
+        run: e2e/pr-auto-approve/run.sh

@@ -84,7 +84,7 @@ on:
   # the concurrency group. Delete this trigger only if all your gating checks
   # come from third-party apps rather than Actions.
   workflow_run:
-    workflows: ['Test PR Auto-Approve Decision Logic']
+    workflows: ['Test PR Auto-Approve Decision Logic', 'E2E']
     types: [completed]
 
 jobs:

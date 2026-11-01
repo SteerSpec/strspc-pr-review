@@ -87,6 +87,19 @@ e2e/pr-auto-approve/run.sh                 # every scenario
 e2e/pr-auto-approve/run.sh copilot-clean   # just these
 ```
 
+## CI
+
+`.github/workflows/e2e.yml` runs the whole suite against the commit under test: on PRs touching
+`action.yml`, `scripts/pr-auto-approve/`, `templates/` or `e2e/`, on every PR into `main`, and on dispatch.
+Runs are serial, because they share the sandbox. A third run displaces the one waiting, so re-run that one.
+
+It needs two repo secrets on `SteerSpec/strspc-pr-review`, both fine-grained tokens limited to the sandbox:
+
+| Secret | Owner | Permissions |
+|---|---|---|
+| `E2E_ADMIN_TOKEN` | The enterprise owner | Contents, Pull requests, Variables and Workflows read and write; Actions read |
+| `BOT_TOKEN_SANDBOX` | The approver | Contents and Pull requests read and write |
+
 ## Environment variables
 
 | Variable | Default | Description |

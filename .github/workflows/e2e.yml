@@ -89,8 +89,9 @@ jobs:
         run: |
           while true; do
             earlier=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e.yml \
-              --status in_progress --limit 50 --json databaseId \
-              --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID)] | length") || earlier=unknown
+              --limit 50 --json databaseId,status \
+              --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID and .status != \"completed\")] | length") \
+              || earlier=unknown
             [ "$earlier" = 0 ] && break
             sleep 60
           done

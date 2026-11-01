@@ -130,8 +130,20 @@ put() { # path, content
   log "updated $1"
 }
 
+# A profile unsets a variable by deleting the repo's copy, which would expose an
+# org variable of the same name and change what the scenario tests. sandbox-vars.sh
+# creates such variables on purpose, so this also catches a run it left behind.
+refuse_org_variables() {
+  local leaked
+  leaked=$(gh api "repos/$REPO/actions/organization-variables" --paginate \
+    --jq '.variables[].name | select(startswith("STRSPC_PR_AUTO_APPROVE_"))') \
+    || fail "cannot list the org variables visible to $REPO"
+  [[ -z "$leaked" ]] || fail "org variables would leak into the profiles: $leaked (run sandbox-vars.sh down)"
+}
+
 sync() {
   local sha="${1:?usage: sandbox.sh sync <sha>}" caller
+  refuse_org_variables
   reset_prs
   caller=$(render_caller "$sha") || fail "template at $sha lacks the expected uses:/bot-github-token: lines"
   put "$WORKFLOW" "$caller"

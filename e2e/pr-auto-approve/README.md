@@ -65,7 +65,12 @@ e2e/pr-auto-approve/sandbox.sh reset    # close e2e PRs, return main and develop
 under `pull_request_target`. It then moves the `e2e-baseline` tag.
 
 The rulesets match production's, with one difference: the enterprise owner may bypass them, because
-`reset` force-moves the branches. The bot has no bypass, so a merge it makes proves the rules were met.
+`sync` commits to `main` and `sync` and `reset` force-move the branches. So both must run as the
+enterprise owner. The bot has no bypass, so a merge it makes proves the rules were met.
+
+`sync` refuses to run if an `STRSPC_PR_AUTO_APPROVE_*` org variable is visible to the sandbox. A profile
+unsets a value by deleting the repo variable, so an org value would show through. If one is left from
+`sandbox-vars.sh`, run `sandbox-vars.sh down` first.
 
 ## Run
 

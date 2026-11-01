@@ -31,6 +31,9 @@ permissions:
 
 jobs:
   e2e:
+    # A partial run reports under its own name, so it can't stand in for the full
+    # suite: as `e2e` on the same commit, it would replace a failed check.
+    name: ${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Longer than the steps' own timeouts added up, on purpose. A step timeout fails

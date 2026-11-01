@@ -12,13 +12,33 @@
       "BASE_BRANCH": "main",
       "ROUNDS_BY_TYPE": "docs:0,default:3",
       "REQUEST_COPILOT_REVIEW": "true"
+    },
+    "clean-verdict": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "default:3",
+      "COPILOT_CLEAN_ON": "verdict"
+    },
+    "clean-no-open-issues": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "default:3",
+      "COPILOT_CLEAN_ON": "no-open-issues"
+    },
+    "routes": {
+      "BASE_BRANCH": "develop,main",
+      "ROUNDS_BY_TYPE": "chore:0,default:3",
+      "PROMOTION_BRANCHES": "develop:main",
+      "RELEASE_BRANCHES": "develop:main",
+      "RELEASE_AUTHOR": "pleberre"
+    },
+    "routes-other-author": {
+      "BASE_BRANCH": "develop,main",
+      "ROUNDS_BY_TYPE": "chore:0,default:3",
+      "PROMOTION_BRANCHES": "develop:main",
+      "RELEASE_BRANCHES": "develop:main",
+      "RELEASE_AUTHOR": "someone-else[bot]"
     }
   },
   "exemptions": {
-    "copilot-clean-on": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
-    "promotion-branches": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
-    "release-branches": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
-    "release-author": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
     "copilot-error-retries": "A synthetic reviewer cannot produce Copilot's errored review, so this waits for the real tier.",
     "wait-for-copilot-seconds": "Only meaningful against a real Copilot check, so this waits for the real tier.",
     "allow-no-checks": "The sandbox always has CI; unit tests cover the no-checks branch.",
@@ -31,35 +51,49 @@
       "profile": "base",
       "decision": "approved",
       "reason": "^copilot-clean \\(",
-      "inputs": ["bot-login", "bot-github-token", "github-token", "base-branch", "test-copilot-logins"]
+      "inputs": [
+        "bot-login",
+        "bot-github-token",
+        "github-token",
+        "base-branch",
+        "test-copilot-logins"
+      ]
     },
     {
       "name": "copilot-with-comments",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review has 1 comments",
-      "inputs": ["test-copilot-logins"]
+      "inputs": [
+        "test-copilot-logins"
+      ]
     },
     {
       "name": "suppressed-comments",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review has 1 suppressed comment",
-      "inputs": ["test-copilot-logins"]
+      "inputs": [
+        "test-copilot-logins"
+      ]
     },
     {
       "name": "three-rounds",
       "profile": "base",
       "decision": "approved",
       "reason": "^3-rounds \\(",
-      "inputs": ["rounds-threshold"]
+      "inputs": [
+        "rounds-threshold"
+      ]
     },
     {
       "name": "changes-requested",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review requested changes",
-      "inputs": ["sandbox-repos"]
+      "inputs": [
+        "sandbox-repos"
+      ]
     },
     {
       "name": "draft",
@@ -72,35 +106,217 @@
       "profile": "types",
       "decision": "approved",
       "reason": "^copilot-optional \\(type chore",
-      "inputs": ["rounds-by-type", "copilot-optional-paths"]
+      "inputs": [
+        "rounds-by-type",
+        "copilot-optional-paths"
+      ]
     },
     {
       "name": "type-zero-code",
       "profile": "types",
       "decision": "skip",
       "reason": "^no Copilot review yet; .*touches files outside copilot-optional-paths",
-      "inputs": ["rounds-by-type", "copilot-optional-paths"]
+      "inputs": [
+        "rounds-by-type",
+        "copilot-optional-paths"
+      ]
     },
     {
       "name": "retitle-approves",
       "profile": "types",
       "decision": "approved",
       "reason": "^copilot-optional \\(type chore",
-      "inputs": ["rounds-by-type"]
+      "inputs": [
+        "rounds-by-type"
+      ]
     },
     {
       "name": "retitle-withdraws",
       "profile": "types",
       "decision": "skip",
       "reason": "^no Copilot review yet",
-      "inputs": ["rounds-by-type"]
+      "inputs": [
+        "rounds-by-type"
+      ]
     },
     {
       "name": "request-copilot",
       "profile": "request-copilot",
       "decision": "approved",
       "reason": "^copilot-optional \\(type docs",
-      "inputs": ["request-copilot-review"]
+      "inputs": [
+        "request-copilot-review"
+      ]
+    },
+    {
+      "name": "clean-verdict-closer-look",
+      "profile": "clean-verdict",
+      "decision": "skip",
+      "reason": "^latest Copilot review has verdict '.*Needs a closer look'",
+      "inputs": [
+        "copilot-clean-on"
+      ]
+    },
+    {
+      "name": "clean-open-closer-look",
+      "profile": "clean-no-open-issues",
+      "decision": "approved",
+      "reason": "^copilot-clean \\(review [0-9]+, verdict 'Needs a closer look'",
+      "inputs": [
+        "copilot-clean-on"
+      ]
+    },
+    {
+      "name": "clean-open-with-issue",
+      "profile": "clean-no-open-issues",
+      "decision": "skip",
+      "reason": "^latest Copilot review lists 1 open issue",
+      "inputs": [
+        "copilot-clean-on"
+      ]
+    },
+    {
+      "name": "clean-open-changes-recommended",
+      "profile": "clean-no-open-issues",
+      "decision": "skip",
+      "reason": "^latest Copilot review has verdict '.*Changes recommended'",
+      "inputs": [
+        "copilot-clean-on"
+      ]
+    },
+    {
+      "name": "promotion-clean",
+      "profile": "routes",
+      "decision": "approved",
+      "reason": "^promotion \\(develop to main, 1 commit\\(s\\) from 1 approved PR\\(s\\)\\)",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "promotion-unapproved",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "promotion-late-approval",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "promotion-title-feat",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^promotion title type 'feat' would be counted twice",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "promotion-other-head",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^no Copilot review yet",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "promotion-withdraw",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^promotion title type 'feat' would be counted twice",
+      "inputs": [
+        "promotion-branches"
+      ]
+    },
+    {
+      "name": "release-clean",
+      "profile": "routes",
+      "decision": "approved",
+      "reason": "^release-pr \\(release-please--branches--main, nothing unpromoted on develop\\)",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-unpromoted",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^develop has 1 unpromoted commit\\(s\\): [0-9a-f]{8} fix: ",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-hidden-chore",
+      "profile": "routes",
+      "decision": "approved",
+      "reason": "^release-pr \\(release-please--branches--main, nothing unpromoted on develop\\)",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-wrong-author",
+      "profile": "routes-other-author",
+      "decision": "skip",
+      "reason": "^release PR author [^ ]+ is not release-author",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-stranger-commit",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^commit [0-9a-f]{8} is not by release-author",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-foreign-file",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^release PR changes src/e2e-marker\\.txt, which release-please does not own",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-no-config",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^cannot read release-please-config\\.json at main \\(404\\)",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
+    },
+    {
+      "name": "release-other-head",
+      "profile": "routes",
+      "decision": "skip",
+      "reason": "^no Copilot review yet",
+      "inputs": [
+        "release-branches",
+        "release-author"
+      ]
     }
   ]
 }

@@ -4,8 +4,8 @@
 # Keeps the synthetic-tier sandbox in a known shape, as code.
 #
 #   sandbox.sh setup        one-time, as a repo admin: bot access and rulesets
-#   sandbox.sh sync <sha>   put the action at <sha> under test and move the baseline
-#   sandbox.sh reset        close e2e PRs and return main and develop to the baseline
+#   sandbox.sh sync <sha>   put the action at <sha> under test
+#   sandbox.sh reset        close PRs, restore the fixture files, and put develop on main
 #   sandbox.sh status       show what is under test
 #
 # Everything is idempotent, so CI can run `sync` before each suite and a failed
@@ -23,7 +23,6 @@ REPO="${E2E_REPO:-testbed-multi-org/strspc-pr-review-sandbox}"
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
 BOT_LOGIN="${E2E_APPROVER_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${E2E_REVIEWER_LOGIN:-pleberre}"
-BASELINE=e2e-baseline
 WORKFLOW=.github/workflows/pr-auto-approve.yml
 CI=.github/workflows/ci.yml
 
@@ -31,8 +30,8 @@ CI=.github/workflows/ci.yml
 
 # Production's rulesets, so a merge here means what it means there. Prod's
 # merge-method rulesets have no bypass; these allow the enterprise owner, because
-# `reset` force-moves main and develop. Scenarios merge as the bot, which has no
-# bypass, so a merge they make proves the rules were met.
+# `sync` and `reset` commit to main and force-move develop. Scenarios merge as the
+# bot, which has no bypass, so a merge they make proves the rules were met.
 ruleset() { # name, ref, approvals, merge method(s) as a JSON array
   jq -n --arg name "$1" --arg ref "$2" --argjson count "$3" --argjson methods "$4" '{
     name: $name, target: "branch", enforcement: "active",
@@ -148,48 +147,40 @@ sync() {
   caller=$(render_caller "$sha") || fail "template at $sha lacks the expected uses:/bot-github-token: lines"
   put "$WORKFLOW" "$caller"
   put "$CI" "$(ci_workflow)"
-  put release-please-config.json "$(release_config)"
-  put .release-please-manifest.json '{".": "0.1.0"}'
-  put_baseline
-  reset_branches
+  restore
   gh variable set STRSPC_PR_AUTO_APPROVE_BOT_LOGIN -R "$REPO" --body "$BOT_LOGIN"
   ok "sandbox at $sha"
 }
 
-put_baseline() {
-  local sha
-  sha=$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)
-  if gh api "repos/$REPO/git/ref/tags/$BASELINE" >/dev/null 2>&1; then
-    gh api -X PATCH "repos/$REPO/git/refs/tags/$BASELINE" -f sha="$sha" -F force=true >/dev/null
-  else
-    gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/$BASELINE" -f sha="$sha" >/dev/null
-  fi
-}
-
 # --- reset ------------------------------------------------------------------
 
+# Closes without deleting branches, because a promotion's head is develop.
 reset_prs() {
-  local n
+  local n prefix
   while read -r n; do
-    [[ -n "$n" ]] && close_pr "$n"
-  done < <(gh pr list -R "$REPO" --state open --limit 100 --json number,headRefName \
-    --jq '.[] | select(.headRefName | startswith("e2e/")) | .number')
-  while read -r n; do
-    [[ -n "$n" ]] && gh api -X DELETE "repos/$REPO/git/refs/heads/$n" >/dev/null
-  done < <(gh api --paginate "repos/$REPO/git/matching-refs/heads/e2e/" \
-    --jq '.[].ref | ltrimstr("refs/heads/")')
+    [[ -n "$n" ]] && gh pr close "$n" -R "$REPO" >/dev/null
+  done < <(gh pr list -R "$REPO" --state open --limit 100 --json number --jq '.[].number')
+  for prefix in e2e/ release-please--; do
+    while read -r n; do
+      [[ -n "$n" ]] && gh api -X DELETE "repos/$REPO/git/refs/heads/$n" >/dev/null
+    done < <(gh api --paginate "repos/$REPO/git/matching-refs/heads/$prefix" \
+      --jq '.[].ref | ltrimstr("refs/heads/")')
+  done
 }
 
-reset_branches() {
-  local sha branch
-  sha=$(gh api "repos/$REPO/git/ref/tags/$BASELINE" -q .object.sha)
-  for branch in main develop; do
-    if has_branch "$branch"; then
-      gh api -X PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$sha" -F force=true >/dev/null
-    else
-      gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$sha" >/dev/null
-    fi
-  done
+# main only moves forward: the enterprise Compliance ruleset forbids a force-push
+# to the default branch, even for its owner. So a scenario's mark on main is put
+# right with a new commit, and develop, which can be force-moved, follows it.
+restore() {
+  local sha
+  put release-please-config.json "$(release_config)"
+  put .release-please-manifest.json '{".": "0.1.0"}'
+  sha=$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)
+  if has_branch develop; then
+    gh api -X PATCH "repos/$REPO/git/refs/heads/develop" -f sha="$sha" -F force=true >/dev/null
+  else
+    gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/develop -f sha="$sha" >/dev/null
+  fi
 }
 
 ref_or_none() { # a 404's error body goes to stdout, so print only on success
@@ -200,7 +191,6 @@ ref_or_none() { # a 404's error body goes to stdout, so print only on success
 status() {
   log "repo: $REPO"
   raw "$REPO" "$WORKFLOW" main | grep -E '^[[:space:]]+- uses: ' | sed 's/^ */    /'
-  log "baseline: $(ref_or_none "tags/$BASELINE")"
   log "main:     $(ref_or_none heads/main)"
   log "develop:  $(ref_or_none heads/develop)"
   gh variable list -R "$REPO"
@@ -209,7 +199,7 @@ status() {
 case "${1:-}" in
   setup) setup ;;
   sync) sync "${2:-}" ;;
-  reset) reset_prs; reset_branches ;;
+  reset) reset_prs; restore ;;
   status) status ;;
   *) fail "usage: $0 setup|sync <sha>|reset|status" ;;
 esac

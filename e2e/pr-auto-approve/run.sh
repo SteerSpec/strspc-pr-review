@@ -411,7 +411,7 @@ run_scenario() (
   trap cleanup EXIT
   log "scenario: $SCENARIO"
   if [[ "$(scenario_field "$SCENARIO" profile)" == routes* ]]; then
-    "$SCRIPT_DIR/sandbox.sh" reset
+    E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
   fi
   "scenario_${SCENARIO//-/_}"
 )
@@ -466,7 +466,7 @@ done
   done
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-"$SCRIPT_DIR/sandbox.sh" reset
+E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
 
 ((failed == 0)) || fail "$failed of ${#SELECTED[@]} scenarios failed"
 ok "all ${#SELECTED[@]} scenarios passed"

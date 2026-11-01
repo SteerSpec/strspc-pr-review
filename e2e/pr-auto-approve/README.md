@@ -76,7 +76,8 @@ unsets a value by deleting the repo variable, so an org value would show through
 
 ## Run
 
-Needs Bash 4+ (on macOS, `brew install bash`), `gh` authenticated as the reviewer, and `jq`.
+Needs Bash 4+ (on macOS, `brew install bash`), `gh` authenticated as the reviewer, and `jq`. The reviewer
+must be the enterprise owner, because `run.sh` calls `sandbox.sh reset`.
 
 ```bash
 export E2E_REPO=testbed-multi-org/strspc-pr-review-sandbox

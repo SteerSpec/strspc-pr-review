@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=e2e/pr-auto-approve/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-REPO="${E2E_REPO:-testbed-multi-org/strspc-pr-review-sandbox}"
+REPO="${E2E_REPO:-${E2E_SANDBOX_REPO:-testbed-multi-org/strspc-pr-review-sandbox}}"
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
 BOT_LOGIN="${E2E_APPROVER_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${E2E_REVIEWER_LOGIN:-pleberre}"

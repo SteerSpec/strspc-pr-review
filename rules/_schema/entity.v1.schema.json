@@ -48,6 +48,38 @@
             "protected",
             "public"
           ]
+        },
+        "standards": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "relation"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*(\\.[a-z0-9]+(-[a-z0-9]+)*)+$"
+              },
+              "relation": {
+                "enum": [
+                  "implements",
+                  "derived_from"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -193,7 +225,8 @@
               "deprecation_notice",
               "supersedes",
               "extends",
-              "related"
+              "related",
+              "standard"
             ]
           },
           "content": {

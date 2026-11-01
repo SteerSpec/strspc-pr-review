@@ -49,8 +49,8 @@ test('an input with a scenario has no exemption left over', () => {
 });
 
 test('every exemption says why', () => {
-  for (const [input, why] of Object.entries(manifest.exemptions)) {
-    assert.ok(typeof why === 'string' && why.length > 10, `${input} needs a reason`);
+  for (const [name, why] of Object.entries({ ...manifest.exemptions, ...manifest.rule_exemptions })) {
+    assert.ok(typeof why === 'string' && why.length > 10, `${name} needs a reason`);
   }
 });
 

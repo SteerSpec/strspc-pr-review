@@ -6,9 +6,9 @@
     "description": "What the e2e suite must cover, and when it must pass."
   },
   "rule_set": {
-    "version": "0.1.4",
-    "timestamp": "2026-11-01T17:25:52Z",
-    "hash": "blake3:3489d3efde2a7db167f20f13e44cd3f4185007aca20bbaf328ca0ce66839bb65"
+    "version": "0.1.5",
+    "timestamp": "2026-11-01T17:53:17Z",
+    "hash": "blake3:681c917e5c6c9615f79c98c8296a05b8663b3514499f81f95aa5bb8547969cf5"
   },
   "rules": [
     {
@@ -22,9 +22,9 @@
     },
     {
       "id": "E2E-002",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "An e2e scenario that expects no approval MUST also assert the decision and reason the action logged.",
+      "body": "An e2e scenario that expects no approval MUST also assert the decision and reason the action logged, or that the caller's job condition stopped the run before the action started.",
       "added_by": "@pleberre",
       "added_at": "2026-11-01",
       "supersedes": null

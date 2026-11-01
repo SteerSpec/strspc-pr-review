@@ -24,6 +24,8 @@
 #   E2E_CALLER_WORKFLOW     — the sandbox's caller workflow file (default: pr-auto-approve.yml)
 #   E2E_BOT_TOKEN           — token for the approver login, which authors the PR
 #                             some scenarios need from a second identity
+#   E2E_EXPECT_SHA          — the commit that must stay pinned in the sandbox's caller
+#                             for the whole run. CI sets it; unset skips the check
 
 # Fail fast on macOS system Bash 3.2 — the harnesses' scenario tables are
 # associative arrays, which require Bash 4+.
@@ -301,6 +303,16 @@ wait_no_decision() {
   done
   warn "PR #$pr_num: no skipped caller run seen on $branch since $since"
   return 1
+}
+
+# Fails unless the sandbox's caller still runs the commit under test. CI waits its
+# turn, but a re-run of an older run can get past that, and a run sharing the
+# sandbox would test someone else's commit and report it as this one.
+assert_pinned() {
+  [[ -n "${E2E_EXPECT_SHA:-}" ]] || return 0
+  gh api "repos/$REPO/contents/.github/workflows/$CALLER_WORKFLOW?ref=main" \
+    -H 'Accept: application/vnd.github.raw' | grep -q "strspc-pr-review@$E2E_EXPECT_SHA\$" \
+    || fail "the sandbox is not pinned to $E2E_EXPECT_SHA: another run changed it"
 }
 
 # Reads a field of a scenario from scenarios.json.

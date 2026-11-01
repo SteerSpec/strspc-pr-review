@@ -118,6 +118,9 @@ render_workflow() { # -> stdout
     $0 == "      - uses: " repo "@v1" {
       print "      - uses: " repo "@" sha " # unreleased develop build under test"; used = 1; next
     }
+    # As in sandbox.sh: the commit under test runs with this token, so it must be
+    # the sandbox-only repo secret.
+    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX")) scoped = 1 }
     { print }
     /^          bot-github-token: / {
       print ""
@@ -127,7 +130,7 @@ render_workflow() { # -> stdout
       print "          sandbox-repos: " sandbox
       added = 1
     }
-    END { if (!used || !added) exit 1 }'
+    END { if (!used || !added || !scoped) exit 1 }'
 }
 
 up() {

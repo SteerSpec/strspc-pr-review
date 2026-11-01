@@ -389,7 +389,10 @@ now_utc() {
 # In a subshell so `fail` ends the scenario and not the suite, and so the trap
 # closes its PRs however it ends.
 run_scenario() (
-  set -e
+  set -eE
+  # Without this, a failed command ends the scenario with nothing in the log.
+  # shellcheck disable=SC2154  # BASH_COMMAND is set by bash
+  trap 'warn "failed at run.sh:$LINENO: $BASH_COMMAND"' ERR
   SCENARIO="$1"
   SCENARIO_SINCE=$(now_utc)
   OPEN_PRS=()
@@ -403,10 +406,11 @@ run_scenario() (
       [[ -n "$n" ]] && close_pr "$n"
     done
     # A promotion's head is develop, which close_pr would delete.
+    # It may have merged, which close refuses, and that must not fail the scenario.
     for n in "${KEPT_PRS[@]:-}"; do
-      [[ -n "$n" ]] && gh pr close "$n" -R "$REPO" >/dev/null 2>&1
+      [[ -n "$n" ]] && { gh pr close "$n" -R "$REPO" >/dev/null 2>&1 || true; }
     done
-    true
+    return 0
   }
   trap cleanup EXIT
   log "scenario: $SCENARIO"
@@ -431,6 +435,8 @@ done
 log "sandbox repo: $REPO"
 log "base branch: $BASE_BRANCH"
 log "reviewer: $REVIEWER  approver: $APPROVER_LOGIN  timeout: ${TIMEOUT}s"
+
+assert_pinned
 
 declare -A RESULTS=()
 failed=0
@@ -466,6 +472,7 @@ done
   done
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
+assert_pinned
 E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
 
 ((failed == 0)) || fail "$failed of ${#SELECTED[@]} scenarios failed"

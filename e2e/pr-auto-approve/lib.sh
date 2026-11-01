@@ -336,11 +336,13 @@ expect_outcome() {
 }
 
 # Sets the repo variables of a scenarios.json profile, and unsets every variable
-# another profile uses, so nothing carries over from the previous one.
+# another profile uses, so nothing carries over from the previous one. {reviewer}
+# in a value is E2E_REVIEWER_LOGIN, the identity that authors the release PRs.
 apply_profile() {
   local profile="$1" name value
   while read -r name; do
     value=$(jq -r --arg p "$profile" --arg n "$name" '.profiles[$p][$n] // empty' "$MANIFEST")
+    value="${value//\{reviewer\}/$REVIEWER}"
     if [[ -n "$value" ]]; then
       gh variable set "STRSPC_PR_AUTO_APPROVE_$name" -R "$REPO" --body "$value"
     else

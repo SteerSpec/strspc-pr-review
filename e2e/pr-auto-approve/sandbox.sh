@@ -154,12 +154,15 @@ sync() {
 
 # --- reset ------------------------------------------------------------------
 
-# Closes without deleting branches, because a promotion's head is develop.
+# Only what the harness opens: e2e/ branches, release heads and promotions. Closes
+# without deleting branches, because a promotion's head is develop.
 reset_prs() {
   local n prefix
   while read -r n; do
     [[ -n "$n" ]] && gh pr close "$n" -R "$REPO" >/dev/null
-  done < <(gh pr list -R "$REPO" --state open --limit 100 --json number --jq '.[].number')
+  done < <(gh pr list -R "$REPO" --state open --limit 100 --json number,headRefName --jq '.[]
+    | select(.headRefName == "develop" or (.headRefName | test("^(e2e/|release-please--)")))
+    | .number')
   for prefix in e2e/ release-please--; do
     while read -r n; do
       [[ -n "$n" ]] && gh api -X DELETE "repos/$REPO/git/refs/heads/$n" >/dev/null

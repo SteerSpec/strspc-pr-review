@@ -28,7 +28,7 @@
       "ROUNDS_BY_TYPE": "chore:0,default:3",
       "PROMOTION_BRANCHES": "develop:main",
       "RELEASE_BRANCHES": "develop:main",
-      "RELEASE_AUTHOR": "pleberre"
+      "RELEASE_AUTHOR": "{reviewer}"
     },
     "routes-other-author": {
       "BASE_BRANCH": "develop,main",

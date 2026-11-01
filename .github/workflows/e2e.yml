@@ -78,6 +78,8 @@ jobs:
       E2E_REPO: testbed-multi-org/strspc-pr-review-sandbox
       E2E_REVIEWER_LOGIN: pleberre
       E2E_APPROVER_LOGIN: cnslr-bt
+      # A sandbox run can sit queued for minutes, and the default 180s isn't enough.
+      E2E_TIMEOUT: 420
     steps:
       # One sandbox serves every run, so they take turns, oldest first. Not a
       # concurrency: group, which cancels a displaced run: decide.js counts a

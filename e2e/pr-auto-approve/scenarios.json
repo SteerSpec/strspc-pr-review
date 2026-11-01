@@ -1,0 +1,106 @@
+{
+  "profiles": {
+    "base": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "default:3"
+    },
+    "types": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "chore:0,default:3"
+    },
+    "request-copilot": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "docs:0,default:3",
+      "REQUEST_COPILOT_REVIEW": "true"
+    }
+  },
+  "exemptions": {
+    "copilot-clean-on": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
+    "promotion-branches": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
+    "release-branches": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
+    "release-author": "Scenarios arrive with strspc-pr-review-t9w.20.12.",
+    "copilot-error-retries": "A synthetic reviewer cannot produce Copilot's errored review, so this waits for the real tier.",
+    "wait-for-copilot-seconds": "Only meaningful against a real Copilot check, so this waits for the real tier.",
+    "allow-no-checks": "The sandbox always has CI; unit tests cover the no-checks branch.",
+    "slack-channel": "The sandbox has no Slack workspace to assert against.",
+    "slack-bot-token": "The sandbox has no Slack workspace to assert against."
+  },
+  "scenarios": [
+    {
+      "name": "copilot-clean",
+      "profile": "base",
+      "decision": "approved",
+      "reason": "^copilot-clean \\(",
+      "inputs": ["bot-login", "bot-github-token", "github-token", "base-branch", "test-copilot-logins"]
+    },
+    {
+      "name": "copilot-with-comments",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^latest Copilot review has 1 comments",
+      "inputs": ["test-copilot-logins"]
+    },
+    {
+      "name": "suppressed-comments",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^latest Copilot review has 1 suppressed comment",
+      "inputs": ["test-copilot-logins"]
+    },
+    {
+      "name": "three-rounds",
+      "profile": "base",
+      "decision": "approved",
+      "reason": "^3-rounds \\(",
+      "inputs": ["rounds-threshold"]
+    },
+    {
+      "name": "changes-requested",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^latest Copilot review requested changes",
+      "inputs": ["sandbox-repos"]
+    },
+    {
+      "name": "draft",
+      "profile": "base",
+      "decision": "none",
+      "inputs": []
+    },
+    {
+      "name": "type-zero-docs",
+      "profile": "types",
+      "decision": "approved",
+      "reason": "^copilot-optional \\(type chore",
+      "inputs": ["rounds-by-type", "copilot-optional-paths"]
+    },
+    {
+      "name": "type-zero-code",
+      "profile": "types",
+      "decision": "skip",
+      "reason": "^no Copilot review yet; .*touches files outside copilot-optional-paths",
+      "inputs": ["rounds-by-type", "copilot-optional-paths"]
+    },
+    {
+      "name": "retitle-approves",
+      "profile": "types",
+      "decision": "approved",
+      "reason": "^copilot-optional \\(type chore",
+      "inputs": ["rounds-by-type"]
+    },
+    {
+      "name": "retitle-withdraws",
+      "profile": "types",
+      "decision": "skip",
+      "reason": "^no Copilot review yet",
+      "inputs": ["rounds-by-type"]
+    },
+    {
+      "name": "request-copilot",
+      "profile": "request-copilot",
+      "decision": "approved",
+      "reason": "^copilot-optional \\(type docs",
+      "inputs": ["request-copilot-review"]
+    }
+  ]
+}

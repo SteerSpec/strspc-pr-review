@@ -84,7 +84,7 @@ render_caller() {
     $0 == "      - uses: " repo "@v1" { print "      - uses: " repo "@" sha; used = 1; next }
     # The commit under test runs with this token, and it can be any PR'"'"'s code. So it
     # must be the sandbox-only repo secret, never the org'"'"'s BOT_GITHUB_TOKEN.
-    /^          bot-github-token: / { sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX"); scoped = 1 }
+    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX")) scoped = 1 }
     { print }
     /^          bot-github-token: / {
       print ""

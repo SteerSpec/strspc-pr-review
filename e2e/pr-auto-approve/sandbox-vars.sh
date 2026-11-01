@@ -120,7 +120,7 @@ render_workflow() { # -> stdout
     }
     # As in sandbox.sh: the commit under test runs with this token, so it must be
     # the sandbox-only repo secret.
-    /^          bot-github-token: / { sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX"); scoped = 1 }
+    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX")) scoped = 1 }
     { print }
     /^          bot-github-token: / {
       print ""

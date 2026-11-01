@@ -47,14 +47,18 @@ ruleset() { # name, ref, approvals, merge method(s) as a JSON array
       required_review_thread_resolution: ($count > 0)}}]}'
 }
 
+# Writes the whole definition either way, so a re-run repairs a ruleset that has
+# drifted instead of accepting anything with the right name.
 ensure_ruleset() {
-  local name="$1"
-  if gh api "repos/$REPO/rulesets" --jq '.[].name' | grep -qx "$name"; then
-    log "ruleset $name exists"
-    return
+  local name="$1" id
+  id=$(gh api "repos/$REPO/rulesets" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
+  if [[ -n "$id" ]]; then
+    ruleset "$@" | gh api -X PUT "repos/$REPO/rulesets/$id" --input - >/dev/null
+    log "ruleset $name updated"
+  else
+    ruleset "$@" | gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null
+    log "ruleset $name created"
   fi
-  ruleset "$@" | gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null
-  log "ruleset $name created"
 }
 
 setup() {

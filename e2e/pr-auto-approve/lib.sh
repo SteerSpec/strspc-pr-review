@@ -222,21 +222,25 @@ wait_not_approved() {
 # default branch, whichever PR they judged. The pr= field is what ties them.
 
 # Prints "<decision> <reason>" for each evaluation of the PR since $2, oldest
-# first. Logs of finished runs never change, so each is fetched once.
+# first. Logs of finished runs never change, so each is fetched once. Returns 1
+# if anything could not be read: empty output must mean "no decisions", never
+# "the API failed". Skipped and cancelled runs have no evaluation to read.
 decision_lines() {
-  local pr_num="$1" since="$2" runs id log
+  local pr_num="$1" since="$2" runs ids id log text
   runs=$(gh run list -R "$REPO" --workflow "$CALLER_WORKFLOW" --limit 40 \
-    --json databaseId,status,createdAt 2>/dev/null) || return 0
-  while read -r id; do
-    [[ -n "$id" ]] || continue
+    --json databaseId,status,conclusion,createdAt 2>/dev/null) || return 1
+  ids=$(printf '%s' "$runs" | jq -r --arg s "$since" \
+    '[.[] | select(.status == "completed" and .createdAt >= $s
+      and (.conclusion == "success" or .conclusion == "failure"))]
+     | sort_by(.createdAt) | .[].databaseId') || return 1
+  for id in $ids; do
     log="$LOG_DIR/$id.log"
-    if [[ ! -s "$log" ]]; then
-      gh run view "$id" -R "$REPO" --log 2>/dev/null \
-        | grep -oE 'pr-auto-approve pr=[0-9a-z]+ decision=.*' >"$log" || true
+    if [[ ! -e "$log" ]]; then
+      text=$(gh run view "$id" -R "$REPO" --log 2>/dev/null) || return 1
+      printf '%s\n' "$text" | grep -oE 'pr-auto-approve pr=[0-9a-z]+ decision=.*' >"$log" || true
     fi
     sed -nE "s/^pr-auto-approve pr=$pr_num decision=([a-z]+) reason=(.*)\$/\1 \2/p" "$log"
-  done < <(printf '%s' "$runs" | jq -r --arg s "$since" \
-    '[.[] | select(.status == "completed" and .createdAt >= $s)] | sort_by(.createdAt) | .[].databaseId')
+  done
 }
 
 # Poll until an evaluation since $4 made decision $2 with a reason matching $3.
@@ -246,7 +250,7 @@ wait_decision() {
   local pr_num="$1" decision="$2" reason_re="$3" since="$4" deadline lines="" seen reason
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
-    lines=$(decision_lines "$pr_num" "$since")
+    lines=$(decision_lines "$pr_num" "$since") || lines=""
     # Bash's own match: awk -v rewrites the regex's backslashes, and BSD awk then
     # rejects `\(`. Keeps the same ERE scenarios.json is written in.
     while read -r seen reason; do
@@ -259,13 +263,29 @@ wait_decision() {
   return 1
 }
 
-# The caller's job if: must have stopped the PR before the action ran: a
-# completed run with no decision line for this PR, after the grace period.
+# The caller's job if: must have stopped the PR before the action ran. That takes
+# proof on both sides: a caller run for this branch that GitHub reports as
+# skipped, and a readable run history with no decision for this PR. Nothing
+# having happened yet, or an API failure, must not pass.
 wait_no_decision() {
-  local pr_num="$1" since="$2" lines
+  local pr_num="$1" since="$2" branch deadline runs lines
+  branch=$(gh pr view "$pr_num" -R "$REPO" --json headRefName -q .headRefName) || return 1
   sleep "${E2E_GRACE:-60}"
-  lines=$(decision_lines "$pr_num" "$since")
-  [[ -z "$lines" ]] || { warn "PR #$pr_num: unexpected decisions: $lines"; return 1; }
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    if runs=$(gh run list -R "$REPO" --workflow "$CALLER_WORKFLOW" --limit 40 \
+        --json headBranch,conclusion,createdAt 2>/dev/null) &&
+      printf '%s' "$runs" | jq -e --arg b "$branch" --arg s "$since" \
+        'any(.[]; .headBranch == $b and .conclusion == "skipped" and .createdAt >= $s)' >/dev/null &&
+      lines=$(decision_lines "$pr_num" "$since"); then
+      [[ -z "$lines" ]] && return 0
+      warn "PR #$pr_num: unexpected decisions: $lines"
+      return 1
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  warn "PR #$pr_num: no skipped caller run seen on $branch since $since"
+  return 1
 }
 
 # Reads a field of a scenario from scenarios.json.

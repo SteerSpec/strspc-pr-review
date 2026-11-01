@@ -432,6 +432,8 @@ log "sandbox repo: $REPO"
 log "base branch: $BASE_BRANCH"
 log "reviewer: $REVIEWER  approver: $APPROVER_LOGIN  timeout: ${TIMEOUT}s"
 
+assert_pinned
+
 declare -A RESULTS=()
 failed=0
 profile=""
@@ -466,6 +468,7 @@ done
   done
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
+assert_pinned
 E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
 
 ((failed == 0)) || fail "$failed of ${#SELECTED[@]} scenarios failed"

@@ -19,7 +19,7 @@
 #   E2E_APPROVER_LOGIN      — login expected to post the APPROVED review
 #   E2E_BASE_BRANCH         — base branch PRs target (default: main)
 #   E2E_TIMEOUT             — seconds to wait per scenario (default: 180)
-#   E2E_GRACE               — seconds to wait before asserting no approval (default: 60)
+#   E2E_GRACE               — seconds to wait before asserting no approval (default: 15)
 #   E2E_APPROVE_CHECK_PATTERN — substring of the auto-approve check name to exclude from CI polling
 #   E2E_CALLER_WORKFLOW     — the sandbox's caller workflow file (default: pr-auto-approve.yml)
 #   E2E_BOT_TOKEN           — token for the approver login, which authors the PR
@@ -214,7 +214,7 @@ wait_for_approval() {
 
 wait_not_approved() {
   local pr_num="$1" body_re="${2:-}"
-  local grace="${E2E_GRACE:-60}"
+  local grace="${E2E_GRACE:-15}"
   local rc attempt
   sleep "$grace"
   # rc 2 is an API error, not "no approval": retry rather than pass on it.
@@ -287,7 +287,7 @@ wait_decision() {
 wait_no_decision() {
   local pr_num="$1" since="$2" branch deadline runs lines
   branch=$(gh pr view "$pr_num" -R "$REPO" --json headRefName -q .headRefName) || return 1
-  sleep "${E2E_GRACE:-60}"
+  sleep "${E2E_GRACE:-15}"
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
     if runs=$(gh run list -R "$REPO" --workflow "$CALLER_WORKFLOW" --limit 40 \

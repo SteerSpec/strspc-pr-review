@@ -92,8 +92,14 @@ e2e/pr-auto-approve/run.sh copilot-clean   # just these
 
 ## CI
 
-`.github/workflows/e2e.yml` runs the whole suite against the commit under test: on PRs touching
-`action.yml`, `scripts/pr-auto-approve/`, `templates/` or `e2e/`, on every PR into `main`, and on dispatch.
+`.github/workflows/e2e.yml` runs the suite against the commit under test, on every PR into `main` and on
+dispatch. It doesn't run on PRs into `develop`, because it takes too long. To check a branch first:
+
+```bash
+gh workflow run e2e.yml --ref my-branch                                    # every scenario
+gh workflow run e2e.yml --ref my-branch -f scenarios="draft release-clean"  # just these
+```
+
 Runs share the sandbox, so each waits for earlier ones, oldest first. It doesn't use a `concurrency:` group,
 which would cancel a displaced run, and `decide.js` counts a cancelled check as passed.
 
@@ -118,7 +124,7 @@ test, so a PR's action code can read that token. If it reached production, a PR 
 | `E2E_BOT_TOKEN` | — | Token for the approver. Keep it scoped to the sandbox. A scenario that needs it fails without it |
 | `E2E_BASE_BRANCH` | `main` | Base branch PRs target |
 | `E2E_TIMEOUT` | `180` | Seconds to wait per assertion |
-| `E2E_GRACE` | `60` | Seconds to wait before asserting no approval |
+| `E2E_GRACE` | `15` | Seconds to wait before asserting no approval. The expected decision has already been seen by then |
 | `E2E_APPROVE_CHECK_PATTERN` | `auto-approve` | Check name substring to exclude from CI polling |
 | `E2E_CALLER_WORKFLOW` | `pr-auto-approve.yml` | The sandbox's caller workflow file |
 

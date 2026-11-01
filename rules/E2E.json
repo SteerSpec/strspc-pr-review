@@ -1,0 +1,52 @@
+{
+  "$schema": "./_schema/entity.v1.schema.json",
+  "entity": {
+    "id": "E2E",
+    "title": "End-to-end coverage",
+    "description": "What the e2e suite must cover, and when it must pass."
+  },
+  "rule_set": {
+    "version": "0.1.4",
+    "timestamp": "2026-11-01T17:53:42Z",
+    "hash": "blake3:713da48c8264123fb9e4696ac352aedc5641ef2cdc3cbd404d7cdc465a59f1ae"
+  },
+  "rules": [
+    {
+      "id": "E2E-001",
+      "revision": 0,
+      "state": "D",
+      "body": "Every action.yml input and every APPROVE rule MUST have an e2e scenario or a stated exemption.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-01",
+      "supersedes": null
+    },
+    {
+      "id": "E2E-002",
+      "revision": 0,
+      "state": "D",
+      "body": "An e2e scenario that expects no approval MUST also assert the decision and reason the action logged, or that the caller's job condition stopped the run before the action started.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-01",
+      "supersedes": null
+    },
+    {
+      "id": "E2E-003",
+      "revision": 0,
+      "state": "D",
+      "body": "A pull request into main MUST NOT merge unless the e2e suite passed on its head.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-01",
+      "supersedes": null
+    },
+    {
+      "id": "E2E-004",
+      "revision": 0,
+      "state": "D",
+      "body": "A new approval path MUST pass its e2e scenarios in the sandbox before any production repository enables it.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-01",
+      "supersedes": null
+    }
+  ],
+  "notes": []
+}

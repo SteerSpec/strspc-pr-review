@@ -44,6 +44,9 @@ before the action ran.
 
 **Adding a behaviour or an input? Add its scenario in the same PR.** `scripts/pr-auto-approve/e2e.test.js`
 fails if an `action.yml` input has neither a scenario nor an entry in `exemptions` saying why.
+It does the same for the `APPROVE` rules: each scenario lists the rules it proves in `rules`, and a rule with
+no scenario needs an entry in `rule_exemptions`. A rule in state `I` must be cited by a scenario, so Implemented
+means proven here. The `E2E` rules in `rules/` state these requirements.
 
 ## Setup
 

@@ -49,9 +49,36 @@ test('an input with a scenario has no exemption left over', () => {
 });
 
 test('every exemption says why', () => {
-  for (const [input, why] of Object.entries(manifest.exemptions)) {
-    assert.ok(typeof why === 'string' && why.length > 10, `${input} needs a reason`);
+  for (const [name, why] of Object.entries({ ...manifest.exemptions, ...manifest.rule_exemptions })) {
+    assert.ok(typeof why === 'string' && why.length > 10, `${name} needs a reason`);
   }
+});
+
+// The rules say what the action must guarantee, so each one has to name its proof.
+const rules = JSON.parse(read('rules/APPROVE.json')).rules;
+const cited = () => new Set(manifest.scenarios.flatMap((s) => s.rules));
+
+test('every APPROVE rule has a scenario or a stated exemption', () => {
+  const exempt = new Set(Object.keys(manifest.rule_exemptions));
+  const missing = rules.map((r) => r.id).filter((id) => !cited().has(id) && !exempt.has(id));
+  assert.deepEqual(missing, [], `nothing proves: ${missing.join(', ')}`);
+});
+
+test('every rule a scenario or exemption names exists', () => {
+  const ids = new Set(rules.map((r) => r.id));
+  const named = [...cited(), ...Object.keys(manifest.rule_exemptions)];
+  assert.deepEqual(named.filter((id) => !ids.has(id)), []);
+});
+
+test('a rule with a scenario has no exemption left over', () => {
+  const stale = Object.keys(manifest.rule_exemptions).filter((id) => cited().has(id));
+  assert.deepEqual(stale, [], `remove these exemptions: ${stale.join(', ')}`);
+});
+
+// Implemented is what fail_on enforces, so it has to mean a scenario proves it.
+test('a rule in state I is cited by a scenario', () => {
+  const unproven = rules.filter((r) => r.state === 'I' && !cited().has(r.id)).map((r) => r.id);
+  assert.deepEqual(unproven, [], `implemented without a scenario: ${unproven.join(', ')}`);
 });
 
 test('scenario names are unique', () => {

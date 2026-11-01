@@ -58,15 +58,17 @@ e2e/pr-auto-approve/sandbox.sh setup
 e2e/pr-auto-approve/sandbox.sh sync "$(git rev-parse HEAD)"
 
 e2e/pr-auto-approve/sandbox.sh status   # what is under test
-e2e/pr-auto-approve/sandbox.sh reset    # close e2e PRs, return main and develop to the baseline
+e2e/pr-auto-approve/sandbox.sh reset    # close PRs, restore the fixture files, put develop on main
 ```
 
 `sync` renders the caller from the template at that SHA and pins `uses:` to it, so no checkout runs
-under `pull_request_target`. It then moves the `e2e-baseline` tag.
+under `pull_request_target`.
+
+`main` only moves forward: the enterprise `Compliance` ruleset forbids a force-push to the default
+branch, even for its owner. So `reset` repairs `main` with a new commit, then force-moves `develop` onto it.
 
 The rulesets match production's, with one difference: the enterprise owner may bypass them, because
-`sync` commits to `main` and `sync` and `reset` force-move the branches. So both must run as the
-enterprise owner. The bot has no bypass, so a merge it makes proves the rules were met.
+`sync` and `reset` commit to `main` and force-move `develop`. So both must run as the enterprise owner. The bot has no bypass, so a merge it makes proves the rules were met.
 
 `sync` refuses to run if an `STRSPC_PR_AUTO_APPROVE_*` org variable is visible to the sandbox. A profile
 unsets a value by deleting the repo variable, so an org value would show through. If one is left from
@@ -74,7 +76,8 @@ unsets a value by deleting the repo variable, so an org value would show through
 
 ## Run
 
-Needs Bash 4+ (on macOS, `brew install bash`), `gh` authenticated as the reviewer, and `jq`.
+Needs Bash 4+ (on macOS, `brew install bash`), `gh` authenticated as the reviewer, and `jq`. The reviewer
+must be the enterprise owner, because `run.sh` calls `sandbox.sh reset`.
 
 ```bash
 export E2E_REPO=testbed-multi-org/strspc-pr-review-sandbox
@@ -101,7 +104,10 @@ e2e/pr-auto-approve/run.sh copilot-clean   # just these
 
 ## Scenarios
 
-`scenarios.json` is the list. `request-copilot` asks for a real Copilot review, so it spends one, and the
+`scenarios.json` is the list. The `routes` profiles set `RELEASE_AUTHOR` to the reviewer login, because the
+harness authors the release PRs. Those scenarios merge to `develop` and `main`, so each starts from a reset
+of the sandbox. Setup merges run as the reviewer. The last merge of `promotion-clean` and `release-clean`
+runs as the bot, which has no bypass, so it needs `E2E_BOT_TOKEN`. `request-copilot` asks for a real Copilot review, so it spends one, and the
 sandbox must not have the automatic Copilot review ruleset or its docs half cannot pass.
 
 ## Variable precedence

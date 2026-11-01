@@ -185,6 +185,199 @@ scenario_request_copilot() {
   [[ $rc -eq 1 ]] || fail "$SCENARIO: Copilot was requested on the docs PR (rc=$rc)"
 }
 
+# --- copilot-clean-on ----------------------------------------------------
+# The bodies in fixtures/ follow Copilot's ccr-overview-v2 format.
+
+fixture() { cat "$SCRIPT_DIR/fixtures/$1.md"; }
+
+scenario_clean_verdict_closer_look() {
+  open_pr clean-verdict "e2e: closer look under verdict"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture closer-look-no-open-issues)"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_clean_open_closer_look() {
+  open_pr clean-open "e2e: closer look under no-open-issues"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture closer-look-no-open-issues)"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_clean_open_with_issue() {
+  open_pr clean-open-issue "e2e: open issue under no-open-issues"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture closer-look-open-issue)"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_clean_open_changes_recommended() {
+  open_pr clean-open-changes "e2e: changes recommended under no-open-issues"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture changes-recommended)"
+  expect_outcome "$PR_NUM"
+}
+
+# --- Promotion and release paths -----------------------------------------
+# These change main and develop, so run_scenario resets the sandbox first. Setup
+# merges run as the reviewer, who may bypass the rulesets. The final
+# merge of a passing scenario runs as the bot, who may not: that one proves the
+# PR merges without a bypass.
+
+RELEASE_HEAD=release-please--branches--main
+
+# Lands a type-0 PR on develop with the bot's approval. Sets LANDED.
+land_approved() {
+  local saved="$BASE_BRANCH"
+  BASE_BRANCH=develop
+  open_pr land-approved "chore: e2e approved change" "" "docs/e2e-marker.md"
+  BASE_BRANCH="$saved"
+  wait_for_ci "$PR_NUM"
+  wait_for_approval "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: setup PR was not approved"
+  gh pr merge "$PR_NUM" -R "$REPO" --squash >/dev/null
+  LANDED="$PR_NUM"
+}
+
+# Lands a PR on develop with no approval at all. Sets LANDED.
+land_unapproved() {
+  local title="$1" saved="$BASE_BRANCH"
+  BASE_BRANCH=develop
+  open_pr land-unapproved "$title"
+  BASE_BRANCH="$saved"
+  wait_for_ci "$PR_NUM"
+  gh pr merge "$PR_NUM" -R "$REPO" --squash --admin >/dev/null
+  LANDED="$PR_NUM"
+}
+
+open_promotion() {
+  local url
+  url=$(gh pr create -R "$REPO" --base main --head develop --title "$1" \
+    --body "e2e scenario PR — auto-closed by harness")
+  PR_NUM="${url##*/}"
+  KEPT_PRS+=("$PR_NUM")
+}
+
+# A PR shaped like release-please's: one verified commit on its head branch.
+open_release() {
+  local head="$1" path="$2" url
+  gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$head" \
+    -f sha="$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)" >/dev/null
+  # Differs each time, because an earlier scenario may have merged this file.
+  commit_file "$head" "$path" "0.1.$(date +%s)"$'\n' "chore(main): release 0.1.1"
+  url=$(gh pr create -R "$REPO" --base main --head "$head" --title "chore(main): release 0.1.1" \
+    --body "e2e scenario PR — auto-closed by harness")
+  PR_NUM="${url##*/}"
+  OPEN_PRS+=("$PR_NUM")
+}
+
+merge_as_bot() {
+  as_bot gh pr merge "$PR_NUM" -R "$REPO" --merge >/dev/null \
+    || fail "$SCENARIO: the bot could not merge, so the rules were not met"
+}
+
+scenario_promotion_clean() {
+  land_approved
+  open_promotion "chore: promote develop to main"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+  wait_for_approval "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: approval is not stamped threshold=0"
+  merge_as_bot
+}
+
+scenario_promotion_unapproved() {
+  land_unapproved "fix: e2e unapproved change"
+  open_promotion "chore: promote develop to main"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_promotion_late_approval() {
+  land_unapproved "fix: e2e approved too late"
+  as_bot gh api -X POST "repos/$REPO/pulls/$LANDED/reviews" \
+    -f event=APPROVE -f body="e2e approval after the merge" >/dev/null
+  open_promotion "chore: promote develop to main"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_promotion_title_feat() {
+  land_approved
+  open_promotion "feat: promote develop to main"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_promotion_other_head() {
+  open_pr promotion-other "chore: e2e not a promotion"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_promotion_withdraw() {
+  land_approved
+  open_promotion "chore: promote develop to main"
+  wait_for_ci "$PR_NUM"
+  wait_for_approval "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: no initial approval"
+  local since
+  since=$(now_utc)
+  gh pr edit -R "$REPO" "$PR_NUM" --title "feat: promote develop to main" >/dev/null
+  wait_approval_withdrawn "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: approval still stands"
+  expect_outcome "$PR_NUM" "$since"
+}
+
+scenario_release_clean() {
+  open_release "$RELEASE_HEAD" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+  merge_as_bot
+}
+
+scenario_release_unpromoted() {
+  land_unapproved "fix: e2e waiting on develop"
+  open_release "$RELEASE_HEAD" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_hidden_chore() {
+  land_approved
+  open_release "$RELEASE_HEAD" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_wrong_author() {
+  open_release "$RELEASE_HEAD" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_stranger_commit() {
+  open_release "$RELEASE_HEAD" version.txt
+  as_bot commit_file "$RELEASE_HEAD" CHANGELOG.md $'# Changelog\n' "chore(main): edit the changelog"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_foreign_file() {
+  open_release "$RELEASE_HEAD" src/e2e-marker.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_no_config() {
+  delete_file main release-please-config.json "chore(e2e): remove the release config"
+  open_release "$RELEASE_HEAD" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
+scenario_release_other_head() {
+  open_release "$RELEASE_HEAD--extra" version.txt
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+}
+
 # --- Runner --------------------------------------------------------------
 
 # GitHub stamps createdAt with its own clock, so leave room for ours to differ.
@@ -196,19 +389,30 @@ now_utc() {
 # In a subshell so `fail` ends the scenario and not the suite, and so the trap
 # closes its PRs however it ends.
 run_scenario() (
+  set -e
   SCENARIO="$1"
   SCENARIO_SINCE=$(now_utc)
   OPEN_PRS=()
+  KEPT_PRS=()
   PR_NUM=""
+  LANDED=""
   # shellcheck disable=SC2329  # invoked by the trap
   cleanup() {
     local n
     for n in "${OPEN_PRS[@]:-}"; do
       [[ -n "$n" ]] && close_pr "$n"
     done
+    # A promotion's head is develop, which close_pr would delete.
+    for n in "${KEPT_PRS[@]:-}"; do
+      [[ -n "$n" ]] && gh pr close "$n" -R "$REPO" >/dev/null 2>&1
+    done
+    true
   }
   trap cleanup EXIT
   log "scenario: $SCENARIO"
+  if [[ "$(scenario_field "$SCENARIO" profile)" == routes* ]]; then
+    E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
+  fi
   "scenario_${SCENARIO//-/_}"
 )
 
@@ -238,7 +442,14 @@ for s in "${SELECTED[@]}"; do
     profile="$next"
   fi
   started=$SECONDS
-  if run_scenario "$s"; then
+  # Not `if run_scenario` or `run_scenario || ...`: a function called as a condition
+  # runs with errexit off all the way down, and `set -e` inside it has no effect,
+  # so a failed setup command would not stop the scenario.
+  set +e
+  run_scenario "$s"
+  rc=$?
+  set -e
+  if ((rc == 0)); then
     RESULTS[$s]="pass ($((SECONDS - started))s)"
     ok "$s"
   else
@@ -254,6 +465,8 @@ done
     printf '| %s | %s |\n' "$s" "${RESULTS[$s]}"
   done
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+E2E_REPO="$REPO" "$SCRIPT_DIR/sandbox.sh" reset
 
 ((failed == 0)) || fail "$failed of ${#SELECTED[@]} scenarios failed"
 ok "all ${#SELECTED[@]} scenarios passed"

@@ -102,6 +102,21 @@ commit_file() {
     | gh api graphql --input - >/dev/null
 }
 
+# As commit_file, for removing a file.
+delete_file() {
+  local branch="$1" path="$2" message="$3" head
+  head=$(gh api "repos/$REPO/git/ref/heads/$branch" -q .object.sha)
+  [[ -n "$head" ]] || fail "could not read $branch from $REPO"
+  jq -n --arg repo "$REPO" --arg branch "$branch" --arg head "$head" --arg path "$path" \
+    --arg message "$message" '{
+      query: "mutation($i: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $i) { commit { oid } } }",
+      variables: {i: {
+        branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+        message: {headline: $message}, expectedHeadOid: $head,
+        fileChanges: {deletions: [{path: $path}]}}}}' \
+    | gh api graphql --input - >/dev/null
+}
+
 create_pr() {
   local branch="$1" title="$2"
   # $3 is an extra `gh pr create` flag (e.g. --draft); $4 overrides the file the
@@ -303,8 +318,10 @@ expect_outcome() {
   reason_re=$(scenario_field "$SCENARIO" reason)
   case "$decision" in
     approved)
-      wait_decision "$pr_num" approved "$reason_re" "$since" || fail "$SCENARIO: wrong decision"
-      wait_for_approval "$pr_num" || fail "$SCENARIO: decided approved, but no approval on the PR"
+      # From the review, not the log: the run that approves is often cancelled
+      # by the next one, and the review is what GitHub actually holds.
+      wait_for_approval "$pr_num" "Auto-approved: ${reason_re#^}" \
+        || fail "$SCENARIO: no approval with a reason matching /$reason_re/"
       ;;
     skip)
       wait_decision "$pr_num" skip "$reason_re" "$since" || fail "$SCENARIO: wrong decision"
@@ -319,11 +336,13 @@ expect_outcome() {
 }
 
 # Sets the repo variables of a scenarios.json profile, and unsets every variable
-# another profile uses, so nothing carries over from the previous one.
+# another profile uses, so nothing carries over from the previous one. {reviewer}
+# in a value is E2E_REVIEWER_LOGIN, the identity that authors the release PRs.
 apply_profile() {
   local profile="$1" name value
   while read -r name; do
     value=$(jq -r --arg p "$profile" --arg n "$name" '.profiles[$p][$n] // empty' "$MANIFEST")
+    value="${value//\{reviewer\}/$REVIEWER}"
     if [[ -n "$value" ]]; then
       gh variable set "STRSPC_PR_AUTO_APPROVE_$name" -R "$REPO" --body "$value"
     else

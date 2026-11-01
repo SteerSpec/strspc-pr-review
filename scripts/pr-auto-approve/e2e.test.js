@@ -59,28 +59,32 @@ test('scenario names are unique', () => {
   assert.equal(new Set(names).size, names.length);
 });
 
-for (const s of manifest.scenarios) {
-  test(`${s.name} has a function in run.sh`, () => {
+test('every scenario has a function in run.sh', () => {
+  for (const s of manifest.scenarios) {
     const fn = `scenario_${s.name.replaceAll('-', '_')}()`;
     assert.ok(harness.includes(fn), `missing ${fn}`);
-  });
+  }
+});
 
-  test(`${s.name} uses a declared profile`, () => {
-    assert.ok(s.profile in manifest.profiles, `unknown profile ${s.profile}`);
-  });
+test('every scenario uses a declared profile', () => {
+  for (const s of manifest.scenarios) {
+    assert.ok(s.profile in manifest.profiles, `${s.name}: unknown profile ${s.profile}`);
+  }
+});
 
-  // A scenario that only expects "not approved" also passes on a crash, which
-  // is why each one has to name the reason it expects.
-  test(`${s.name} states the outcome it asserts`, () => {
-    assert.ok(DECISIONS.has(s.decision), `unknown decision ${s.decision}`);
+// A scenario that only expects "not approved" also passes on a crash, which is
+// why each one has to name the reason it expects.
+test('every scenario states the outcome it asserts', () => {
+  for (const s of manifest.scenarios) {
+    assert.ok(DECISIONS.has(s.decision), `${s.name}: unknown decision ${s.decision}`);
     if (s.decision === 'none') {
-      assert.equal(s.reason, undefined);
+      assert.equal(s.reason, undefined, s.name);
     } else {
-      assert.ok(s.reason, 'a scenario with a decision must name its reason');
-      assert.doesNotThrow(() => new RegExp(s.reason));
+      assert.ok(s.reason, `${s.name}: a scenario with a decision must name its reason`);
+      assert.doesNotThrow(() => new RegExp(s.reason), s.name);
     }
-  });
-}
+  }
+});
 
 test('every scenario function in run.sh is listed in the manifest', () => {
   const listed = new Set(manifest.scenarios.map((s) => s.name.replaceAll('-', '_')));

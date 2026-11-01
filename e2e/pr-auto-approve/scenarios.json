@@ -116,9 +116,7 @@
       "profile": "base",
       "decision": "none",
       "inputs": [],
-      "rules": [
-        "APPROVE-017"
-      ]
+      "rules": []
     },
     {
       "name": "type-zero-docs",
@@ -412,13 +410,14 @@
     "APPROVE-002": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "APPROVE-006": "A synthetic reviewer is allowlisted by test-copilot-logins; unit tests cover the login match.",
     "APPROVE-009": "Needs a change landing mid-run; unit tests cover the re-read.",
-    "APPROVE-011": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
-    "APPROVE-012": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-011": "No scenario asserts the caller's loop guard yet; unit tests cover the skip and the guard's expression.",
+    "APPROVE-012": "An empty bot-login would fail every run in the sandbox; unit tests cover the failed job.",
+    "APPROVE-017": "The draft scenario proves only half of this rule, and a fork scenario needs a fork: strspc-pr-review-t9w.20.14.",
     "APPROVE-013": "Needs an API failure mid-run; unit tests cover the skip.",
     "APPROVE-014": "Needs an API failure mid-run; unit tests cover the failed job.",
-    "APPROVE-015": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-015": "Which token made a request can't be observed from outside; unit tests cover it.",
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
-    "APPROVE-018": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-018": "The caller's substring filter runs first and needs a near-match branch; unit tests cover the exact match.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
     "APPROVE-020": "A synthetic reviewer cannot produce a failed Copilot run, so this waits for the real tier.",
     "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."

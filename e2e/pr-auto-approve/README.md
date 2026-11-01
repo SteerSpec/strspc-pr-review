@@ -1,68 +1,87 @@
 # e2e harness — pr-auto-approve
 
-End-to-end tests for the reusable `pr-auto-approve.yml` workflow.
+End-to-end tests for the `pr-auto-approve` action, run against a sandbox repository in the
+`testbed-multi-org` organization.
 
 ## Layout
 
 | File | Role |
 |---|---|
-| `lib.sh` | Shared helpers — PR lifecycle, CI polling, approval polling. Sourced, not executed. |
-| `run.sh` | **Synthetic tier.** Fakes Copilot via `test-copilot-logins`. Deterministic and fast. |
-| `sandbox-vars.sh` | Puts the sandbox on the variable-driven caller (`STRSPC_PR_AUTO_APPROVE_*`) and back. See [Variable precedence](#variable-precedence). |
+| `scenarios.json` | **The suite.** Each scenario's profile, expected decision and reason, and the inputs it covers. |
+| `run.sh` | **Synthetic tier.** Sets the scene for each scenario. Fakes Copilot via `test-copilot-logins`. Deterministic. |
+| `lib.sh` | Shared helpers: PR lifecycle, decision and approval polling. Sourced, not executed. |
+| `sandbox.sh` | Keeps the sandbox in a known shape, as code. Puts a SHA under test. |
+| `sandbox-vars.sh` | Tests org/repo variable precedence, which needs `admin:org`. See [Variable precedence](#variable-precedence). |
 
-The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so
-every scenario is reproducible and can gate CI. It cannot tell you whether Copilot's own output
-format has changed underneath the action.
+The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so every
+scenario is reproducible and can gate CI. It cannot tell you whether Copilot's own output format has
+changed underneath the action.
 
 ## How it works
 
-- Uses a sandbox repository with a default branch and a base branch.
-- The sandbox's caller workflow sets `test-copilot-logins: <reviewer-login>` and
-  `sandbox-repos: <owner/sandbox-repo>`, so reviews posted by the reviewer are
-  treated as Copilot reviews.
-- The harness drives scenarios via `gh`:
-  1. Create a branch + trivial change
-  2. Open a PR against the base branch
-  3. Post synthetic "Copilot" reviews as the reviewer identity
-  4. Poll for the approver's APPROVED review on the PR
-  5. Assert the observed decision matches expectation
-  6. Close PR + delete branch
+For each scenario, `run.sh`:
+
+1. Applies the scenario's profile: the repo variables in `scenarios.json`
+2. Opens a PR from an `e2e/` branch
+3. Posts synthetic "Copilot" reviews as the reviewer identity, if the scenario needs them
+4. Asserts the outcome in `scenarios.json`
+5. Closes the PR and deletes the branch, however the scenario ended
+
+A failure is recorded and the run carries on. It ends with a pass/fail table, also written to
+`$GITHUB_STEP_SUMMARY`, and exits non-zero if anything failed.
+
+**A scenario asserts what the action decided, not just that no approval appeared.** A crash, a wrong
+token and a skipped job all look like a correct refusal. So `expect_outcome` reads the line every
+evaluation logs, and matches its decision and reason against `scenarios.json`:
+
+```
+pr-auto-approve pr=42 decision=skip reason=latest Copilot review has 1 comments
+```
+
+The `pr=` field is the only way to tie a run to a PR: `workflow_run` events carry the default branch,
+whichever PR they judged. A decision of `none` means the caller's job `if:` must have stopped the PR
+before the action ran.
+
+**Adding a behaviour or an input? Add its scenario in the same PR.** `scripts/pr-auto-approve/e2e.test.js`
+fails if an `action.yml` input has neither a scenario nor an entry in `exemptions` saying why.
 
 ## Setup
 
-### 1. Create a sandbox repository
-
-Create a repository (e.g. `your-org/pr-auto-approve-sandbox`) with:
-- A default branch (e.g. `main`)
-- A base branch to target PRs against (e.g. `main`)
-
-### 2. Add the caller workflow to the sandbox repo
-
-Copy `templates/pr-auto-approve.yml` to the sandbox repo's
-`.github/workflows/pr-auto-approve.yml` and set:
-
-```yaml
-with:
-  bot-login: your-bot-login
-  base-branch: main
-  test-copilot-logins: your-bot-login   # treat bot reviews as Copilot in sandbox
-  sandbox-repos: your-org/pr-auto-approve-sandbox
-```
-
-### 3. Authenticate `gh` as the bot
+The sandbox is `testbed-multi-org/strspc-pr-review-sandbox`. Its org secret `BOT_GITHUB_TOKEN` is what
+the caller approves with.
 
 ```bash
-gh auth login   # or gh auth switch if you have multiple accounts
-gh api user -q .login   # verify
+# Once, as a repo admin: the bot gets write and the rulesets are created.
+e2e/pr-auto-approve/sandbox.sh setup
+
+# Put a commit under test. It must be pushed. Safe to re-run.
+e2e/pr-auto-approve/sandbox.sh sync "$(git rev-parse HEAD)"
+
+e2e/pr-auto-approve/sandbox.sh status   # what is under test
+e2e/pr-auto-approve/sandbox.sh reset    # close e2e PRs, return main and develop to the baseline
 ```
 
-### 4. Run
+`sync` renders the caller from the template at that SHA and pins `uses:` to it, so no checkout runs
+under `pull_request_target`. It then moves the `e2e-baseline` tag.
+
+The rulesets match production's, with one difference: the enterprise owner may bypass them, because
+`sync` commits to `main` and `sync` and `reset` force-move the branches. So both must run as the
+enterprise owner. The bot has no bypass, so a merge it makes proves the rules were met.
+
+`sync` refuses to run if an `STRSPC_PR_AUTO_APPROVE_*` org variable is visible to the sandbox. A profile
+unsets a value by deleting the repo variable, so an org value would show through. If one is left from
+`sandbox-vars.sh`, run `sandbox-vars.sh down` first.
+
+## Run
+
+Needs Bash 4+ (on macOS, `brew install bash`), `gh` authenticated as the reviewer, and `jq`.
 
 ```bash
-E2E_SANDBOX_REPO=your-org/pr-auto-approve-sandbox \
-E2E_REVIEWER_LOGIN=your-bot-login \
-E2E_APPROVER_LOGIN=your-bot-login \
-./e2e/pr-auto-approve/run.sh
+export E2E_REPO=testbed-multi-org/strspc-pr-review-sandbox
+export E2E_REVIEWER_LOGIN=pleberre E2E_APPROVER_LOGIN=cnslr-bt
+
+e2e/pr-auto-approve/run.sh                 # every scenario
+e2e/pr-auto-approve/run.sh copilot-clean   # just these
 ```
 
 ## Environment variables
@@ -73,50 +92,17 @@ E2E_APPROVER_LOGIN=your-bot-login \
 | `E2E_SANDBOX_REPO` | `owner/sandbox-repo` | Fallback for `E2E_REPO`, kept for existing invocations |
 | `E2E_REVIEWER_LOGIN` | `my-bot` | `gh` auth identity posting synthetic reviews |
 | `E2E_APPROVER_LOGIN` | `my-bot` | Login expected to post the APPROVED review |
+| `E2E_BOT_TOKEN` | — | Token for the approver. Keep it scoped to the sandbox. A scenario that needs it fails without it |
 | `E2E_BASE_BRANCH` | `main` | Base branch PRs target |
-| `E2E_TIMEOUT` | `180` | Seconds to wait per approval scenario |
+| `E2E_TIMEOUT` | `180` | Seconds to wait per assertion |
 | `E2E_GRACE` | `60` | Seconds to wait before asserting no approval |
-| `E2E_APPROVE_CHECK_PATTERN` | `Auto-approve if Copilot conditions met` | Check name substring to exclude from CI polling |
+| `E2E_APPROVE_CHECK_PATTERN` | `auto-approve` | Check name substring to exclude from CI polling |
+| `E2E_CALLER_WORKFLOW` | `pr-auto-approve.yml` | The sandbox's caller workflow file |
 
 ## Scenarios
 
-| Scenario | Expected outcome |
-|---|---|
-| `copilot-clean` | Approved (0-comment Copilot review) |
-| `copilot-with-comments` | Skip (latest review has line comments) |
-| `suppressed-comments` | Skip (0 line comments, but the review body carries a suppressed-comments block) |
-| `three-rounds` | Approved (3+ Copilot reviews regardless of comments) |
-| `changes-requested` | Skip (latest review is CHANGES_REQUESTED, even with 3 rounds) |
-| `draft` | Skip (workflow is skipped by `if:` guard on draft PRs) |
-| `type-zero-docs` | Approved with **no** Copilot review (`chore:` title, docs-only diff) |
-| `type-zero-code` | Skip (`chore:` title, but the diff touches a file outside `copilot-optional-paths`) |
-| `retitle-approves` | Approved only after `feat:` → `chore:` retitle (proves the `edited` trigger) |
-| `retitle-withdraws` | Approval dismissed after `chore:` → `feat:` retitle (proves the bot can dismiss) |
-
-The last four are **opt-in** (not in the default run) because they need extra sandbox setup: the
-caller must set `rounds-by-type: 'chore:0'` and list `edited` in `pull_request_target.types`, and CI
-must run on a docs-only change (a path-filtered workflow would leave `wait_for_ci` with no checks).
-`retitle-withdraws` also needs a bot token that may dismiss reviews.
-
-| Scenario (opt-in) | Expected |
-|---|---|
-| `request-copilot` | Copilot is requested on a `feat:` PR and not on a `docs:` PR, which is approved without it |
-
-`request-copilot` needs a sandbox **without** the automatic Copilot code review ruleset (otherwise
-Copilot reviews every PR and the docs half cannot pass), a caller with `request-copilot-review: 'true'`
-and `rounds-by-type: 'docs:0,default:3'`, and it spends one real Copilot review. Point `E2E_REPO` at
-that sandbox.
-
-```bash
-# Run the default six scenarios
-./e2e/pr-auto-approve/run.sh
-
-# Run a single scenario
-./e2e/pr-auto-approve/run.sh copilot-clean
-
-# Run the per-type scenarios
-./e2e/pr-auto-approve/run.sh type-zero-docs type-zero-code retitle-approves retitle-withdraws
-```
+`scenarios.json` is the list. `request-copilot` asks for a real Copilot review, so it spends one, and the
+sandbox must not have the automatic Copilot review ruleset or its docs half cannot pass.
 
 ## Variable precedence
 
@@ -146,7 +132,6 @@ variable; and a whitespace-only `BASE_BRANCH` proves `main` still passes the job
 
 ## Notes
 
-- Scenarios are sequential; each opens a fresh PR to avoid state pollution.
-- The `changes-requested` scenario is automatically skipped if the reviewer
-  and PR author are the same identity (GitHub blocks self-REQUEST_CHANGES).
-- Timeout applies per scenario. Adjust `E2E_TIMEOUT` for slow CI environments.
+- Scenarios are sequential, because a profile changes repo variables and one sandbox serves them all.
+- `changes-requested` opens its PR as the bot, because GitHub refuses REQUEST_CHANGES from a PR's author.
+- Timeouts apply per assertion. Adjust `E2E_TIMEOUT` for slow CI environments.

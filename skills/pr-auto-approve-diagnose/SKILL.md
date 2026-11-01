@@ -66,7 +66,7 @@ Copilot's **review** and Copilot's **check run** succeed or fail independently. 
 check, so a clean review sitting in the UI does not mean the check passed:
 
 ```
-pr-auto-approve decision=skip reason=failing check: copilot-pull-request-reviewer (failure)
+pr-auto-approve pr=42 decision=skip reason=failing check: copilot-pull-request-reviewer (failure)
 ```
 
 The action is right to refuse — a red check is a red check, and approving past one would hollow out

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# e2e harness for the pr-auto-approve reusable workflow — SYNTHETIC tier.
+# e2e harness for the pr-auto-approve action — SYNTHETIC tier.
 #
 # Copilot is faked here: this script posts reviews as E2E_REVIEWER_LOGIN and the
 # sandbox's caller workflow sets test-copilot-logins so decide.js treats them as
@@ -9,19 +9,21 @@
 # own output format. A real-Copilot tier that can is planned, and lib.sh is
 # factored to be shared with it; nothing covers that gap today.
 #
+# scenarios.json holds each scenario's profile, expected decision and reason. A
+# function here only sets the scene and calls expect_outcome. Every scenario runs
+# by default, and a failure is recorded without ending the run.
+#
 # Prereqs:
 #   - Bash 4+ (macOS ships 3.2; `brew install bash` and run via
 #     /opt/homebrew/bin/bash or /usr/local/bin/bash)
-#   - gh authenticated as the bot account (or a user matching E2E_REVIEWER_LOGIN)
-#   - The sandbox repo exists with a default branch and a base branch (default: main)
-#   - The pr-auto-approve workflow is deployed to the sandbox repo with
-#     test_copilot_logins set to the reviewer login and sandbox_repos set to the
-#     sandbox repo full name
+#   - gh authenticated as E2E_REVIEWER_LOGIN
+#   - E2E_BOT_TOKEN for E2E_APPROVER_LOGIN
+#   - The sandbox provisioned by sandbox.sh sync
 #
 # Environment variables are documented in lib.sh and the README.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=e2e/pr-auto-approve/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
@@ -29,9 +31,7 @@ source "$SCRIPT_DIR/lib.sh"
 # Only this tier posts reviews itself; the real-Copilot tier never does.
 
 post_review() {
-  local pr="$1" event="$2" body="${3:-e2e synthetic review}"
-  local pr_num
-  pr_num=$(basename "$pr")
+  local pr_num="$1" event="$2" body="${3:-e2e synthetic review}"
   gh api -X POST "repos/$REPO/pulls/$pr_num/reviews" \
     -f event="$event" -f body="$body" >/dev/null
 }
@@ -51,52 +51,43 @@ post_review_with_comment() {
   gh api -X POST "repos/$REPO/pulls/$pr_num/reviews" --input - <<< "$payload" >/dev/null
 }
 
+# Opens a PR and registers it for the cleanup trap. Sets PR_NUM.
+open_pr() {
+  local name="$1" title="$2" extra="${3:-}" path="${4:-}" url
+  url=$(create_pr "$(new_branch "$name")" "$title" "$extra" "$path")
+  PR_NUM="${url##*/}"
+  OPEN_PRS+=("$PR_NUM")
+}
+
+# As open_pr, with the approver as author: GitHub refuses REQUEST_CHANGES from a
+# PR's own author, and that is the identity posting the fake Copilot reviews.
+open_pr_as_bot() {
+  local name="$1" title="$2" url
+  url=$(as_bot create_pr "$(new_branch "$name")" "$title")
+  PR_NUM="${url##*/}"
+  OPEN_PRS+=("$PR_NUM")
+}
+
 # --- Scenarios -----------------------------------------------------------
 
 scenario_copilot_clean() {
-  log "scenario: copilot-clean (expect approved)"
-  local branch pr pr_num
-  branch=$(new_branch "clean")
-  pr=$(create_pr "$branch" "e2e: copilot-clean")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  log "PR #$pr_num — CI done, posting clean COMMENT review"
-  post_review "$pr" COMMENT "LGTM (e2e clean review, 0 line comments)"
-  log "waiting up to ${TIMEOUT}s for $APPROVER_LOGIN approval…"
-  if wait_for_approval "$pr_num"; then
-    ok "copilot-clean → approved"
-  else
-    close_pr "$pr_num"
-    fail "copilot-clean: no approval within ${TIMEOUT}s"
-  fi
-  close_pr "$pr_num"
+  open_pr clean "e2e: copilot-clean"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "LGTM (e2e clean review, 0 line comments)"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_copilot_with_comments() {
-  log "scenario: copilot-with-comments (expect skip)"
-  local branch pr pr_num
-  branch=$(new_branch "comments")
-  pr=$(create_pr "$branch" "e2e: copilot-with-comments")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  log "PR #$pr_num — CI done, posting review with a line comment"
-  post_review_with_comment "$pr_num" "please address these"
-  if wait_not_approved "$pr_num"; then
-    ok "copilot-with-comments → not approved"
-  else
-    close_pr "$pr_num"
-    fail "copilot-with-comments: unexpectedly approved"
-  fi
-  close_pr "$pr_num"
+  open_pr comments "e2e: copilot-with-comments"
+  wait_for_ci "$PR_NUM"
+  post_review_with_comment "$PR_NUM" "please address these"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_suppressed_comments() {
-  log "scenario: suppressed-comments (expect skip)"
-  local branch pr pr_num body
-  branch=$(new_branch "suppressed")
-  pr=$(create_pr "$branch" "e2e: suppressed-comments")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
+  local body
+  open_pr suppressed "e2e: suppressed-comments"
+  wait_for_ci "$PR_NUM"
   # Zero inline comments, but the body carries Copilot's real collapsed block —
   # the shape that reads as "generated no new comments" via the comments API.
   # Transcribed from the 2026-08 production format; the pre-2026-08 wording is
@@ -113,235 +104,156 @@ Copilot reviewed 1 out of 1 changed files in this pull request and generated no 
 **e2e-marker.txt:1**
 * e2e synthetic suppressed finding
 </details>'
-  log "PR #$pr_num — CI done, posting clean review with a suppressed-comments block"
-  post_review "$pr" COMMENT "$body"
-  if wait_not_approved "$pr_num"; then
-    ok "suppressed-comments → not approved"
-  else
-    close_pr "$pr_num"
-    fail "suppressed-comments: unexpectedly approved"
-  fi
-  close_pr "$pr_num"
+  post_review "$PR_NUM" COMMENT "$body"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_three_rounds() {
-  log "scenario: three-rounds (expect approved after 3rd review)"
-  local branch pr pr_num
-  branch=$(new_branch "rounds")
-  pr=$(create_pr "$branch" "e2e: three-rounds")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  post_review_with_comment "$pr_num" "round 1"
-  post_review_with_comment "$pr_num" "round 2"
-  post_review_with_comment "$pr_num" "round 3"
-  if wait_for_approval "$pr_num"; then
-    ok "three-rounds → approved"
-  else
-    close_pr "$pr_num"
-    fail "three-rounds: no approval within ${TIMEOUT}s"
-  fi
-  close_pr "$pr_num"
+  open_pr rounds "e2e: three-rounds"
+  wait_for_ci "$PR_NUM"
+  post_review_with_comment "$PR_NUM" "round 1"
+  post_review_with_comment "$PR_NUM" "round 2"
+  post_review_with_comment "$PR_NUM" "round 3"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_changes_requested() {
-  log "scenario: changes-requested (expect skip even at 3 rounds)"
-  # GitHub forbids a PR author from posting REQUEST_CHANGES on their own PR.
-  local author
-  author=$(gh api user -q .login)
-  if [[ "$author" == "$REVIEWER" ]]; then
-    log "skip: reviewer ($REVIEWER) == PR author — GitHub blocks self-REQUEST_CHANGES"
-    ok "changes-requested → skipped (needs separate author/reviewer identities)"
-    return 0
-  fi
-  local branch pr pr_num
-  branch=$(new_branch "changes")
-  pr=$(create_pr "$branch" "e2e: changes-requested")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  post_review_with_comment "$pr_num" "round 1"
-  post_review_with_comment "$pr_num" "round 2"
-  post_review "$pr" REQUEST_CHANGES "blocking — do not merge"
-  if wait_not_approved "$pr_num"; then
-    ok "changes-requested → not approved"
-  else
-    close_pr "$pr_num"
-    fail "changes-requested: unexpectedly approved"
-  fi
-  close_pr "$pr_num"
+  open_pr_as_bot changes "e2e: changes-requested"
+  wait_for_ci "$PR_NUM"
+  post_review_with_comment "$PR_NUM" "round 1"
+  post_review_with_comment "$PR_NUM" "round 2"
+  post_review "$PR_NUM" REQUEST_CHANGES "blocking — do not merge"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_draft() {
-  log "scenario: draft (expect workflow-skipped by if: guard)"
-  local branch pr pr_num
-  branch=$(new_branch "draft")
-  pr=$(create_pr "$branch" "e2e: draft" "--draft")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  post_review "$pr" COMMENT "clean review on a draft"
-  if wait_not_approved "$pr_num"; then
-    ok "draft → not approved"
-  else
-    close_pr "$pr_num"
-    fail "draft: unexpectedly approved"
-  fi
-  close_pr "$pr_num"
+  open_pr draft "e2e: draft" "--draft"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "clean review on a draft"
+  expect_outcome "$PR_NUM"
 }
 
-# The scenarios below need the sandbox caller to set `rounds-by-type: 'chore:0'`
-# (and keep `edited` in pull_request_target.types). They post NO Copilot review:
-# type 0 means none is required.
+# The next four need the `types` profile. They post NO Copilot review: type 0
+# means none is required.
 
 scenario_type_zero_docs() {
-  log "scenario: type-zero-docs (chore: + docs-only diff, no review → expect approved)"
-  local branch pr pr_num
-  branch=$(new_branch "type-zero-docs")
-  pr=$(create_pr "$branch" "chore: e2e type-zero docs" "" "docs/e2e-marker.md")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  if wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
-    ok "type-zero-docs → approved without a Copilot review"
-  else
-    close_pr "$pr_num"
-    fail "type-zero-docs: no approval within ${TIMEOUT}s"
-  fi
-  close_pr "$pr_num"
+  open_pr type-zero-docs "chore: e2e type-zero docs" "" "docs/e2e-marker.md"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_type_zero_code() {
-  log "scenario: type-zero-code (chore: title but touches a non-docs file → expect no type-0 approval)"
-  local branch pr pr_num
-  branch=$(new_branch "type-zero-code")
   # e2e-marker.txt is outside copilot-optional-paths, so the title must not help.
-  pr=$(create_pr "$branch" "chore: e2e type-zero code")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  if wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
-    ok "type-zero-code → no type-0 approval (allowlist fell back to the normal rules)"
-  else
-    close_pr "$pr_num"
-    fail "type-zero-code: unexpectedly got a type-0 approval"
-  fi
-  close_pr "$pr_num"
+  open_pr type-zero-code "chore: e2e type-zero code"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
 }
 
 scenario_retitle_approves() {
-  log "scenario: retitle-approves (feat: → chore: on a docs-only diff → expect approved after the edit)"
-  local branch pr pr_num
-  branch=$(new_branch "retitle-approves")
-  pr=$(create_pr "$branch" "feat: e2e retitle" "" "docs/e2e-marker.md")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  if ! wait_not_approved "$pr_num" "$ZERO_APPROVAL_RE"; then
-    close_pr "$pr_num"
-    fail "retitle-approves: approved before the retitle"
-  fi
+  open_pr retitle-approves "feat: e2e retitle" "" "docs/e2e-marker.md"
+  wait_for_ci "$PR_NUM"
+  wait_decision "$PR_NUM" skip '^no Copilot review yet' "$SCENARIO_SINCE" \
+    || fail "$SCENARIO: did not skip before the retitle"
   local since
-  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  gh pr edit -R "$REPO" "$pr_num" --title "chore: e2e retitle" >/dev/null
-  # The ruleset's Copilot review may already have approved the PR, in which
-  # case the re-evaluation is a no-op ("bot already approved head"). So assert
-  # the edited event ran the workflow, and, when no approval stands yet, that
-  # it ends up type-0 approved.
-  if ! wait_caller_run "$branch" pull_request_target "$since"; then
-    close_pr "$pr_num"
-    fail "retitle-approves: no workflow run after the retitle (is 'edited' in the caller's triggers?)"
-  fi
-  if has_bot_approval "$pr_num" || wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
-    ok "retitle-approves → the edited event re-evaluated the PR"
-  else
-    close_pr "$pr_num"
-    fail "retitle-approves: the retitle run left the PR unapproved"
-  fi
-  close_pr "$pr_num"
+  since=$(now_utc)
+  gh pr edit -R "$REPO" "$PR_NUM" --title "chore: e2e retitle" >/dev/null
+  expect_outcome "$PR_NUM" "$since"
 }
 
 scenario_retitle_withdraws() {
-  log "scenario: retitle-withdraws (approved as chore:, retitled feat: → expect the approval dismissed)"
-  local branch pr pr_num
-  branch=$(new_branch "retitle-withdraws")
-  pr=$(create_pr "$branch" "chore: e2e retitle withdraw" "" "docs/e2e-marker.md")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
-    close_pr "$pr_num"
-    fail "retitle-withdraws: no initial approval within ${TIMEOUT}s"
-  fi
-  gh pr edit -R "$REPO" "$pr_num" --title "feat: e2e retitle withdraw" >/dev/null
-  if wait_approval_withdrawn "$pr_num" "$ZERO_APPROVAL_RE"; then
-    ok "retitle-withdraws → the no-Copilot approval was dismissed"
-  else
-    close_pr "$pr_num"
-    fail "retitle-withdraws: approval still stands after the retitle (can the bot dismiss reviews?)"
-  fi
-  close_pr "$pr_num"
+  open_pr retitle-withdraws "chore: e2e retitle withdraw" "" "docs/e2e-marker.md"
+  wait_for_ci "$PR_NUM"
+  wait_for_approval "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: no initial approval"
+  local since
+  since=$(now_utc)
+  gh pr edit -R "$REPO" "$PR_NUM" --title "feat: e2e retitle withdraw" >/dev/null
+  wait_approval_withdrawn "$PR_NUM" "$ZERO_APPROVAL_RE" || fail "$SCENARIO: approval still stands"
+  expect_outcome "$PR_NUM" "$since"
 }
 
-# Needs a sandbox WITHOUT the automatic Copilot ruleset, whose caller sets
-# `request-copilot-review: 'true'` and `rounds-by-type: 'docs:0,...'`. It asks for
-# a real Copilot review on the code PR, so it spends one.
+# Asks for a real Copilot review on the code PR, so it spends one. The sandbox
+# must not have the automatic Copilot ruleset, or the docs half cannot pass.
 scenario_request_copilot() {
-  log "scenario: request-copilot (code PR → Copilot requested; docs: PR → not requested, approved)"
-  local branch pr pr_num rc
-  branch=$(new_branch "request-copilot-code")
-  pr=$(create_pr "$branch" "feat: e2e request copilot")
-  pr_num=$(basename "$pr")
-  if wait_copilot_requested "$pr_num"; then
-    ok "request-copilot → Copilot was requested on the code PR"
-  else
-    close_pr "$pr_num"
-    fail "request-copilot: no Copilot review request within ${TIMEOUT}s"
-  fi
-  close_pr "$pr_num"
+  open_pr request-copilot-code "feat: e2e request copilot"
+  wait_copilot_requested "$PR_NUM" || fail "$SCENARIO: Copilot was not requested on the code PR"
 
-  branch=$(new_branch "request-copilot-docs")
-  pr=$(create_pr "$branch" "docs: e2e request copilot" "" "docs/e2e-marker.md")
-  pr_num=$(basename "$pr")
-  wait_for_ci "$pr_num"
-  if ! wait_for_approval "$pr_num" "$ZERO_APPROVAL_RE"; then
-    close_pr "$pr_num"
-    fail "request-copilot: the docs PR was not approved within ${TIMEOUT}s"
-  fi
-  rc=0
-  copilot_review_requested "$pr_num" || rc=$?
-  close_pr "$pr_num"
-  [[ $rc -eq 1 ]] || fail "request-copilot: Copilot was requested on a docs PR (rc=$rc)"
-  ok "request-copilot → no Copilot request on the docs PR"
+  open_pr request-copilot-docs "docs: e2e request copilot" "" "docs/e2e-marker.md"
+  wait_for_ci "$PR_NUM"
+  expect_outcome "$PR_NUM"
+  local rc=0
+  copilot_review_requested "$PR_NUM" || rc=$?
+  [[ $rc -eq 1 ]] || fail "$SCENARIO: Copilot was requested on the docs PR (rc=$rc)"
 }
-
-# Not in the default run: they need sandbox config the original six do not
-# (see the README). Select them by name, or pass `all-types`-style names directly.
 
 # --- Runner --------------------------------------------------------------
 
-require_gh "$REVIEWER"
+# GitHub stamps createdAt with its own clock, so leave room for ours to differ.
+now_utc() {
+  date -u -d '-10 seconds' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -v-10S +%Y-%m-%dT%H:%M:%SZ
+}
 
-declare -A SCENARIOS=(
-  [copilot-clean]=scenario_copilot_clean
-  [copilot-with-comments]=scenario_copilot_with_comments
-  [suppressed-comments]=scenario_suppressed_comments
-  [three-rounds]=scenario_three_rounds
-  [changes-requested]=scenario_changes_requested
-  [draft]=scenario_draft
-  [type-zero-docs]=scenario_type_zero_docs
-  [type-zero-code]=scenario_type_zero_code
-  [retitle-approves]=scenario_retitle_approves
-  [retitle-withdraws]=scenario_retitle_withdraws
-  [request-copilot]=scenario_request_copilot
+# In a subshell so `fail` ends the scenario and not the suite, and so the trap
+# closes its PRs however it ends.
+run_scenario() (
+  SCENARIO="$1"
+  SCENARIO_SINCE=$(now_utc)
+  OPEN_PRS=()
+  PR_NUM=""
+  # shellcheck disable=SC2329  # invoked by the trap
+  cleanup() {
+    local n
+    for n in "${OPEN_PRS[@]:-}"; do
+      [[ -n "$n" ]] && close_pr "$n"
+    done
+  }
+  trap cleanup EXIT
+  log "scenario: $SCENARIO"
+  "scenario_${SCENARIO//-/_}"
 )
 
-SELECTED=("${@:-copilot-clean copilot-with-comments suppressed-comments three-rounds changes-requested draft}")
-if [[ ${#SELECTED[@]} -eq 1 ]] && [[ ${SELECTED[0]} =~ \  ]]; then
-  read -r -a SELECTED <<< "${SELECTED[0]}"
+require_gh "$REVIEWER"
+
+mapfile -t ALL < <(jq -r '.scenarios[].name' "$MANIFEST")
+if (($# > 0)); then
+  SELECTED=("$@")
+else
+  SELECTED=("${ALL[@]}")
 fi
+for s in "${SELECTED[@]}"; do
+  [[ " ${ALL[*]} " == *" $s "* ]] || fail "unknown scenario: $s (valid: ${ALL[*]})"
+done
 
 log "sandbox repo: $REPO"
 log "base branch: $BASE_BRANCH"
 log "reviewer: $REVIEWER  approver: $APPROVER_LOGIN  timeout: ${TIMEOUT}s"
 
+declare -A RESULTS=()
+failed=0
+profile=""
 for s in "${SELECTED[@]}"; do
-  fn="${SCENARIOS[$s]:-}"
-  [[ -n "$fn" ]] || fail "unknown scenario: $s (valid: ${!SCENARIOS[*]})"
-  "$fn"
+  next=$(scenario_field "$s" profile)
+  if [[ "$next" != "$profile" ]]; then
+    apply_profile "$next"
+    profile="$next"
+  fi
+  started=$SECONDS
+  if run_scenario "$s"; then
+    RESULTS[$s]="pass ($((SECONDS - started))s)"
+    ok "$s"
+  else
+    RESULTS[$s]="FAIL ($((SECONDS - started))s)"
+    warn "$s failed"
+    failed=$((failed + 1))
+  fi
 done
 
-ok "all scenarios passed"
+{
+  printf '| Scenario | Result |\n|---|---|\n'
+  for s in "${SELECTED[@]}"; do
+    printf '| %s | %s |\n' "$s" "${RESULTS[$s]}"
+  done
+} | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+((failed == 0)) || fail "$failed of ${#SELECTED[@]} scenarios failed"
+ok "all ${#SELECTED[@]} scenarios passed"

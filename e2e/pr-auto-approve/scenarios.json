@@ -57,6 +57,9 @@
         "github-token",
         "base-branch",
         "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -66,6 +69,9 @@
       "reason": "^latest Copilot review has 1 comments",
       "inputs": [
         "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -75,6 +81,9 @@
       "reason": "^latest Copilot review has 1 suppressed comment",
       "inputs": [
         "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -84,6 +93,9 @@
       "reason": "^3-rounds \\(",
       "inputs": [
         "rounds-threshold"
+      ],
+      "rules": [
+        "APPROVE-005"
       ]
     },
     {
@@ -93,13 +105,20 @@
       "reason": "^latest Copilot review requested changes",
       "inputs": [
         "sandbox-repos"
+      ],
+      "rules": [
+        "APPROVE-003",
+        "APPROVE-010"
       ]
     },
     {
       "name": "draft",
       "profile": "base",
       "decision": "none",
-      "inputs": []
+      "inputs": [],
+      "rules": [
+        "APPROVE-017"
+      ]
     },
     {
       "name": "type-zero-docs",
@@ -109,6 +128,9 @@
       "inputs": [
         "rounds-by-type",
         "copilot-optional-paths"
+      ],
+      "rules": [
+        "APPROVE-007"
       ]
     },
     {
@@ -119,6 +141,9 @@
       "inputs": [
         "rounds-by-type",
         "copilot-optional-paths"
+      ],
+      "rules": [
+        "APPROVE-007"
       ]
     },
     {
@@ -128,6 +153,9 @@
       "reason": "^copilot-optional \\(type chore",
       "inputs": [
         "rounds-by-type"
+      ],
+      "rules": [
+        "APPROVE-007"
       ]
     },
     {
@@ -137,6 +165,9 @@
       "reason": "^no Copilot review yet",
       "inputs": [
         "rounds-by-type"
+      ],
+      "rules": [
+        "APPROVE-008"
       ]
     },
     {
@@ -146,6 +177,9 @@
       "reason": "^copilot-optional \\(type docs",
       "inputs": [
         "request-copilot-review"
+      ],
+      "rules": [
+        "APPROVE-007"
       ]
     },
     {
@@ -155,6 +189,9 @@
       "reason": "^latest Copilot review has verdict '.*Needs a closer look'",
       "inputs": [
         "copilot-clean-on"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -164,6 +201,9 @@
       "reason": "^copilot-clean \\(review [0-9]+, verdict 'Needs a closer look'",
       "inputs": [
         "copilot-clean-on"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -173,6 +213,9 @@
       "reason": "^latest Copilot review lists 1 open issue",
       "inputs": [
         "copilot-clean-on"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -182,6 +225,9 @@
       "reason": "^latest Copilot review has verdict '.*Changes recommended'",
       "inputs": [
         "copilot-clean-on"
+      ],
+      "rules": [
+        "APPROVE-004"
       ]
     },
     {
@@ -191,6 +237,9 @@
       "reason": "^promotion \\(develop to main, 1 commit\\(s\\) from 1 approved PR\\(s\\)\\)",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -200,6 +249,9 @@
       "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -209,6 +261,9 @@
       "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -218,6 +273,9 @@
       "reason": "^promotion title type 'feat' would be counted twice",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -227,6 +285,9 @@
       "reason": "^no Copilot review yet",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -236,6 +297,9 @@
       "reason": "^promotion title type 'feat' would be counted twice",
       "inputs": [
         "promotion-branches"
+      ],
+      "rules": [
+        "APPROVE-021"
       ]
     },
     {
@@ -246,6 +310,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -256,6 +323,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -266,6 +336,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -276,6 +349,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -286,6 +362,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -296,6 +375,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -306,6 +388,9 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     },
     {
@@ -316,7 +401,26 @@
       "inputs": [
         "release-branches",
         "release-author"
+      ],
+      "rules": [
+        "APPROVE-023"
       ]
     }
-  ]
+  ],
+  "rule_exemptions": {
+    "APPROVE-001": "Scenarios wait for CI first; unit tests cover failing and unfinished checks.",
+    "APPROVE-002": "The sandbox always has CI; unit tests cover the no-checks branch.",
+    "APPROVE-006": "A synthetic reviewer is allowlisted by test-copilot-logins; unit tests cover the login match.",
+    "APPROVE-009": "Needs a change landing mid-run; unit tests cover the re-read.",
+    "APPROVE-011": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-012": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-013": "Needs an API failure mid-run; unit tests cover the skip.",
+    "APPROVE-014": "Needs an API failure mid-run; unit tests cover the failed job.",
+    "APPROVE-015": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
+    "APPROVE-018": "Covered by unit tests: the sandbox has no way to set this up deterministically.",
+    "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
+    "APPROVE-020": "A synthetic reviewer cannot produce a failed Copilot run, so this waits for the real tier.",
+    "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
+  }
 }

@@ -10,7 +10,8 @@
     "lint:workflows": "actionlint .github/workflows/*.yml templates/*.yml",
     "lint:shell": "shellcheck -x e2e/pr-auto-approve/*.sh",
     "lint:issue-forms": "python3 scripts/validate-issue-forms.py",
-    "lint": "npm run lint:workflows && npm run lint:shell && npm run lint:issue-forms",
+    "lint:refs": "strspc refs e2e/pr-auto-approve/scenarios.json",
+    "lint": "npm run lint:workflows && npm run lint:shell && npm run lint:issue-forms && npm run lint:refs",
     "prepare": "husky"
   },
   "devDependencies": {

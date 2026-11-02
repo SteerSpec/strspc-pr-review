@@ -105,6 +105,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The default shell has no pipefail, so a failed lookup would count as no runs.
+          set -o pipefail
           me=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
           # Every page of every status short of completed, so no run is missed
           # however old it is.

@@ -761,7 +761,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   const setDecision = async (decision, bareReason) => {
     const reason = thresholdNote ? `${bareReason}; ${thresholdNote}` : bareReason;
-    core.info(`pr-auto-approve decision=${decision} reason=${reason}`);
+    core.info(`pr-auto-approve pr=${pr ? pr.number : 'none'} decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
     // check_run/workflow_run-triggered runs carry no github.event.pull_request,

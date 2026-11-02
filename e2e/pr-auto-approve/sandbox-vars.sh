@@ -31,7 +31,9 @@ ORG="${ORG:-testbed-multi-org}"
 REPO_NAME="${REPO_NAME:-strspc-pr-review-sandbox}"
 REPO="$ORG/$REPO_NAME"
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
-ACTION_SHA="${ACTION_SHA:-1ac1c4a810521418e1625b827b189efabd4cce1d}" # develop after #111
+# No default: a pinned default went stale here and tested an old build unnoticed.
+# Only `up` needs it, so `status` and `down` still work without one.
+ACTION_SHA="${ACTION_SHA:-}"
 BOT_LOGIN="${BOT_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${REVIEWER_LOGIN:-pleberre}"
 STATE_DIR="${STATE_DIR:-$HOME/.cache/strspc-e2e/$ORG-$REPO_NAME}"
@@ -116,6 +118,9 @@ render_workflow() { # -> stdout
     $0 == "      - uses: " repo "@v1" {
       print "      - uses: " repo "@" sha " # unreleased develop build under test"; used = 1; next
     }
+    # As in sandbox.sh: the commit under test runs with this token, so it must be
+    # the sandbox-only repo secret.
+    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX")) scoped = 1 }
     { print }
     /^          bot-github-token: / {
       print ""
@@ -125,10 +130,11 @@ render_workflow() { # -> stdout
       print "          sandbox-repos: " sandbox
       added = 1
     }
-    END { if (!used || !added) exit 1 }'
+    END { if (!used || !added || !scoped) exit 1 }'
 }
 
 up() {
+  [[ -n "$ACTION_SHA" ]] || die "set ACTION_SHA to the pushed commit to test"
   preflight
   backup
 

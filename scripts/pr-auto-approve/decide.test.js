@@ -195,6 +195,30 @@ test('skip: draft PR in the event payload, without a caller guard', async () => 
   assert.equal(calls.createReview.length, 0);
 });
 
+// workflow_run and check_run runs carry the default branch as their head, so
+// the e2e harness can only tell which PR a run judged from this line.
+test('the decision line names the PR it judged', async () => {
+  const core = makeCore();
+  const lines = [];
+  core.info = (m) => lines.push(m);
+  const { github } = makeApprovableGithub();
+  const ctx = makeContext({ prOverrides: { number: 57, draft: true } });
+  await decide({ github, context: ctx, core });
+  assert.ok(
+    lines.some((l) => /^pr-auto-approve pr=57 decision=skip reason=PR is draft/.test(l)),
+    lines.join('\n'),
+  );
+});
+
+test('the decision line says when no PR was resolved', async () => {
+  const core = makeCore();
+  const lines = [];
+  core.info = (m) => lines.push(m);
+  const { github } = makeFakeGithub();
+  await decide({ github, context: { runId: 1, repo: { owner: 'o', repo: 'r' }, payload: {} }, core });
+  assert.ok(lines.some((l) => /^pr-auto-approve pr=none decision=skip /.test(l)), lines.join('\n'));
+});
+
 test('skip: fork PR in the event payload, without a caller guard', async () => {
   const core = makeCore();
   const { github, calls } = makeApprovableGithub();

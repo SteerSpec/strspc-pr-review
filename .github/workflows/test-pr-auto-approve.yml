@@ -116,7 +116,7 @@ jobs:
           # Files are named explicitly, so anything omitted is never linted.
           # templates/pr-auto-approve.yml is included because consumers copy it
           # verbatim into their own repos — a syntax error there ships to them.
-          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml .github/workflows/sync-marketplace-pin.yml templates/pr-auto-approve.yml'
+          actionlint_flags: '.github/workflows/pr-auto-approve.yml .github/workflows/test-pr-auto-approve.yml .github/workflows/e2e.yml .github/workflows/release-please.yml .github/workflows/auto-approve.yml .github/workflows/sync-marketplace-pin.yml templates/pr-auto-approve.yml'
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         env:

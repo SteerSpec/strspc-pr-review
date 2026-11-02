@@ -1013,6 +1013,23 @@ test('skip: a later no-files review of the head never falls back to an earlier c
   assert.equal(calls.createReview.length, 0);
 });
 
+test('approve: a no-files review does not stop the rounds rule once enough real rounds exist', async () => {
+  // APPROVE-005: the rounds rule approves whatever the latest review says, so
+  // that no review can wedge a PR.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-20T10:00:00Z', commit_id: 'c0ffee01', user: COPILOT },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-10-20T11:00:00Z', commit_id: 'c0ffee02', user: COPILOT },
+      { id: 3, state: 'COMMENTED', submitted_at: '2026-10-20T12:00:00Z', commit_id: 'c0ffee03', user: COPILOT },
+      { id: 4, state: 'COMMENTED', submitted_at: '2026-10-20T13:00:00Z', user: COPILOT, body: NO_FILES_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.reason, '3-rounds (3 Copilot reviews)');
+  assert.equal(calls.createReview.length, 1);
+});
+
 test('skip: reviews that reviewed nothing do not count toward the rounds threshold', async () => {
   // #87's shape: two real rounds on older commits, then quota bodies, with a
   // no-files review in between.

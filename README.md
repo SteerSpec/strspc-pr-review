@@ -83,7 +83,7 @@ it did. See [Troubleshooting](#troubleshooting).
 | **No inline comments** | Copilot left nothing to resolve |
 | **No suppressed-comments block in the body** | Copilot's summary can read as clean while findings sit in a collapsed block, and those comments are absent from the review-comments API, so only a body scan sees them |
 | **A clean overview** | Since October 2026 Copilot opens its review body with a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. The verdict must be `Approval recommended`, the body must state `No open issues`, list no previously missed issue, and collapse only the change summary and resolved issues. Any other verdict, section or wording skips, and so does a body with no overview at all, including an empty one or the older `generated no new comments` summary. [`copilot-clean-on`](#approval-rules) can also pass `Needs a closer look`; see [Passing Needs a closer look](#passing-needs-a-closer-look) |
-| **Copilot reviewed something** | Copilot also posts a review when it reviewed nothing. When its run failed or the requester ran out of quota, the review is ignored. When every changed file is excluded from review (`Copilot wasn't able to review any files`, even under a green verdict), it stays the latest review and blocks. Neither approves or counts as a round |
+| **Copilot reviewed something** | Copilot also posts a review when it reviewed nothing. When its run failed or the requester ran out of quota, the review is ignored. When every changed file is excluded from review (`Copilot wasn't able to review any files`, even under a green verdict), it stays the latest review and blocks a copilot-clean approval. Neither counts as a round. Like any review, neither stops the rounds rule once enough real rounds exist |
 | **The review names the current head commit** | A push dismisses the bot's approval under branch protection but leaves Copilot's `COMMENTED` review in place, so without this the new commit would inherit a verdict on the old one. A review with no commit can't prove freshness and is treated the same way |
 
 GitHub has changed the suppressed block's wording at least once (`Comments suppressed due to low
@@ -733,7 +733,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 384 unit tests, no external dependencies
+npm test               # 385 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

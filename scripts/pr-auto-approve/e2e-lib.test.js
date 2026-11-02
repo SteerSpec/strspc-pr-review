@@ -111,6 +111,30 @@ test('wait_for_ci blames GitHub when no CI ever starts', { skip }, () => {
   assert.equal(r.calls.filter((c) => c.args[1] === 'reopen').length, 1);
 });
 
+test('a failed reopen stops the wait instead of polling a closed PR', { skip }, () => {
+  const r = run([HEAD, NO_CHECKS, [0, '', ''], [1, '', 'gh: Forbidden (HTTP 403)\n']], 'wait_for_ci 7', {
+    env: { ...WAIT, E2E_TIMEOUT: '30' },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /closed PR #7 to trigger CI again, and could not reopen it/);
+});
+
+test('wait_for_ci does not blame GitHub CI when it never read the check runs', { skip }, () => {
+  const r = run([HEAD, [1, '', 'gh: Not Found (HTTP 404)\n']], 'wait_for_ci 7', {
+    env: { ...WAIT, E2E_TIMEOUT: '1' },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /could not read the check runs on PR #7/);
+  assert.equal(r.calls.filter((c) => c.args[0] === 'pr').length, 0);
+});
+
+test('a retry note stays out of output captured with 2>&1', { skip }, () => {
+  const r = run([BAD_GATEWAY, [0, 'abc123', '']], 'x=$(gh api repos/o/r 2>&1); printf "<%s>" "$x"');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '<abc123>');
+  assert.match(r.stderr, /transient GitHub error/);
+});
+
 test('a command run as the bot passes its token to every attempt', { skip }, () => {
   const r = run([BAD_GATEWAY, [0, 'ok', '']], 'E2E_BOT_TOKEN=bot-token as_bot gh api user');
   assert.equal(r.status, 0, r.stderr);

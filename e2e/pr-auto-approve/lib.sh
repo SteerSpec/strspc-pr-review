@@ -64,7 +64,11 @@ fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 # stdout, which would otherwise end up in the caller's result. A retried call that
 # GitHub did complete fails on its second attempt (the branch or PR exists), so a
 # retry can fail a scenario but never pass one.
+#
+# The retry notes go to fd 3, a copy of stderr taken here, when the harness is
+# sourced. Callers that parse `gh ... 2>&1` would otherwise read them as output.
 GH_TRANSIENT_RE='HTTP 5[0-9][0-9]|Something went wrong while executing your query'
+exec 3>&2
 gh() {
   local retries="${E2E_GH_RETRIES:-3}" delay="${E2E_GH_RETRY_DELAY:-10}" attempt=1 rc out err input=""
   local stdin=false
@@ -82,7 +86,7 @@ gh() {
       rm -f "$out" "$err"
       return "$rc"
     fi
-    warn "transient GitHub error on gh ${1:-} ${2:-}, retry $attempt of $retries: $(head -c 160 "$err")"
+    warn "transient GitHub error on gh ${1:-} ${2:-}, retry $attempt of $retries: $(head -c 160 "$err")" 2>&3
     sleep $((attempt * delay))
     attempt=$((attempt + 1))
   done
@@ -182,7 +186,9 @@ close_pr() {
 # reopen the PR once to trigger it again.
 NUDGE_AFTER="${E2E_NUDGE_AFTER:-120}"
 wait_for_ci() {
-  local pr_num="$1" deadline head_sha result total=0 pending nudge_at nudged=false
+  # total stays "unread" until a check-runs response is read, so the final
+  # message can tell "no CI" from "could not see".
+  local pr_num="$1" deadline head_sha result total=unread pending nudge_at nudged=false
   deadline=$(( $(date +%s) + TIMEOUT ))
   nudge_at=$(( $(date +%s) + NUDGE_AFTER ))
   log "waiting for CI checks on PR #$pr_num to complete…"
@@ -213,16 +219,21 @@ wait_for_ci() {
     fi
     if [[ "$total" == "0" ]] && ! $nudged && (( $(date +%s) >= nudge_at )); then
       warn "GitHub started no CI on PR #$pr_num in ${NUDGE_AFTER}s; reopening it to trigger CI again"
-      if ! { gh pr close -R "$REPO" "$pr_num" >/dev/null && gh pr reopen -R "$REPO" "$pr_num" >/dev/null; }; then
-        warn "could not reopen PR #$pr_num"
-      fi
+      # A failed close or reopen can leave the PR closed, so stop rather than poll it.
+      gh pr close -R "$REPO" "$pr_num" >/dev/null ||
+        fail "wait_for_ci: could not close PR #$pr_num to trigger CI again"
+      gh pr reopen -R "$REPO" "$pr_num" >/dev/null ||
+        fail "wait_for_ci: closed PR #$pr_num to trigger CI again, and could not reopen it"
       nudged=true
     fi
     sleep "$POLL_INTERVAL"
   done
-  [[ "$total" == "0" ]] &&
-    fail "wait_for_ci: GitHub never started CI on PR #$pr_num, even after a reopen. That is GitHub, not the action"
-  fail "wait_for_ci: timed out waiting for CI on PR #$pr_num"
+  case "$total:$nudged" in
+    unread:*) fail "wait_for_ci: could not read the check runs on PR #$pr_num in ${TIMEOUT}s" ;;
+    0:true) fail "wait_for_ci: GitHub never started CI on PR #$pr_num, even after a reopen. That is GitHub, not the action" ;;
+    0:false) fail "wait_for_ci: no CI check appeared on PR #$pr_num in ${TIMEOUT}s" ;;
+    *) fail "wait_for_ci: timed out waiting for CI on PR #$pr_num" ;;
+  esac
 }
 
 # The optional second argument is a regex the approval's body must match. The

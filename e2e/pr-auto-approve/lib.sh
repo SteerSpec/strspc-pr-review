@@ -24,6 +24,9 @@
 #   E2E_CALLER_WORKFLOW     — the sandbox's caller workflow file (default: pr-auto-approve.yml)
 #   E2E_BOT_TOKEN           — token for the approver login, which authors the PR
 #                             some scenarios need from a second identity
+#   E2E_GH_RETRIES, E2E_GH_RETRY_DELAY — retries of a gh call on a transient error (3, 10s)
+#   E2E_NUDGE_AFTER         — seconds without CI on a PR before reopening it once (120)
+#   E2E_POLL_INTERVAL       — seconds between polls (10)
 #   E2E_EXPECT_SHA          — the commit that must stay pinned in the sandbox's caller
 #                             for the whole run. CI sets it; unset skips the check
 
@@ -40,7 +43,7 @@ REVIEWER="${E2E_REVIEWER_LOGIN:-my-bot}"
 APPROVER_LOGIN="${E2E_APPROVER_LOGIN:-my-bot}"
 BASE_BRANCH="${E2E_BASE_BRANCH:-main}"
 TIMEOUT="${E2E_TIMEOUT:-180}"
-POLL_INTERVAL=10
+POLL_INTERVAL="${E2E_POLL_INTERVAL:-10}"
 APPROVE_CHECK_PATTERN="${E2E_APPROVE_CHECK_PATTERN:-auto-approve}"
 CALLER_WORKFLOW="${E2E_CALLER_WORKFLOW:-pr-auto-approve.yml}"
 LOG_DIR="${E2E_LOG_DIR:-$(mktemp -d)}"
@@ -53,6 +56,37 @@ log()  { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Every gh call in the harnesses goes through this, and retries GitHub's transient
+# failures: a 5xx, or GraphQL's "Something went wrong" catch-all. Anything else,
+# a 4xx or a refused merge, fails at once, so a real refusal still fails its
+# scenario. Only the last attempt's output is kept: gh prints an error body to
+# stdout, which would otherwise end up in the caller's result. A retried call that
+# GitHub did complete fails on its second attempt (the branch or PR exists), so a
+# retry can fail a scenario but never pass one.
+GH_TRANSIENT_RE='HTTP 5[0-9][0-9]|Something went wrong while executing your query'
+gh() {
+  local retries="${E2E_GH_RETRIES:-3}" delay="${E2E_GH_RETRY_DELAY:-10}" attempt=1 rc out err input=""
+  local stdin=false
+  [[ " $* " == *" --input - "* ]] && { input=$(cat); stdin=true; }
+  out=$(mktemp) err=$(mktemp)
+  while true; do
+    if $stdin; then
+      command gh "$@" >"$out" 2>"$err" <<<"$input" && rc=0 || rc=$?
+    else
+      command gh "$@" >"$out" 2>"$err" && rc=0 || rc=$?
+    fi
+    if ((rc == 0 || attempt > retries)) || ! grep -Eq "$GH_TRANSIENT_RE" "$err"; then
+      cat "$out"
+      cat "$err" >&2
+      rm -f "$out" "$err"
+      return "$rc"
+    fi
+    warn "transient GitHub error on gh ${1:-} ${2:-}, retry $attempt of $retries: $(head -c 160 "$err")"
+    sleep $((attempt * delay))
+    attempt=$((attempt + 1))
+  done
+}
 
 # Portable single-line base64 encoding — GitHub's Contents API rejects
 # wrapped or newline-terminated payloads. Works on macOS (BSD) and Linux (GNU).
@@ -142,9 +176,15 @@ close_pr() {
 }
 
 # Wait until all non-auto-approve check runs on the PR head are completed.
+#
+# GitHub sometimes starts no workflow at all for a PR. A queued job already has a
+# check run, so none after NUDGE_AFTER seconds means none is coming: close and
+# reopen the PR once to trigger it again.
+NUDGE_AFTER="${E2E_NUDGE_AFTER:-120}"
 wait_for_ci() {
-  local pr_num="$1" deadline head_sha result total pending
+  local pr_num="$1" deadline head_sha result total=0 pending nudge_at nudged=false
   deadline=$(( $(date +%s) + TIMEOUT ))
+  nudge_at=$(( $(date +%s) + NUDGE_AFTER ))
   log "waiting for CI checks on PR #$pr_num to complete…"
   while (( $(date +%s) < deadline )); do
     if ! head_sha=$(gh api "repos/$REPO/pulls/$pr_num" -q .head.sha 2>&1); then
@@ -171,8 +211,17 @@ wait_for_ci() {
       log "CI checks completed ($total check(s))"
       return 0
     fi
+    if [[ "$total" == "0" ]] && ! $nudged && (( $(date +%s) >= nudge_at )); then
+      warn "GitHub started no CI on PR #$pr_num in ${NUDGE_AFTER}s; reopening it to trigger CI again"
+      if ! { gh pr close -R "$REPO" "$pr_num" >/dev/null && gh pr reopen -R "$REPO" "$pr_num" >/dev/null; }; then
+        warn "could not reopen PR #$pr_num"
+      fi
+      nudged=true
+    fi
     sleep "$POLL_INTERVAL"
   done
+  [[ "$total" == "0" ]] &&
+    fail "wait_for_ci: GitHub never started CI on PR #$pr_num, even after a reopen. That is GitHub, not the action"
   fail "wait_for_ci: timed out waiting for CI on PR #$pr_num"
 }
 

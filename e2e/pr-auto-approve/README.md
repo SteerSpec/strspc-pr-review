@@ -134,6 +134,10 @@ test, so a PR's action code can read that token. If it reached production, a PR 
 | `E2E_BASE_BRANCH` | `main` | Base branch PRs target |
 | `E2E_TIMEOUT` | `180` | Seconds to wait per assertion |
 | `E2E_GRACE` | `15` | Seconds to wait before asserting no approval. The expected decision has already been seen by then |
+| `E2E_GH_RETRIES` | `3` | Retries of a `gh` call that hits a transient GitHub error: a 5xx, or GraphQL's "Something went wrong". Nothing else is retried |
+| `E2E_GH_RETRY_DELAY` | `10` | Seconds before the first retry. Each later retry waits that much longer |
+| `E2E_NUDGE_AFTER` | `120` | Seconds with no CI check on a PR before it is closed and reopened, once, to trigger CI again |
+| `E2E_POLL_INTERVAL` | `10` | Seconds between polls |
 | `E2E_APPROVE_CHECK_PATTERN` | `auto-approve` | Check name substring to exclude from CI polling |
 | `E2E_CALLER_WORKFLOW` | `pr-auto-approve.yml` | The sandbox's caller workflow file |
 

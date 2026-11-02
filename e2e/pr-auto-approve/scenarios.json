@@ -58,7 +58,7 @@
       "group": "core",
       "profile": "base",
       "decision": "approved",
-      "reason": "^copilot-clean \\(",
+      "reason": "^copilot-clean \\(review [0-9]+, verdict 'Approval recommended', no open issues\\)",
       "inputs": [
         "bot-login",
         "bot-github-token",
@@ -68,6 +68,32 @@
       ],
       "rules": [
         "APPROVE-004"
+      ]
+    },
+    {
+      "name": "no-overview",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^latest Copilot review has no verdict overview",
+      "inputs": [
+        "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-004"
+      ]
+    },
+    {
+      "name": "no-review-quota",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^no Copilot review yet \\(its last attempt errored",
+      "inputs": [
+        "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-020"
       ]
     },
     {
@@ -455,7 +481,6 @@
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
     "APPROVE-018": "The caller's substring filter runs first and needs a near-match branch; unit tests cover the exact match.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
-    "APPROVE-020": "A synthetic reviewer cannot produce a failed Copilot run, so this waits for the real tier.",
     "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
   }
 }

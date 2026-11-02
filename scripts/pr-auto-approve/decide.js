@@ -158,7 +158,11 @@ function countSuppressedComments(body) {
 // (2026-10-31), 25 of 70 such reviews named a concrete defect or finding in the
 // verdict sentence, e.g. .github#9, "Two hidden findings ... were omitted from the
 // published review". So it is a repo's choice, not the default. That sentence is
-// free prose, and is deliberately not parsed to tell the two apart.
+// free prose, and is deliberately not parsed to tell the two apart: a keyword
+// match caught 18 of those 25 with 2 false positives. The same holds under
+// "Approval recommended": 1 of 166 clean green reviews in that sample said an
+// issue remained (strspc-CLI#147, round 3 of 3, so the rounds rule approved it
+// anyway). That is an accepted risk, not a gap this gate can close.
 //
 // This gate proves a review clean rather than looking for known problems, so a
 // wording it has not seen is a skip, not silence. Same reasoning as the
@@ -210,11 +214,15 @@ function overviewVerdict(body) {
   return heading ? heading[1] : '';
 }
 
-// Why an overview review body blocks approval; '' when it does not, which
-// includes every body that is not an overview. Completes "latest Copilot review …".
+// Why a review body blocks approval; '' when it proves the review clean.
+// Completes "latest Copilot review …". A body that is not an overview proves
+// nothing: Copilot has posted only overviews since 2026-10 (852 sampled across
+// SteerSpec, no legacy "generated no new comments" body since 2026-08), and the
+// non-overview bodies seen since were reviews of nothing. An empty body skips
+// for the same reason.
 function overviewBlocker(body, cleanOn = 'verdict') {
   const verdict = overviewVerdict(body);
-  if (verdict === null) return '';
+  if (verdict === null) return 'has no verdict overview';
   const verdictPasses = APPROVAL_VERDICT_RE.test(verdict)
     || (cleanOn === 'no-open-issues' && CLOSER_LOOK_VERDICT_RE.test(verdict));
   if (!verdictPasses) return `has verdict '${verdict || 'none'}'`;
@@ -233,17 +241,32 @@ function overviewBlocker(body, cleanOn = 'verdict') {
   return '';
 }
 
-// Copilot posts a COMMENTED review with zero inline comments when its run fails
-// (observed 2026-10-29, SteerSpec/strspc-rules#83): "Copilot encountered an
-// error and was unable to review this pull request. You can try again by
-// re-requesting a review." That is the absence of a review, not a clean one, so
-// it must neither approve as copilot-clean nor count toward the rounds threshold.
-// Anchored and COMMENTED-only: a review that merely quotes the phrase, or a
-// CHANGES_REQUESTED review, must never be filtered out (that would fail open).
+// Copilot posts a COMMENTED review with zero inline comments when it reviewed
+// nothing. Three wordings seen in production:
+//   - its run failed (SteerSpec/strspc-rules#83): "Copilot encountered an error
+//     and was unable to review this pull request. You can try again by
+//     re-requesting a review.";
+//   - the requester is out of quota (SteerSpec/strspc-pr-review#87, three in a
+//     row): "Copilot was unable to review this pull request because the user who
+//     requested the review has reached their quota limit.";
+//   - every changed file is excluded (SteerSpec/strspc-rules#87): "Copilot wasn't
+//     able to review any files in this pull request.", as its own line and under
+//     a "🟢 Approval recommended" heading.
+// Each is the absence of a review, not a clean one, so it must neither approve
+// as copilot-clean nor count toward the rounds threshold. Anchored to the start
+// of the body or of a line, and COMMENTED-only: a review that quotes a phrase
+// inline, or a CHANGES_REQUESTED review, must never be filtered out (that would
+// fail open).
+const NO_REVIEW_BODY_RES = [
+  /^Copilot encountered an error and was unable to review this pull request\./i,
+  /^Copilot was unable to review this pull request because\b/i,
+];
+const NO_FILES_REVIEWED_RE = /^Copilot wasn['’]t able to review any files in this pull request\./im;
 function isErroredReview(review) {
-  return review.state === 'COMMENTED'
-    && /^Copilot encountered an error and was unable to review this pull request\./i
-      .test(String(review.body || '').trim());
+  if (review.state !== 'COMMENTED') return false;
+  const body = String(review.body || '').trim();
+  return NO_REVIEW_BODY_RES.some((re) => re.test(body))
+    || NO_FILES_REVIEWED_RE.test(body.replace(FENCED_CODE_RE, ''));
 }
 
 // Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
@@ -1401,9 +1424,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     // Names the verdict the approval relied on. Only a verdict that passed gets
     // here, so nothing PR-derived reaches the approval's body.
     const verdict = overviewVerdict(latest.body);
-    reason = verdict
-      ? `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`
-      : `copilot-clean (review ${latest.id}, state=${latest.state})`;
+    reason = `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`;
   }
 
   // Every PR field the decision above was computed from is re-read here, so a

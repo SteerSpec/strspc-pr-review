@@ -82,7 +82,8 @@ it did. See [Troubleshooting](#troubleshooting).
 | ----- | --- |
 | **No inline comments** | Copilot left nothing to resolve |
 | **No suppressed-comments block in the body** | Copilot's summary can read as clean while findings sit in a collapsed block, and those comments are absent from the review-comments API, so only a body scan sees them |
-| **A clean overview, when the body has one** | Since October 2026 Copilot opens its review body with a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. The verdict must be `Approval recommended`, the body must state `No open issues`, list no previously missed issue, and collapse only the change summary and resolved issues. Any other verdict, section or wording skips. [`copilot-clean-on`](#approval-rules) can also pass `Needs a closer look`; see [Passing Needs a closer look](#passing-needs-a-closer-look) |
+| **A clean overview** | Since October 2026 Copilot opens its review body with a verdict such as `🟢 Approval recommended`, then the issues still open across all rounds. The verdict must be `Approval recommended`, the body must state `No open issues`, list no previously missed issue, and collapse only the change summary and resolved issues. Any other verdict, section or wording skips, and so does a body with no overview at all, including an empty one or the older `generated no new comments` summary. [`copilot-clean-on`](#approval-rules) can also pass `Needs a closer look`; see [Passing Needs a closer look](#passing-needs-a-closer-look) |
+| **Copilot reviewed something** | Copilot also posts a review when it reviewed nothing: its run failed, the requester ran out of quota, or every changed file is excluded from review (`Copilot wasn't able to review any files`, even under a green verdict). Such a review is ignored: it never approves and never counts as a round |
 | **The review names the current head commit** | A push dismisses the bot's approval under branch protection but leaves Copilot's `COMMENTED` review in place, so without this the new commit would inherit a verdict on the old one. A review with no commit can't prove freshness and is treated the same way |
 
 GitHub has changed the suppressed block's wording at least once (`Comments suppressed due to low
@@ -485,7 +486,7 @@ requirement: everything they do is documented on this page.
 | Input | Default | Description |
 | ----- | ------- | ----------- |
 | `request-copilot-review` | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. Failures only warn |
-| `copilot-error-retries` | `0` | Times to re-request Copilot's review on the same commit when its review errored ("unable to review this pull request"). Errored reviews never approve or count as rounds. `0` disables, and failures only warn |
+| `copilot-error-retries` | `0` | Times to re-request Copilot's review on the same commit when Copilot reviewed nothing: its run errored, the requester was out of quota, or no changed file could be reviewed. Such reviews never approve or count as rounds. `0` disables, and failures only warn |
 | `wait-for-copilot-seconds` | `0` | Seconds to wait for Copilot's review (its check run when it's the **last** check still running, or the review itself when no check run exists) instead of skipping. `0` disables. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow) |
 
 ### Tokens
@@ -581,11 +582,12 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `reason` | Cause and fix |
 | -------- | ------------- |
 | `no Copilot review yet` | Copilot hasn't reviewed the PR. Enable **automatic Copilot code review**, see [Prerequisites](#prerequisites) |
-| `no Copilot review yet (its last attempt errored; …)` | Copilot's run failed ("unable to review this pull request"), and that review is ignored, not counted as clean. The text after `;` says whether the action re-requested it (`copilot-error-retries`), ran out of retries, or you should re-request it by hand |
+| `no Copilot review yet (its last attempt errored; …)` | Copilot reviewed nothing: its run failed, the requester ran out of quota, or no changed file could be reviewed. That review is ignored, not counted as clean or as a round. A PR whose files Copilot can't review never gets a clean review, so it needs a human approval. The text after `;` says whether the action re-requested it (`copilot-error-retries`), ran out of retries, or you should re-request it by hand |
 | `latest Copilot review requested changes` | Copilot posted `CHANGES_REQUESTED`, which always blocks. Address the feedback and push |
 | `latest Copilot review has N comments` | Copilot left inline comments and the round count is below `rounds-threshold` (default 3). Resolve them, or let more rounds accrue |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed suppressed-comments block in the review body. Open the review, expand the section, and act on it, or let more rounds accrue |
 | `latest Copilot review has verdict '…'`<br>`lists N open issue(s)`<br>`lists a previously missed issue`<br>`has section '…'`<br>`does not state no open issues` | The review's overview doesn't show it as clean, even with no new inline comments. Read the review body, fix or resolve what it lists, and push for a new review, or let more rounds accrue. `Needs a closer look` often leaves nothing to fix: read the sentence under the verdict, then have a human approve, or see [Passing Needs a closer look](#passing-needs-a-closer-look). A verdict or section you don't recognise may mean Copilot changed its wording |
+| `latest Copilot review has no verdict overview` | The review body isn't in Copilot's overview format, so it can't prove the review clean. Copilot has posted only overviews since October 2026: check that the reviewer really is Copilot, or let more rounds accrue |
 | `latest Copilot review is for an older commit (...)` | You pushed after Copilot reviewed, so its verdict predates the current head. Wait for Copilot to re-review the new commit |
 | `latest Copilot review has no commit_id...` | The review carries no commit, so it can't be tied to the head. This is unexpected from real Copilot reviews, so check the reviewer really is Copilot and not a synthetic review posted without a `commit_id` |
 
@@ -730,7 +732,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 375 unit tests, no external dependencies
+npm test               # 381 unit tests, no external dependencies
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

@@ -134,7 +134,7 @@ test('only the aggregate job in e2e.yml reports as e2e', () => {
   const names = [...workflow.matchAll(/^ {4}name: (.+)$/gm)].map((m) => m[1]);
   assert.deepEqual(
     names.filter((n) => /\be2e\b/.test(n) && !/group/.test(n)),
-    ["${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}"],
+    ["${{ needs.plan.outputs.partial == 'true' && 'e2e-partial' || 'e2e' }}"],
   );
 });
 

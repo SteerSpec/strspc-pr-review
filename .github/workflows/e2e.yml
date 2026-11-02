@@ -44,6 +44,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       groups: ${{ steps.groups.outputs.groups }}
+      partial: ${{ steps.groups.outputs.partial }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,8 +61,12 @@ jobs:
               else . as $m | [.groups[] | select(. as $g | any($m.scenarios[];
                 .group == $g and (.name as $n | $named | index($n))))]
               end' e2e/pr-auto-approve/scenarios.json)
+          # Partial only if a name was given: input of nothing but spaces runs them all.
+          partial=false
+          [ -n "${SCENARIOS// /}" ] && partial=true
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
-          echo "groups: $groups"
+          echo "partial=$partial" >> "$GITHUB_OUTPUT"
+          echo "groups: $groups, partial: $partial"
 
   suite:
     name: group ${{ matrix.group }}
@@ -139,9 +144,10 @@ jobs:
   # The check the e2e-main ruleset requires. It fails on a cancelled or skipped
   # group too, so it can't pass on anything less than every group passing.
   # A partial run reports under its own name, so it can't stand in for the full
-  # suite: as `e2e` on the same commit, it would replace a failed check.
+  # suite: as `e2e` on the same commit, it would replace a failed check. If plan
+  # fails, the name falls back to e2e, which fails too: a failure can't pass a gate.
   e2e:
-    name: ${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}
+    name: ${{ needs.plan.outputs.partial == 'true' && 'e2e-partial' || 'e2e' }}
     needs: [plan, suite]
     if: always() && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest

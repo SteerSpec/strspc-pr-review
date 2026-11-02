@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.27",
-    "timestamp": "2026-10-31T20:35:57Z",
-    "hash": "blake3:ce986a2c6f713c2cdfcb5a43bef9e0338eb3674de034989f7386e66ecd881da6"
+    "version": "0.1.29",
+    "timestamp": "2026-11-02T20:45:46Z",
+    "hash": "blake3:dfc274e8c742c6c65f9e785672d35a25a4f8548186517a26520c83659fe9e97b"
   },
   "rules": [
     {
@@ -40,9 +40,9 @@
     },
     {
       "id": "APPROVE-004",
-      "revision": 2,
+      "revision": 3,
       "state": "D",
-      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments and, when its body carries a verdict overview, states no open or previously missed issues and gives either an approval verdict or, when the copilot-clean-on input is set to no-open-issues, the Needs a closer look verdict.",
+      "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments, and whose body carries a verdict overview, without which no body counts as clean, stating no open or previously missed issues and giving either an approval verdict or, when the copilot-clean-on input is set to no-open-issues, the Needs a closer look verdict.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
@@ -184,9 +184,9 @@
     },
     {
       "id": "APPROVE-020",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "A Copilot run that failed or was cancelled MUST NOT count as a Copilot review: it MUST NOT satisfy APPROVE-004 or count toward the rounds threshold.",
+      "body": "A Copilot review in which Copilot reviewed nothing, because its run failed or was cancelled, the requester had reached their quota, or every changed file was excluded from review, MUST NOT count as a Copilot review: it MUST NOT satisfy APPROVE-004 or count toward the rounds threshold.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null

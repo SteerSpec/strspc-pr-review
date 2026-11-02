@@ -28,6 +28,14 @@ const DEFAULT_CHECK_RUNS = [
   },
 ];
 
+function withReviewDefaults(r) {
+  if (!r || typeof r !== 'object') return r;
+  const out = { ...r };
+  if (!('commit_id' in out)) out.commit_id = 'deadbeef';
+  if (!('body' in out)) out.body = overviewBody();
+  return out;
+}
+
 function makeFakeGithub({
   checkRuns = DEFAULT_CHECK_RUNS,
   reviews = [],
@@ -84,12 +92,11 @@ function makeFakeGithub({
         // for the many fixtures that aren't about freshness. Tests that exercise the
         // staleness guard set commit_id explicitly (including `commit_id: undefined`
         // to represent a review that carries no commit at all).
+        // Likewise a review with no `body` key gets a clean overview body, the only
+        // shape that can approve; tests about the body set it explicitly
+        // (including `body: undefined`).
         listReviews: async () => ({
-          data: reviews.map((r) =>
-            r && typeof r === 'object' && !('commit_id' in r)
-              ? { ...r, commit_id: 'deadbeef' }
-              : r,
-          ),
+          data: reviews.map((r) => withReviewDefaults(r)),
         }),
         listCommentsForReview: async ({ review_id }) => ({
           data: reviewComments[review_id] || [],
@@ -897,8 +904,15 @@ test('skip: a CHANGES_REQUESTED review is not mistaken for an errored one', asyn
   assert.equal(calls.createReview.length, 0);
 });
 
-test('approve: a COMMENTED review that only quotes the error text stays eligible', async () => {
+test('approve: a COMMENTED review that only quotes the no-review texts stays eligible', async () => {
   const core = makeCore();
+  const quoted = [
+    `> ${ERRORED_BODY}`,
+    '',
+    '> Copilot wasn\'t able to review any files in this pull request.',
+    '',
+    'This PR handles the "Copilot wasn\'t able to review any files in this pull request." body.',
+  ].join('\n');
   const { github, calls } = makeFakeGithub({
     reviews: [
       {
@@ -906,7 +920,7 @@ test('approve: a COMMENTED review that only quotes the error text stays eligible
         state: 'COMMENTED',
         submitted_at: '2026-10-29T10:00:00Z',
         user: COPILOT,
-        body: `Generated no new comments.\n\n> ${ERRORED_BODY}`,
+        body: overviewBody({ extra: quoted }),
       },
     ],
     reviewComments: { 7: [] },
@@ -915,6 +929,182 @@ test('approve: a COMMENTED review that only quotes the error text stays eligible
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
   assert.match(result.reason, /copilot-clean \(review 7/);
   assert.equal(calls.createReview.length, 1);
+});
+
+// Real production bodies of reviews in which Copilot reviewed nothing:
+// SteerSpec/strspc-pr-review#87 (quota, three in a row) and
+// SteerSpec/strspc-rules#87 (no reviewable files, under a green verdict).
+const QUOTA_BODY = 'Copilot was unable to review this pull request because the user who requested the review '
+  + 'has reached their quota limit.';
+const NO_FILES_LINE = 'Copilot wasn\'t able to review any files in this pull request. Check if the **Files changed** in '
+  + 'this pull request are included in [default exclusions](https://docs.github.com/en/copilot/reference/review-excluded-files).';
+const NO_FILES_BODY = [
+  '### 🟢 Approval recommended',
+  '',
+  'The review identifies no active issues, and the change is limited to correcting Markdown table delimiter spacing.',
+  '',
+  NO_FILES_LINE,
+].join('\n');
+
+test('skip: a quota-limited Copilot review is no review', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [{ id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: QUOTA_BODY }],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'no Copilot review yet (its last attempt hit the requester\'s quota; re-request a review)');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: an unknown "unable to review" reason stays the latest review and blocks', async () => {
+  // Dropping it would let review 1, an older clean review of the same head, approve.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT },
+      {
+        id: 2, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT,
+        body: 'Copilot was unable to review this pull request because of a reason not seen before.',
+      },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.reason, 'latest Copilot review has no verdict overview');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('a quota review that follows an errored one names the quota', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: QUOTA_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.match(result.reason, /its last attempt hit the requester's quota/);
+});
+
+test('an errored review that follows a quota one still says errored', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T11:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: QUOTA_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.match(result.reason, /its last attempt errored/);
+});
+
+test('skip: a review of no files blocks, even under a clean verdict', async () => {
+  for (const body of [NO_FILES_BODY, overviewBody({ extra: NO_FILES_LINE })]) {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body }],
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'latest Copilot review says it could not review any files');
+    assert.equal(calls.createReview.length, 0);
+  }
+});
+
+test('skip: a later no-files review of the head never falls back to an earlier clean one', async () => {
+  // The no-files line can be matched anywhere in the body, so such a review is
+  // kept as the latest rather than dropped: dropping it would let review 1 approve.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: overviewBody() },
+      {
+        id: 2, state: 'COMMENTED', submitted_at: '2026-10-29T11:00:00Z', user: COPILOT,
+        body: overviewBody({ verdict: '🟡 Changes recommended', issues: OPEN_ISSUES, extra: NO_FILES_LINE }),
+      },
+    ],
+    reviewComments: { 1: [], 2: [{ id: 1 }] },
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('approve: a no-files review does not stop the rounds rule once enough real rounds exist', async () => {
+  // APPROVE-005: the rounds rule approves whatever the latest review says, so
+  // that no review can wedge a PR.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-20T10:00:00Z', commit_id: 'c0ffee01', user: COPILOT },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-10-20T11:00:00Z', commit_id: 'c0ffee02', user: COPILOT },
+      { id: 3, state: 'COMMENTED', submitted_at: '2026-10-20T12:00:00Z', commit_id: 'c0ffee03', user: COPILOT },
+      { id: 4, state: 'COMMENTED', submitted_at: '2026-10-20T13:00:00Z', user: COPILOT, body: NO_FILES_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.reason, '3-rounds (3 Copilot reviews)');
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('skip: reviews that reviewed nothing do not count toward the rounds threshold', async () => {
+  // #87's shape: two real rounds on older commits, then quota bodies, with a
+  // no-files review in between.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-20T10:00:00Z', commit_id: 'c0ffee01', user: COPILOT, body: overviewBody() },
+      { id: 2, state: 'COMMENTED', submitted_at: '2026-10-20T11:00:00Z', commit_id: 'c0ffee02', user: COPILOT, body: overviewBody() },
+      { id: 3, state: 'COMMENTED', submitted_at: '2026-10-20T12:00:00Z', user: COPILOT, body: QUOTA_BODY },
+      { id: 4, state: 'COMMENTED', submitted_at: '2026-10-20T13:00:00Z', user: COPILOT, body: NO_FILES_BODY },
+      { id: 5, state: 'COMMENTED', submitted_at: '2026-10-20T14:00:00Z', user: COPILOT, body: QUOTA_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.doesNotMatch(result.reason, /rounds/);
+  assert.equal(result.reason, 'latest Copilot review says it could not review any files');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('a CHANGES_REQUESTED review that mentions no reviewable files still blocks', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [{ id: 7, state: 'CHANGES_REQUESTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: NO_FILES_BODY }],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.match(result.reason, /requested changes/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+// Copilot has posted only overview bodies since 2026-10 (852 sampled, none
+// legacy). A body the gate cannot read as an overview cannot prove the review
+// clean, whatever it says.
+test('skip: a legacy "generated no new comments" body is not proof of a clean review', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [{
+      id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT,
+      body: 'Copilot reviewed 3 out of 3 changed files in this pull request and generated no new comments.',
+    }],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /latest Copilot review has no verdict overview/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('skip: an empty Copilot review body is not proof of a clean review', async () => {
+  for (const body of ['', undefined, null, '   \n']) {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body }],
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'skip', `body ${JSON.stringify(body)}`);
+    assert.match(result.reason, /latest Copilot review has no verdict overview/);
+    assert.equal(calls.createReview.length, 0);
+  }
 });
 
 // -- copilot-error-retries ----------------------------------------------
@@ -972,7 +1162,7 @@ test('retries=2: first errored review on the head is re-requested', async () => 
 test('retries=1: a second errored review on the head exhausts the budget', async () => {
   const { result, requested } = await runWithRetries('1', [erroredOnHead(7, '10'), erroredOnHead(8, '11')]);
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /errored 2 time\(s\) on this head; retries exhausted/);
+  assert.match(result.reason, /reviewed nothing 2 time\(s\) on this head; retries exhausted/);
   assert.equal(requested.length, 0);
 });
 
@@ -1099,7 +1289,7 @@ test('skip: suppressed count is reported (plural)', async () => {
   assert.equal(calls.createReview.length, 0);
 });
 
-test('approve: absent review body does not block a clean approval', async () => {
+test('approve: a clean overview without a suppressed block is copilot-clean', async () => {
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
     reviews: [
@@ -1108,29 +1298,7 @@ test('approve: absent review body does not block a clean approval', async () => 
         state: 'COMMENTED',
         submitted_at: '2026-04-15T10:00:00Z',
         user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
-        body: null,
-      },
-    ],
-    reviewComments: { 7: [] },
-  });
-  const result = await decide({ github, context: makeContext(), core });
-  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
-  assert.match(result.reason, /copilot-clean/);
-  assert.equal(calls.createReview.length, 1);
-});
-
-test('approve: clean body without a suppressed block is still copilot-clean', async () => {
-  const core = makeCore();
-  const { github, calls } = makeFakeGithub({
-    reviews: [
-      {
-        id: 7,
-        state: 'COMMENTED',
-        submitted_at: '2026-04-15T10:00:00Z',
-        user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
-        body:
-          '## Pull request overview\n\nCopilot reviewed 3 out of 3 changed files in '
-          + 'this pull request and generated no new comments.',
+        body: overviewBody(),
       },
     ],
     reviewComments: { 7: [] },
@@ -1621,10 +1789,11 @@ test('skip: a verdict that only contains the closer-look wording', async () => {
   }
 });
 
-test('approve: a review with no overview keeps the plain copilot-clean reason', async () => {
-  const { result } = await decideOnBody('## Pull request overview\n\nLooks fine.');
-  assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
-  assert.equal(result.reason, 'copilot-clean (review 7, state=COMMENTED)');
+test('skip: a review body with no overview is not proof of a clean review', async () => {
+  const { result, calls } = await decideOnBody('## Pull request overview\n\nLooks fine.');
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'latest Copilot review has no verdict overview');
+  assert.equal(calls.createReview.length, 0);
 });
 
 test('skip: overview review with a verdict this code has never seen', async () => {
@@ -1659,17 +1828,23 @@ test('skip: a verdict heading with the marker removed keeps the same rules', asy
   assert.equal(calls.createReview.length, 0);
 });
 
-test('approve: an overview quoted in a code fence is not a review verdict', async () => {
+test('skip: an overview quoted in a code fence does not make a body an overview', async () => {
   const body = [
     '## Pull request overview',
     '',
     'Copilot reviewed 3 out of 3 changed files in this pull request and generated no new comments.',
     '',
     '```',
-    overviewBody({ verdict: '🟡 Changes recommended', issues: OPEN_ISSUES }),
+    overviewBody(),
     '```',
   ].join('\n');
   const { result } = await decideOnBody(body);
+  assert.equal(result.reason, 'latest Copilot review has no verdict overview');
+});
+
+test('approve: a verdict quoted in a code fence is not the review verdict', async () => {
+  const fenced = ['```', overviewBody({ verdict: '🟡 Changes recommended' }), '```'].join('\n');
+  const { result } = await decideOnBody(overviewBody({ extra: fenced }));
   assert.equal(result.decision, 'approved', `got skip: ${result.reason}`);
 });
 
@@ -2630,7 +2805,7 @@ function makePollingGithub(sequence, opts = {}) {
     github.rest.pulls.listReviews = async () => {
       const rs = reviewSequence[Math.min(state.reviewCalls, reviewSequence.length - 1)];
       state.reviewCalls++;
-      return { data: rs.map((r) => (r && !('commit_id' in r) ? { ...r, commit_id: 'deadbeef' } : r)) };
+      return { data: rs.map((r) => withReviewDefaults(r)) };
     };
   }
   return { github, calls, state };

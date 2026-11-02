@@ -73,7 +73,23 @@ open_pr_as_bot() {
 scenario_copilot_clean() {
   open_pr clean "e2e: copilot-clean"
   wait_for_ci "$PR_NUM"
-  post_review "$PR_NUM" COMMENT "LGTM (e2e clean review, 0 line comments)"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+}
+
+# A body with no verdict overview can't prove the review clean.
+scenario_no_overview() {
+  open_pr no-overview "e2e: review with no overview"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "Copilot reviewed 1 out of 1 changed files in this pull request and generated no new comments."
+  expect_outcome "$PR_NUM"
+}
+
+# Copilot's wording when it reviewed nothing (strspc-pr-review#87): not a review.
+scenario_no_review_quota() {
+  open_pr no-review "e2e: quota-limited review"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "Copilot was unable to review this pull request because the user who requested the review has reached their quota limit."
   expect_outcome "$PR_NUM"
 }
 

@@ -134,9 +134,9 @@ inputs:
     required: false
     default: '0'
     description: >-
-      Times to re-request Copilot's review on the same head commit when its
-      review errored ("unable to review this pull request"). Errored reviews
-      never approve or count as rounds either way. 0 (default) disables the
+      Times to re-request Copilot's review on the same head commit when it
+      reviewed nothing because its run errored or the requester was out of
+      quota. Such reviews never approve or count as rounds either way. 0 (default) disables the
       automatic re-request. Uses github-token; failures only log a warning.
   allow-no-checks:
     required: false

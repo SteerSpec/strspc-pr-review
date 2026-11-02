@@ -158,7 +158,11 @@ function countSuppressedComments(body) {
 // (2026-10-31), 25 of 70 such reviews named a concrete defect or finding in the
 // verdict sentence, e.g. .github#9, "Two hidden findings ... were omitted from the
 // published review". So it is a repo's choice, not the default. That sentence is
-// free prose, and is deliberately not parsed to tell the two apart.
+// free prose, and is deliberately not parsed to tell the two apart: a keyword
+// match caught 18 of those 25 with 2 false positives. The same holds under
+// "Approval recommended": 1 of 166 clean green reviews in that sample said an
+// issue remained (strspc-CLI#147, round 3 of 3, so the rounds rule approved it
+// anyway). That is an accepted risk, not a gap this gate can close.
 //
 // This gate proves a review clean rather than looking for known problems, so a
 // wording it has not seen is a skip, not silence. Same reasoning as the
@@ -210,11 +214,15 @@ function overviewVerdict(body) {
   return heading ? heading[1] : '';
 }
 
-// Why an overview review body blocks approval; '' when it does not, which
-// includes every body that is not an overview. Completes "latest Copilot review …".
+// Why a review body blocks approval; '' when it proves the review clean.
+// Completes "latest Copilot review …". A body that is not an overview proves
+// nothing: Copilot has posted only overviews since 2026-10 (852 sampled across
+// SteerSpec, no legacy "generated no new comments" body since 2026-08), and the
+// non-overview bodies seen since were reviews of nothing. An empty body skips
+// for the same reason.
 function overviewBlocker(body, cleanOn = 'verdict') {
   const verdict = overviewVerdict(body);
-  if (verdict === null) return '';
+  if (verdict === null) return 'has no verdict overview';
   const verdictPasses = APPROVAL_VERDICT_RE.test(verdict)
     || (cleanOn === 'no-open-issues' && CLOSER_LOOK_VERDICT_RE.test(verdict));
   if (!verdictPasses) return `has verdict '${verdict || 'none'}'`;
@@ -233,18 +241,52 @@ function overviewBlocker(body, cleanOn = 'verdict') {
   return '';
 }
 
-// Copilot posts a COMMENTED review with zero inline comments when its run fails
-// (observed 2026-10-29, SteerSpec/strspc-rules#83): "Copilot encountered an
-// error and was unable to review this pull request. You can try again by
-// re-requesting a review." That is the absence of a review, not a clean one, so
-// it must neither approve as copilot-clean nor count toward the rounds threshold.
-// Anchored and COMMENTED-only: a review that merely quotes the phrase, or a
-// CHANGES_REQUESTED review, must never be filtered out (that would fail open).
-function isErroredReview(review) {
-  return review.state === 'COMMENTED'
-    && /^Copilot encountered an error and was unable to review this pull request\./i
-      .test(String(review.body || '').trim());
+// Copilot posts a COMMENTED review with zero inline comments when it reviewed
+// nothing. Three wordings seen in production:
+//   - its run failed (SteerSpec/strspc-rules#83): "Copilot encountered an error
+//     and was unable to review this pull request. You can try again by
+//     re-requesting a review.";
+//   - the requester is out of quota (SteerSpec/strspc-pr-review#87, three in a
+//     row): "Copilot was unable to review this pull request because the user who
+//     requested the review has reached their quota limit.";
+//   - every changed file is excluded (SteerSpec/strspc-rules#87): "Copilot wasn't
+//     able to review any files in this pull request.", see reviewedNoFiles.
+// The first two are the absence of a review, not a clean one, so they must
+// neither approve as copilot-clean nor count toward the rounds threshold, and
+// are dropped from the review list. Anchored to the start of the body, which
+// Copilot writes in full, and COMMENTED-only: a review that quotes a phrase, or
+// a CHANGES_REQUESTED review, must never be filtered out (that would fail open).
+// Exact production wordings only, matched against the start of the whole body,
+// deliberately not each line: a line can carry PR-derived prose, and a match
+// drops the review, which lets an older review of the same head become the
+// latest. An unknown variant (another reason, a preamble) therefore stays a
+// review, which cannot pass as clean (it has no overview) and at worst counts as
+// a round, as before.
+const NO_REVIEW_CAUSES = [
+  [/^Copilot encountered an error and was unable to review this pull request\./i, 'errored'],
+  [/^Copilot was unable to review this pull request because the user who requested the review has reached their quota limit\./i, 'hit the requester\'s quota'],
+];
+// Why Copilot reviewed nothing in this review, for the skip reason; '' when it
+// is a real review.
+function noReviewCause(review) {
+  if (review.state !== 'COMMENTED') return '';
+  const body = String(review.body || '').trim();
+  const hit = NO_REVIEW_CAUSES.find(([re]) => re.test(body));
+  return hit ? hit[1] : '';
 }
+const isErroredReview = (review) => noReviewCause(review) !== '';
+
+// The no-files sentence comes after a verdict heading and a summary, so it can
+// only be matched on a line of its own, where PR-derived prose could put it too.
+// Dropping such a review would fail open: an older clean review of the same head
+// would become the latest. So it stays the latest review and blocks approval
+// (see the copilot-clean path), and only stops counting as a round, which can
+// only delay an approval.
+const NO_FILES_REVIEWED_RE = /^Copilot wasn['’]t able to review any files in this pull request\./im;
+function reviewedNoFiles(review) {
+  return NO_FILES_REVIEWED_RE.test(String(review.body || '').replace(FENCED_CODE_RE, ''));
+}
+const countRounds = (copilotReviews) => copilotReviews.filter((r) => !reviewedNoFiles(r)).length;
 
 // Trimmed so a whitespace-only value counts as empty, not as a (bogus) login.
 function getBotLogin() { return (process.env.AUTO_APPROVE_BOT_LOGIN || '').trim(); }
@@ -594,7 +636,7 @@ async function dismissReview({ github, botGithub, params }) {
 
 function copilotHasReviewedHead(copilotReviews, headSha, threshold) {
   if (copilotReviews.length === 0) return false;
-  if (copilotReviews.length >= threshold) return true;
+  if (countRounds(copilotReviews) >= threshold) return true;
   const latest = copilotReviews[copilotReviews.length - 1];
   return latest.commit_id === headSha;
 }
@@ -1234,14 +1276,19 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // Errored reviews OF THE CURRENT HEAD: the retry budget is per head SHA, and
   // is recomputed on every pass so it always reflects the latest snapshot.
   let erroredOnHead = 0;
+  // What the newest of those reviews said happened, for the skip reason.
+  let lastNoReview = { at: -Infinity, cause: 'errored' };
   const selectCopilotReviews = (rs) => {
     erroredOnHead = 0;
     return rs
       .filter((r) => {
         if (!copilotMatches(r.user)) return false;
-        if (isErroredReview(r)) {
+        const cause = noReviewCause(r);
+        if (cause) {
           sawErroredReview = true;
           if (r.commit_id === headSha) erroredOnHead += 1;
+          const at = Date.parse(r.submitted_at || '') || 0;
+          if (at >= lastNoReview.at) lastNoReview = { at, cause };
           return false;
         }
         return r.state !== 'DISMISSED' && r.state !== 'PENDING' && r.submitted_at;
@@ -1291,7 +1338,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     });
     return {
       requested: `re-requested, retry ${erroredOnHead}/${retries}`,
-      exhausted: `errored ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
+      exhausted: `reviewed nothing ${erroredOnHead} time(s) on this head; retries exhausted, re-request a review`,
       pending: `re-request already pending, retry ${erroredOnHead}/${retries}`,
       disabled: 're-request a review',
       none: 're-request a review',
@@ -1301,7 +1348,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   if (copilotReviews.length === 0 && !copilotOptional) {
     if (!sawErroredReview) return setDecision('skip', 'no Copilot review yet');
-    return setDecision('skip', `no Copilot review yet (its last attempt errored; ${await erroredReviewNote()})`);
+    return setDecision('skip', `no Copilot review yet (its last attempt ${lastNoReview.cause}; ${await erroredReviewNote()})`);
   }
 
   // Always honor the latest Copilot signal: if the most recent non-dismissed
@@ -1345,8 +1392,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     reason = `release-pr (${pr.head.ref}${release.source ? `, nothing unpromoted on ${release.source}` : ''})`;
   } else if (copilotOptional) {
     reason = `copilot-optional (type ${commitType || 'none'}, rounds-by-type 0)`;
-  } else if (copilotReviews.length >= threshold) {
-    reason = `${threshold}-rounds (${copilotReviews.length} Copilot reviews)`;
+  } else if (countRounds(copilotReviews) >= threshold) {
+    reason = `${threshold}-rounds (${countRounds(copilotReviews)} Copilot reviews)`;
   } else {
     // A COMMENTED review is NOT dismissed when a push invalidates approvals, so
     // once `dismiss_stale_reviews_on_push` fires, Copilot's review of the PREVIOUS
@@ -1366,11 +1413,14 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       // A current-head attempt that errored on top of this stale review is the
       // same situation as the no-review case: nothing is coming unless the
       // review is re-requested, so retry here too.
-      const erroredNote = erroredOnHead > 0 ? `; its attempt on this head errored (${await erroredReviewNote()})` : '';
+      const erroredNote = erroredOnHead > 0 ? `; its attempt on this head ${lastNoReview.cause} (${await erroredReviewNote()})` : '';
       return setDecision(
         'skip',
         `latest Copilot review ${detail}, waiting for re-review${erroredNote}`,
       );
+    }
+    if (reviewedNoFiles(latest)) {
+      return setDecision('skip', 'latest Copilot review says it could not review any files');
     }
     const comments = await github.paginate(
       github.rest.pulls.listCommentsForReview,
@@ -1401,9 +1451,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     // Names the verdict the approval relied on. Only a verdict that passed gets
     // here, so nothing PR-derived reaches the approval's body.
     const verdict = overviewVerdict(latest.body);
-    reason = verdict
-      ? `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`
-      : `copilot-clean (review ${latest.id}, state=${latest.state})`;
+    reason = `copilot-clean (review ${latest.id}, verdict '${verdict.replace(/^[^\p{L}\p{N}]+/u, '')}', no open issues)`;
   }
 
   // Every PR field the decision above was computed from is re-read here, so a

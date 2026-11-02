@@ -408,7 +408,7 @@ finishes rather than skipping with `check still running`:
         with:
           bot-login: ${{ vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN }}
           bot-github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
-          wait-for-copilot-seconds: '300'   # or set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS
+          wait-for-copilot-seconds: '600'   # or set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS
 ```
 
 Since 2026-10 Copilot no longer registers a check run on the head SHA at all: it posts its review from
@@ -418,7 +418,13 @@ review lands waits for it instead of skipping with `no Copilot review yet`. Afte
 runs are fetched again and the CI gates re-applied, so a rerun or a late check still blocks.
 
 It's opt-in (`0` by default) because waiting consumes billable Actions minutes on private repos, and
-it's free on public ones. Copilot typically reports within about 3 minutes, so `300` leaves headroom.
+it's free on public ones. Use `600`. Across 422 Copilot reviews on 241 SteerSpec PRs (2026-11-02),
+Copilot finished a median 111s after the last CI check, but more than 300s after it on 11% of them and
+more than 600s after on 3%. The wait ends as soon as Copilot finishes, so the larger budget costs
+minutes only when the review is slow or never comes.
+
+No budget covers a review that starts long after CI, such as a re-requested review or one Copilot
+picks up late: the next push or CI run re-evaluates the PR.
 
 Both waits are deliberately narrow:
 

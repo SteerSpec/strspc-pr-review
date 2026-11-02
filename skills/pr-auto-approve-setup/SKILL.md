@@ -161,7 +161,7 @@ Copilot finishes *after* CI — the common ordering — nothing wakes the action
 unapproved forever.
 
 ```yaml
-wait-for-copilot-seconds: '300'
+wait-for-copilot-seconds: '600'
 ```
 
 Makes the CI-triggered run wait for Copilot instead of skipping: for its check run while that is

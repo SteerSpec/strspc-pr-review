@@ -256,14 +256,15 @@ function overviewBlocker(body, cleanOn = 'verdict') {
 // are dropped from the review list. Anchored to the start of the body, which
 // Copilot writes in full, and COMMENTED-only: a review that quotes a phrase, or
 // a CHANGES_REQUESTED review, must never be filtered out (that would fail open).
-// Matched against the start of the whole body, deliberately not each line: a
-// line can carry PR-derived prose, and a match drops the review. An unknown
-// variant with a preamble therefore stays a review, which cannot pass as clean
-// (it has no overview) and at worst counts as a round, as before.
+// Exact production wordings only, matched against the start of the whole body,
+// deliberately not each line: a line can carry PR-derived prose, and a match
+// drops the review, which lets an older review of the same head become the
+// latest. An unknown variant (another reason, a preamble) therefore stays a
+// review, which cannot pass as clean (it has no overview) and at worst counts as
+// a round, as before.
 const NO_REVIEW_CAUSES = [
   [/^Copilot encountered an error and was unable to review this pull request\./i, 'errored'],
-  [/^Copilot was unable to review this pull request because the user who requested the review has reached their quota limit\b/i, 'hit the requester\'s quota'],
-  [/^Copilot was unable to review this pull request because\b/i, 'was refused'],
+  [/^Copilot was unable to review this pull request because the user who requested the review has reached their quota limit\./i, 'hit the requester\'s quota'],
 ];
 // Why Copilot reviewed nothing in this review, for the skip reason; '' when it
 // is a real review.

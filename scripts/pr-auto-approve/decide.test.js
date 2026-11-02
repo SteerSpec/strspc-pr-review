@@ -957,6 +957,23 @@ test('skip: a quota-limited Copilot review is no review', async () => {
   assert.equal(calls.createReview.length, 0);
 });
 
+test('skip: an unknown "unable to review" reason stays the latest review and blocks', async () => {
+  // Dropping it would let review 1, an older clean review of the same head, approve.
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT },
+      {
+        id: 2, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT,
+        body: 'Copilot was unable to review this pull request because of a reason not seen before.',
+      },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.reason, 'latest Copilot review has no verdict overview');
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('a quota review that follows an errored one names the quota', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub({

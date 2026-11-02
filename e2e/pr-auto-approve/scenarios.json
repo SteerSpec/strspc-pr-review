@@ -88,7 +88,7 @@
       "group": "core",
       "profile": "base",
       "decision": "skip",
-      "reason": "^no Copilot review yet \\(its last attempt errored",
+      "reason": "^no Copilot review yet \\(its last attempt hit the requester's quota",
       "inputs": [
         "test-copilot-logins"
       ],

@@ -953,24 +953,69 @@ test('skip: a quota-limited Copilot review is no review', async () => {
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /no Copilot review yet/);
+  assert.equal(result.reason, 'no Copilot review yet (its last attempt hit the requester\'s quota; re-request a review)');
   assert.equal(calls.createReview.length, 0);
 });
 
-test('skip: a review of no files is no review, even under a clean verdict', async () => {
+test('a quota review that follows an errored one names the quota', async () => {
   const core = makeCore();
-  const body = overviewBody({ extra: NO_FILES_LINE });
+  const { github } = makeFakeGithub({
+    reviews: [
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T09:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: QUOTA_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.match(result.reason, /its last attempt hit the requester's quota/);
+});
+
+test('an errored review that follows a quota one still says errored', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({
+    reviews: [
+      { id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T11:00:00Z', user: COPILOT, body: ERRORED_BODY },
+      { id: 6, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: QUOTA_BODY },
+    ],
+  });
+  const result = await decide({ github, context: makeContext(), core });
+  assert.match(result.reason, /its last attempt errored/);
+});
+
+test('skip: a review of no files blocks, even under a clean verdict', async () => {
+  for (const body of [NO_FILES_BODY, overviewBody({ extra: NO_FILES_LINE })]) {
+    const core = makeCore();
+    const { github, calls } = makeFakeGithub({
+      reviews: [{ id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body }],
+    });
+    const result = await decide({ github, context: makeContext(), core });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, 'latest Copilot review says it could not review any files');
+    assert.equal(calls.createReview.length, 0);
+  }
+});
+
+test('skip: a later no-files review of the head never falls back to an earlier clean one', async () => {
+  // The no-files line can be matched anywhere in the body, so such a review is
+  // kept as the latest rather than dropped: dropping it would let review 1 approve.
+  const core = makeCore();
   const { github, calls } = makeFakeGithub({
-    reviews: [{ id: 7, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body }],
+    reviews: [
+      { id: 1, state: 'COMMENTED', submitted_at: '2026-10-29T10:00:00Z', user: COPILOT, body: overviewBody() },
+      {
+        id: 2, state: 'COMMENTED', submitted_at: '2026-10-29T11:00:00Z', user: COPILOT,
+        body: overviewBody({ verdict: '🟡 Changes recommended', issues: OPEN_ISSUES, extra: NO_FILES_LINE }),
+      },
+    ],
+    reviewComments: { 1: [], 2: [{ id: 1 }] },
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /no Copilot review yet/);
   assert.equal(calls.createReview.length, 0);
 });
 
 test('skip: reviews that reviewed nothing do not count toward the rounds threshold', async () => {
-  // #87's shape: two real rounds on older commits, then three quota bodies.
+  // #87's shape: two real rounds on older commits, then quota bodies, with a
+  // no-files review in between.
   const core = makeCore();
   const { github, calls } = makeFakeGithub({
     reviews: [
@@ -983,7 +1028,8 @@ test('skip: reviews that reviewed nothing do not count toward the rounds thresho
   });
   const result = await decide({ github, context: makeContext(), core });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /older commit \(c0ffee02\)/);
+  assert.doesNotMatch(result.reason, /rounds/);
+  assert.equal(result.reason, 'latest Copilot review says it could not review any files');
   assert.equal(calls.createReview.length, 0);
 });
 
@@ -1082,7 +1128,7 @@ test('retries=2: first errored review on the head is re-requested', async () => 
 test('retries=1: a second errored review on the head exhausts the budget', async () => {
   const { result, requested } = await runWithRetries('1', [erroredOnHead(7, '10'), erroredOnHead(8, '11')]);
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /errored 2 time\(s\) on this head; retries exhausted/);
+  assert.match(result.reason, /reviewed nothing 2 time\(s\) on this head; retries exhausted/);
   assert.equal(requested.length, 0);
 });
 

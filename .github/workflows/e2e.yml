@@ -101,13 +101,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           me=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          # Every page of every status short of completed, so no run is missed
+          # however old it is.
+          ahead() {
+            local s
+            for s in requested waiting pending queued in_progress; do
+              gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/e2e.yml/runs?status=$s&per_page=100" \
+                --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID
+                  and (.run_started_at < \"$me\" or (.run_started_at == \"$me\" and .id < $GITHUB_RUN_ID)))
+                  | .id" || return 1
+            done
+          }
           while true; do
-            earlier=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e.yml \
-              --limit 50 --json databaseId,status,startedAt \
-              --jq "[.[] | select(.status != \"completed\" and .databaseId != $GITHUB_RUN_ID
-                and (.startedAt < \"$me\" or (.startedAt == \"$me\" and .databaseId < $GITHUB_RUN_ID)))]
-                | length") || earlier=unknown
-            [ "$earlier" = 0 ] && break
+            earlier=$(ahead | wc -l) || earlier=unknown
+            [ "$earlier" -eq 0 ] 2>/dev/null && break
             sleep 60
           done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

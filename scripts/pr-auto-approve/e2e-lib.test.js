@@ -128,6 +128,14 @@ test('wait_for_ci does not blame GitHub CI when it never read the check runs', {
   assert.equal(r.calls.filter((c) => c.args[0] === 'pr').length, 0);
 });
 
+test('a CI timeout says which head it watched and what was still pending', { skip }, () => {
+  const running = [0, '{"check_runs":[{"name":"check","status":"in_progress"}]}', ''];
+  const polls = Array.from({ length: 500 }, () => [HEAD, running]).flat();
+  const r = run(polls, 'wait_for_ci 7', { env: { ...WAIT, E2E_TIMEOUT: '1' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /timed out waiting for CI on PR #7: at head abc123, 1 of 1 check\(s\) still pending/);
+});
+
 test('a retry note stays out of output captured with 2>&1', { skip }, () => {
   const r = run([BAD_GATEWAY, [0, 'abc123', '']], 'x=$(gh api repos/o/r 2>&1); printf "<%s>" "$x"');
   assert.equal(r.status, 0, r.stderr);

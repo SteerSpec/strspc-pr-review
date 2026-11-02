@@ -232,7 +232,7 @@ wait_for_ci() {
     unread:*) fail "wait_for_ci: could not read the check runs on PR #$pr_num in ${TIMEOUT}s" ;;
     0:true) fail "wait_for_ci: GitHub never started CI on PR #$pr_num, even after a reopen. That is GitHub, not the action" ;;
     0:false) fail "wait_for_ci: no CI check appeared on PR #$pr_num in ${TIMEOUT}s" ;;
-    *) fail "wait_for_ci: timed out waiting for CI on PR #$pr_num" ;;
+    *) fail "wait_for_ci: timed out waiting for CI on PR #$pr_num: at head $head_sha, $pending of $total check(s) still pending" ;;
   esac
 }
 

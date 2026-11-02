@@ -228,7 +228,7 @@ jobs:
           # 0 above are skipped. Disable the ruleset's automatic review first.
           request-copilot-review: ${{ vars.STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW }}
 
-          # STRONGLY RECOMMENDED if Copilot reviews your PRs: set it to 300.
+          # STRONGLY RECOMMENDED if Copilot reviews your PRs: set it to 600.
           # Without it, a PR whose Copilot review lands AFTER CI is never
           # re-evaluated and sits unapproved forever: Copilot's check_run is
           # GITHUB_TOKEN-created, and any workflow run Copilot itself triggers is

@@ -9,11 +9,15 @@ name: E2E
 # develop. On main it is the gate on a release. To check a branch before that,
 # dispatch this workflow on it, with scenarios to run only some.
 #
+# One job per group in scenarios.json, one after another, so "Re-run failed jobs"
+# repeats only the groups that failed. The e2e job then reports them as one check,
+# which is the one the e2e-main ruleset requires.
+#
 # pull_request, not pull_request_target: this has to run the PR's own harness and
 # action. So a same-repo PR can read the two secrets by editing this file, and its
 # action code runs in the sandbox with the sandbox's approval token. That is why
 # all three tokens reach only the sandbox and none is the production BOT_TOKEN.
-# Fork PRs get no secrets, so the job's if: skips them.
+# Fork PRs get no secrets, so the jobs' if: skips them.
 on:
   pull_request:
     branches: [main]
@@ -29,16 +33,49 @@ on:
 permissions:
   contents: read
 
+env:
+  SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
-  e2e:
-    # A partial run reports under its own name, so it can't stand in for the full
-    # suite: as `e2e` on the same commit, it would replace a failed check.
-    name: ${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}
+  # Picks the groups to run: all of them, or those holding a named scenario.
+  plan:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+      - id: groups
+        env:
+          SCENARIOS: ${{ inputs.scenarios }}
+        run: |
+          groups=$(jq -c --arg s "$SCENARIOS" '
+            ($s | split(" ") | map(select(. != ""))) as $named
+            | ($named - [.scenarios[].name]) as $unknown
+            | if ($unknown | length) > 0 then error("unknown scenario: \($unknown | join(" "))")
+              elif ($named | length) == 0 then .groups
+              else . as $m | [.groups[] | select(. as $g | any($m.scenarios[];
+                .group == $g and (.name as $n | $named | index($n))))]
+              end' e2e/pr-auto-approve/scenarios.json)
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+          echo "groups: $groups"
+
+  suite:
+    name: group ${{ matrix.group }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      # One sandbox, so one group at a time. A failed group doesn't stop the rest.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
     # Longer than the steps' own timeouts added up, on purpose. A step timeout fails
     # the check. A job timeout cancels it, and decide.js counts cancelled as passed.
-    timeout-minutes: 240
+    timeout-minutes: 200
     permissions:
       contents: read
       actions: read
@@ -52,36 +89,60 @@ jobs:
       E2E_APPROVER_LOGIN: cnslr-bt
       # A sandbox run can sit queued for minutes, and the default 180s isn't enough.
       E2E_TIMEOUT: 420
-      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      # One sandbox serves every run, so they take turns, oldest first. Not a
-      # concurrency: group, which cancels a displaced run: decide.js counts a
-      # cancelled check as passed, so that run would look like a pass.
-      - name: Wait for earlier runs
+      # One sandbox serves every run, so runs take turns in the order they started.
+      # Not a concurrency: group, which cancels a displaced run: decide.js counts a
+      # cancelled check as passed. Ordered by run_started_at, not run id, because a
+      # re-run keeps its id but starts again: by id, it would overlap a newer run.
+      # Every group waits, because a re-run group may follow another run's groups.
+      - name: Wait for runs that started earlier
         timeout-minutes: 120
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          me=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
           while true; do
             earlier=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow e2e.yml \
-              --limit 50 --json databaseId,status \
-              --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID and .status != \"completed\")] | length") \
-              || earlier=unknown
+              --limit 50 --json databaseId,status,startedAt \
+              --jq "[.[] | select(.status != \"completed\" and .databaseId != $GITHUB_RUN_ID
+                and (.startedAt < \"$me\" or (.startedAt == \"$me\" and .databaseId < $GITHUB_RUN_ID)))]
+                | length") || earlier=unknown
             [ "$earlier" = 0 ] && break
             sleep 60
           done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SHA }}
+      # Each group puts its own commit under test, since another run may have
+      # used the sandbox since the group before it.
       - name: Put this commit under test
         timeout-minutes: 5
         run: e2e/pr-auto-approve/sandbox.sh sync "$SHA"
-      - name: Run the suite
-        timeout-minutes: 100
+      - name: Run the group
+        timeout-minutes: 60
         # run.sh rejects any name that isn't a scenario.
         run: |
           read -r -a selected <<<"$SCENARIOS"
-          e2e/pr-auto-approve/run.sh "${selected[@]}"
+          e2e/pr-auto-approve/run.sh --group "$GROUP" "${selected[@]}"
         env:
           E2E_EXPECT_SHA: ${{ env.SHA }}
+          GROUP: ${{ matrix.group }}
           SCENARIOS: ${{ inputs.scenarios }}
+
+  # The check the e2e-main ruleset requires. It fails on a cancelled or skipped
+  # group too, so it can't pass on anything less than every group passing.
+  # A partial run reports under its own name, so it can't stand in for the full
+  # suite: as `e2e` on the same commit, it would replace a failed check.
+  e2e:
+    name: ${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}
+    needs: [plan, suite]
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          PLAN: ${{ needs.plan.result }}
+          SUITE: ${{ needs.suite.result }}
+        run: |
+          echo "plan: $PLAN, groups: $SUITE"
+          [ "$PLAN" = success ] && [ "$SUITE" = success ]

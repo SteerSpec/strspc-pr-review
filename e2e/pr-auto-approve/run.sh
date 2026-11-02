@@ -422,6 +422,16 @@ run_scenario() (
 
 require_gh "$REVIEWER"
 
+# --group runs only that group's scenarios, out of those named or else all of them.
+# e2e.yml runs one job per group, so a failed group can be re-run on its own.
+GROUP=""
+if [[ "${1:-}" == --group ]]; then
+  GROUP="${2:?usage: run.sh [--group NAME] [scenario...]}"
+  shift 2
+  jq -e --arg g "$GROUP" '.groups | index($g)' "$MANIFEST" >/dev/null ||
+    fail "unknown group: $GROUP (valid: $(jq -r '.groups | join(" ")' "$MANIFEST"))"
+fi
+
 mapfile -t ALL < <(jq -r '.scenarios[].name' "$MANIFEST")
 if (($# > 0)); then
   SELECTED=("$@")
@@ -431,6 +441,13 @@ fi
 for s in "${SELECTED[@]}"; do
   [[ " ${ALL[*]} " == *" $s "* ]] || fail "unknown scenario: $s (valid: ${ALL[*]})"
 done
+if [[ -n "$GROUP" ]]; then
+  mapfile -t SELECTED < <(printf '%s\n' "${SELECTED[@]}" | while read -r s; do
+    [[ "$(scenario_field "$s" group)" == "$GROUP" ]] && echo "$s"
+  done)
+  ((${#SELECTED[@]} > 0)) || fail "no selected scenario is in group $GROUP"
+  log "group: $GROUP"
+fi
 
 log "sandbox repo: $REPO"
 log "base branch: $BASE_BRANCH"

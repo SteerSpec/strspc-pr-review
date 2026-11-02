@@ -88,7 +88,11 @@ export E2E_REVIEWER_LOGIN=pleberre E2E_APPROVER_LOGIN=cnslr-bt
 
 e2e/pr-auto-approve/run.sh                 # every scenario
 e2e/pr-auto-approve/run.sh copilot-clean   # just these
+e2e/pr-auto-approve/run.sh --group release # one group: core, types, clean-on, promotion or release
 ```
+
+Every scenario belongs to a group in `scenarios.json`. A new scenario needs one, and `e2e.test.js` fails
+without it.
 
 ## CI
 
@@ -100,8 +104,13 @@ gh workflow run e2e.yml --ref my-branch                                    # eve
 gh workflow run e2e.yml --ref my-branch -f scenarios="draft release-clean"  # just these
 ```
 
-Runs share the sandbox, so each waits for earlier ones, oldest first. It doesn't use a `concurrency:` group,
-which would cancel a displaced run, and `decide.js` counts a cancelled check as passed.
+Each group runs as its own job, one after another, and a final `e2e` job reports them as one check. That
+check is the one `main` requires. When a group fails, **Re-run failed jobs** repeats only that group, not the
+whole suite of about 34 minutes. Each group syncs the sandbox first, which adds about a minute per group.
+
+Runs share the sandbox, so each group waits until no run that started earlier is still going. That is the
+start of the latest attempt, so a re-run waits for a run that began after the first attempt. It doesn't use a
+`concurrency:` group, which would cancel a displaced run, and `decide.js` counts a cancelled check as passed.
 
 Both secrets are fine-grained tokens limited to the sandbox:
 

@@ -113,6 +113,31 @@ test('every scenario states the outcome it asserts', () => {
   }
 });
 
+// e2e.yml runs one job per group, so a scenario outside every group never runs.
+test('every scenario belongs to a declared group', () => {
+  const groups = new Set(manifest.groups);
+  for (const s of manifest.scenarios) {
+    assert.ok(groups.has(s.group), `${s.name}: unknown group ${s.group}`);
+  }
+});
+
+test('every declared group has a scenario, and none is declared twice', () => {
+  assert.equal(new Set(manifest.groups).size, manifest.groups.length);
+  const used = new Set(manifest.scenarios.map((s) => s.group));
+  assert.deepEqual(manifest.groups.filter((g) => !used.has(g)), []);
+});
+
+// The e2e-main ruleset requires a check named e2e, and only the aggregate job may
+// carry it: a group job under that name would satisfy it on its own.
+test('only the aggregate job in e2e.yml reports as e2e', () => {
+  const workflow = read('.github/workflows/e2e.yml');
+  const names = [...workflow.matchAll(/^ {4}name: (.+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(
+    names.filter((n) => /\be2e\b/.test(n) && !/group/.test(n)),
+    ["${{ inputs.scenarios && 'e2e-partial' || 'e2e' }}"],
+  );
+});
+
 test('every scenario function in run.sh is listed in the manifest', () => {
   const listed = new Set(manifest.scenarios.map((s) => s.name.replaceAll('-', '_')));
   const orphans = [...harness.matchAll(/^scenario_([a-z0-9_]+)\(\)/gm)]

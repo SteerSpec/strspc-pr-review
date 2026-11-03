@@ -145,11 +145,11 @@ Runs share the sandbox, so each group waits until no run that started earlier is
 start of the latest attempt, so a re-run waits for a run that began after the first attempt. It doesn't use a
 `concurrency:` group, which would cancel a displaced run, and `decide.js` counts a cancelled check as passed.
 
-Both secrets are fine-grained tokens limited to the sandbox:
+Both secrets are fine-grained tokens limited to the e2e repos:
 
 | Secret | Stored on | Owner | Permissions |
 |---|---|---|---|
-| `E2E_ADMIN_TOKEN` | `SteerSpec/strspc-pr-review` | The enterprise owner | Contents, Pull requests, Variables and Workflows read and write; Actions read |
+| `E2E_ADMIN_TOKEN` | `SteerSpec/strspc-pr-review` | The enterprise owner, on the sandbox and the real-Copilot testbed | Contents, Pull requests, Variables and Workflows read and write; Actions and Secrets read |
 | `BOT_TOKEN_SANDBOX` | `SteerSpec/strspc-pr-review` and the sandbox | The approver | Contents and Pull requests read and write |
 
 **The sandbox's caller approves with `BOT_TOKEN_SANDBOX`, never an org secret.** It runs the commit under
@@ -188,6 +188,20 @@ sandbox must not have the automatic Copilot review ruleset or its docs half cann
 Each step commits a fixture from `fixtures/real/` in one commit, so one step is one Copilot review, and one
 premium request. The three scenarios push four times in all. Run it on demand and before a release, never on a
 schedule.
+
+`.github/workflows/e2e-copilot.yml` runs it in CI, with the action pinned to the commit under test. It runs on a
+promotion PR (`develop` into `main`), the release candidate, and on dispatch. It skips release-please's PRs,
+whose code `main` already holds. Runs take turns on the testbed as in `e2e.yml`. Its check, `e2e-copilot`, is
+not a required one, but on a promotion PR its failure still blocks the bot's approval, as any failed check does.
+
+```bash
+gh workflow run e2e-copilot.yml --ref my-branch                        # every scenario
+gh workflow run e2e-copilot.yml --ref my-branch -f scenarios=real-clean # just these
+```
+
+It uses `E2E_ADMIN_TOKEN`, which must cover the testbed too. Secrets read is for the check that
+`BOT_TOKEN_COPILOT` is set, so a run with no approval token fails before it spends a review. The testbed keeps
+whichever commit was tested last.
 
 ```bash
 e2e/pr-auto-approve/sandbox.sh --real sync "$(git rev-parse HEAD)"

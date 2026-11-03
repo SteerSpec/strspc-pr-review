@@ -211,8 +211,12 @@ body neither understands, and both would just skip. The oracle is jq so that it 
 the implementation against itself. `oracle.test.js` holds the two against each other on every body in `fixtures/`.
 
 The summary table says which run approved and whether it waited for Copilot's review. That is the proof for
-`wait-for-copilot-seconds`. It also says when no review reached `copilot-clean`, because then the approval path
-went untested against real Copilot.
+`wait-for-copilot-seconds`: when Copilot reviewed after CI finished, only a run that waited could approve, so
+`real-clean` fails if the approval came without one. When Copilot was first, nothing had to wait, and the table
+says the wait was not needed. It also says when no review reached `copilot-clean`, because then the approval
+path went untested against real Copilot.
+
+The probe accepts a finding's own collapsed block nested inside a section, recognised by its severity icon.
 
 The buggy fixture's tests pass, on purpose. A bug they caught would fail CI, and the action would skip on the
 check before reading Copilot's review.

@@ -135,8 +135,10 @@ real_decisions() {
 
 # Everything the oracle reads, from GitHub: the head, its first failed check, and
 # each review, with its inline comment count when it is Copilot's. Checks are read
-# as the action reads them: an unfinished run of the caller's own job is ignored, a
-# finished one still counts, and only the latest attempt of each (name, app) does.
+# as the action reads them: an unfinished check of the caller's job, auto-approve by
+# that exact name, is ignored, a finished one still counts, and only the latest
+# attempt of each (name, app) does. The run itself is over by now, so the action's
+# filter on its own run id has nothing left to drop.
 snapshot() {
   local pr="$1" head="$2" checks reviews id n
   checks=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100")
@@ -146,15 +148,15 @@ snapshot() {
     reviews=$(jq --argjson id "$id" --argjson n "$n" 'map(if .id == $id then .comments = $n else . end)' <<<"$reviews")
   done
   jq -n --arg head "$head" --argjson checks "$checks" --argjson reviews "$reviews" \
-    --argjson logins "$COPILOT_LOGINS" --argjson threshold "$THRESHOLD" --arg clean_on "$CLEAN_ON" --arg pattern "$APPROVE_CHECK_PATTERN" '{
+    --argjson logins "$COPILOT_LOGINS" --argjson threshold "$THRESHOLD" --arg clean_on "$CLEAN_ON" --arg job auto-approve '{
       head: $head, threshold: $threshold, clean_on: $clean_on, logins: $logins,
       failed_check: ([[$checks.check_runs[]
-        | select(((.name | contains($pattern)) and .status != "completed") | not)]
+        | select((.name == $job and .status != "completed") | not)]
         | group_by([.name, .app.id]) | map(max_by(.started_at // .completed_at // ""))
         | .[] | select(.status == "completed"
             and (.conclusion | IN("success", "neutral", "skipped", "cancelled", "stale") | not))
         | "\(.name) (\(.conclusion))"] | first),
-      checks: [$checks.check_runs[] | {name, app: .app.slug, status, conclusion}],
+      checks: [$checks.check_runs[] | {name, app: .app.slug, status, conclusion, completed_at}],
       reviews: [$reviews[] | .comments //= 0]}'
 }
 
@@ -235,6 +237,17 @@ judge_step() {
   [[ "${ACTUAL%% *}" == "$(jq -r .decision <<<"$expected")" && "${ACTUAL#* }" =~ $(jq -r .reason <<<"$expected") ]] ||
     fail "the action decided '$ACTUAL', the oracle expects $EXPECTED"
   ((DRIFT == 0)) || fail "drift in Copilot's output (above)"
+
+  # Copilot reviewed after CI finished, so only a run that waited could approve.
+  # A scenario claiming wait-for-copilot-seconds fails when the approval came
+  # without one. When Copilot was first, nothing had to wait; the summary says so.
+  WAIT_NEEDED=$(jq -r --arg h "$head" '. as $s
+    | ([.reviews[] | select(.commit_id == $h and (.user.login as $u | $s.logins | index($u))) | .submitted_at] | min) as $r
+    | ([.checks[] | select((.name | test("copilot"; "i") | not) and .name != "auto-approve" and .completed_at != null) | .completed_at] | max) as $c
+    | if $r != null and $c != null and $r > $c then 1 else 0 end' <<<"$snap")
+  if ((CLAIMS_WAIT && WAIT_NEEDED)) && [[ "${ACTUAL%% *}" == approved && "$VIA" != *waited* ]]; then
+    fail "Copilot reviewed after CI, yet the approving run (${VIA:-unknown}) did not wait: wait-for-copilot-seconds is not working"
+  fi
 }
 
 # In a subshell so `fail` ends the scenario, not the suite, and the trap closes
@@ -245,12 +258,16 @@ run_real_scenario() (
   trap 'warn "failed at copilot.sh:$LINENO: $BASH_COMMAND"' ERR
   local name="$1" title branch pr="" step i=0 since intent url steps
   PR_NUM=""
-  DRIFT=0 ACTUAL="" EXPECTED="" VIA=""
+  DRIFT=0 ACTUAL="" EXPECTED="" VIA="" WAIT_NEEDED=0 CLAIMS_WAIT=0
+  if jq -e --arg n "$name" '.scenarios[] | select(.name == $n) | .inputs | index("wait-for-copilot-seconds")' \
+      "$REAL_MANIFEST" >/dev/null; then
+    CLAIMS_WAIT=1
+  fi
   # shellcheck disable=SC2329  # invoked by the trap
   cleanup() {
     [[ -n "$PR_NUM" ]] && close_pr "$PR_NUM"
     # \x1f, not a tab: read collapses empty tab-separated fields.
-    printf '%s\x1f%s\x1f%s\n' "${ACTUAL:-none}" "${VIA:-}" "$DRIFT" >"$ROW_FILE"
+    printf '%s\x1f%s\x1f%s\x1f%s\n' "${ACTUAL:-none}" "${VIA:-}" "$DRIFT" "$WAIT_NEEDED" >"$ROW_FILE"
     return 0
   }
   trap cleanup EXIT
@@ -309,20 +326,21 @@ for s in "${SELECTED[@]}"; do
   run_real_scenario "$s"
   rc=$?
   set -e
-  actual="" via="" drifted=0
-  IFS=$'\x1f' read -r actual via drifted <"$ROW_FILE" || true
+  actual="" via="" drifted=0 needed=0
+  IFS=$'\x1f' read -r actual via drifted needed <"$ROW_FILE" || true
   intent=$(real_field "$s" intent)
   verdict=pass
   ((rc == 0)) || { verdict=FAIL; failed=$((failed + 1)); }
   [[ "${drifted:-0}" == 1 ]] && verdict="$verdict, drift"
   met=yes
   [[ "${actual%% *}" == "$intent" ]] || { met="no (wanted $intent)"; intent_missed=$((intent_missed + 1)); }
-  # A scenario claiming wait-for-copilot-seconds proves it only when the run that
-  # approved had to wait for Copilot's review.
+  # When Copilot reviewed before CI finished, nothing had to wait, so a scenario
+  # claiming wait-for-copilot-seconds passed without proving it. The failing case,
+  # Copilot after CI and no wait, has already failed the scenario.
   if jq -e --arg n "$s" '.scenarios[] | select(.name == $n) | .inputs | index("wait-for-copilot-seconds")' \
-      "$REAL_MANIFEST" >/dev/null && [[ "${actual%% *}" == approved && "$via" != *waited* ]]; then
-    warn "$s: approved, but no approving run waited for Copilot, so wait-for-copilot-seconds was not exercised"
-    met="$met; wait not exercised"
+      "$REAL_MANIFEST" >/dev/null && [[ "${actual%% *}" == approved && "${needed:-0}" != 1 ]]; then
+    warn "$s: Copilot reviewed before CI finished, so wait-for-copilot-seconds was not exercised"
+    met="$met; wait not needed"
   fi
   ROWS[$s]="| $s | $verdict ($((SECONDS - started))s) | $met | ${actual:-none} | ${via:-} |"
 done

@@ -23,7 +23,12 @@ def unfenced: gsub("```[\\s\\S]*?```"; "");
 def trimmed: sub("^\\s+"; "") | sub("\\s+$"; "");
 
 # Labels of the collapsed <summary> sections, tags stripped.
-def sections: [match("<summary\\b[^>]*>([\\s\\S]*?)</summary>"; "gi") | .captures[0].string | gsub("<[^>]*>"; "") | trimmed];
+def raw_sections: [match("<summary\\b[^>]*>([\\s\\S]*?)</summary>"; "gi") | .captures[0].string];
+def sections: [raw_sections[] | gsub("<[^>]*>"; "") | trimmed];
+
+# A finding's own collapsed block, nested in a section: its label opens with the
+# severity icon, e.g. <img … alt="Medium severity">, then the finding's title.
+def finding_label: test("<img\\b[^>]*\\balt=\"[A-Za-z]+ severity\"");
 
 # The text of the first heading, without the emoji in front. "" when none.
 def verdict: ([match("(?m)^#{1,6}\\s+([^\n]+?)\\s*$") | .captures[0].string] | first // "") | sub("^[^\\p{L}\\p{N}]+"; "");
@@ -84,7 +89,8 @@ def probe:
          (if ($u | test("<!--\\s*ccr-overview\\b[^>]*-->"; "i")) then empty else "no ccr-overview marker" end),
          (if (known_verdicts | index($v)) then empty else "unknown verdict heading '\($v)'" end),
          (if states_no_open_issues or open_issues != null then empty else "states neither 'No open issues' nor a count of open issues" end),
-         ((.body // "") | sections[] | select(known_section | not) | "unknown section '\(.)'"),
+         ((.body // "") | raw_sections[] | select(finding_label | not) | gsub("<[^>]*>"; "") | trimmed
+           | select(known_section | not) | "unknown section '\(.)'"),
          (if unlabelled_details then "a <details> block has no label" else empty end)
        ],
        warn: [

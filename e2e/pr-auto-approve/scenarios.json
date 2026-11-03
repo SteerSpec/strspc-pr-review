@@ -45,12 +45,20 @@
     "slack-channel": "The sandbox has no Slack workspace to assert against.",
     "slack-bot-token": "The sandbox has no Slack workspace to assert against."
   },
+  "groups": [
+    "core",
+    "types",
+    "clean-on",
+    "promotion",
+    "release"
+  ],
   "scenarios": [
     {
       "name": "copilot-clean",
+      "group": "core",
       "profile": "base",
       "decision": "approved",
-      "reason": "^copilot-clean \\(",
+      "reason": "^copilot-clean \\(review [0-9]+, verdict 'Approval recommended', no open issues\\)",
       "inputs": [
         "bot-login",
         "bot-github-token",
@@ -63,7 +71,34 @@
       ]
     },
     {
+      "name": "no-overview",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^latest Copilot review has no verdict overview",
+      "inputs": [
+        "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-004"
+      ]
+    },
+    {
+      "name": "no-review-quota",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^no Copilot review yet \\(its last attempt hit the requester's quota",
+      "inputs": [
+        "test-copilot-logins"
+      ],
+      "rules": [
+        "APPROVE-020"
+      ]
+    },
+    {
       "name": "copilot-with-comments",
+      "group": "core",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review has 1 comments",
@@ -76,6 +111,7 @@
     },
     {
       "name": "suppressed-comments",
+      "group": "core",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review has 1 suppressed comment",
@@ -88,6 +124,7 @@
     },
     {
       "name": "three-rounds",
+      "group": "core",
       "profile": "base",
       "decision": "approved",
       "reason": "^3-rounds \\(",
@@ -100,6 +137,7 @@
     },
     {
       "name": "changes-requested",
+      "group": "core",
       "profile": "base",
       "decision": "skip",
       "reason": "^latest Copilot review requested changes",
@@ -112,6 +150,7 @@
     },
     {
       "name": "draft",
+      "group": "core",
       "profile": "base",
       "decision": "none",
       "inputs": [],
@@ -119,6 +158,7 @@
     },
     {
       "name": "type-zero-docs",
+      "group": "types",
       "profile": "types",
       "decision": "approved",
       "reason": "^copilot-optional \\(type chore",
@@ -132,6 +172,7 @@
     },
     {
       "name": "type-zero-code",
+      "group": "types",
       "profile": "types",
       "decision": "skip",
       "reason": "^no Copilot review yet; .*touches files outside copilot-optional-paths",
@@ -145,6 +186,7 @@
     },
     {
       "name": "retitle-approves",
+      "group": "types",
       "profile": "types",
       "decision": "approved",
       "reason": "^copilot-optional \\(type chore",
@@ -157,6 +199,7 @@
     },
     {
       "name": "retitle-withdraws",
+      "group": "types",
       "profile": "types",
       "decision": "skip",
       "reason": "^no Copilot review yet",
@@ -169,6 +212,7 @@
     },
     {
       "name": "request-copilot",
+      "group": "types",
       "profile": "request-copilot",
       "decision": "approved",
       "reason": "^copilot-optional \\(type docs",
@@ -181,6 +225,7 @@
     },
     {
       "name": "clean-verdict-closer-look",
+      "group": "clean-on",
       "profile": "clean-verdict",
       "decision": "skip",
       "reason": "^latest Copilot review has verdict '.*Needs a closer look'",
@@ -193,6 +238,7 @@
     },
     {
       "name": "clean-open-closer-look",
+      "group": "clean-on",
       "profile": "clean-no-open-issues",
       "decision": "approved",
       "reason": "^copilot-clean \\(review [0-9]+, verdict 'Needs a closer look'",
@@ -205,6 +251,7 @@
     },
     {
       "name": "clean-open-with-issue",
+      "group": "clean-on",
       "profile": "clean-no-open-issues",
       "decision": "skip",
       "reason": "^latest Copilot review lists 1 open issue",
@@ -217,6 +264,7 @@
     },
     {
       "name": "clean-open-changes-recommended",
+      "group": "clean-on",
       "profile": "clean-no-open-issues",
       "decision": "skip",
       "reason": "^latest Copilot review has verdict '.*Changes recommended'",
@@ -229,6 +277,7 @@
     },
     {
       "name": "promotion-clean",
+      "group": "promotion",
       "profile": "routes",
       "decision": "approved",
       "reason": "^promotion \\(develop to main, 1 commit\\(s\\) from 1 approved PR\\(s\\)\\)",
@@ -241,6 +290,7 @@
     },
     {
       "name": "promotion-unapproved",
+      "group": "promotion",
       "profile": "routes",
       "decision": "skip",
       "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
@@ -253,6 +303,7 @@
     },
     {
       "name": "promotion-late-approval",
+      "group": "promotion",
       "profile": "routes",
       "decision": "skip",
       "reason": "^commit [0-9a-f]{8} came from #[0-9]+, which has no standing approval",
@@ -265,6 +316,7 @@
     },
     {
       "name": "promotion-title-feat",
+      "group": "promotion",
       "profile": "routes",
       "decision": "skip",
       "reason": "^promotion title type 'feat' would be counted twice",
@@ -277,6 +329,7 @@
     },
     {
       "name": "promotion-other-head",
+      "group": "promotion",
       "profile": "routes",
       "decision": "skip",
       "reason": "^no Copilot review yet",
@@ -289,6 +342,7 @@
     },
     {
       "name": "promotion-withdraw",
+      "group": "promotion",
       "profile": "routes",
       "decision": "skip",
       "reason": "^promotion title type 'feat' would be counted twice",
@@ -301,6 +355,7 @@
     },
     {
       "name": "release-clean",
+      "group": "release",
       "profile": "routes",
       "decision": "approved",
       "reason": "^release-pr \\(release-please--branches--main, nothing unpromoted on develop\\)",
@@ -314,6 +369,7 @@
     },
     {
       "name": "release-unpromoted",
+      "group": "release",
       "profile": "routes",
       "decision": "skip",
       "reason": "^develop has 1 unpromoted commit\\(s\\): [0-9a-f]{8} fix: ",
@@ -327,6 +383,7 @@
     },
     {
       "name": "release-hidden-chore",
+      "group": "release",
       "profile": "routes",
       "decision": "approved",
       "reason": "^release-pr \\(release-please--branches--main, nothing unpromoted on develop\\)",
@@ -340,6 +397,7 @@
     },
     {
       "name": "release-wrong-author",
+      "group": "release",
       "profile": "routes-other-author",
       "decision": "skip",
       "reason": "^release PR author [^ ]+ is not release-author",
@@ -353,6 +411,7 @@
     },
     {
       "name": "release-stranger-commit",
+      "group": "release",
       "profile": "routes",
       "decision": "skip",
       "reason": "^commit [0-9a-f]{8} is not by release-author",
@@ -366,6 +425,7 @@
     },
     {
       "name": "release-foreign-file",
+      "group": "release",
       "profile": "routes",
       "decision": "skip",
       "reason": "^release PR changes src/e2e-marker\\.txt, which release-please does not own",
@@ -379,6 +439,7 @@
     },
     {
       "name": "release-no-config",
+      "group": "release",
       "profile": "routes",
       "decision": "skip",
       "reason": "^cannot read release-please-config\\.json at main \\(404\\)",
@@ -392,6 +453,7 @@
     },
     {
       "name": "release-other-head",
+      "group": "release",
       "profile": "routes",
       "decision": "skip",
       "reason": "^no Copilot review yet",
@@ -419,7 +481,6 @@
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
     "APPROVE-018": "The caller's substring filter runs first and needs a near-match branch; unit tests cover the exact match.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
-    "APPROVE-020": "A synthetic reviewer cannot produce a failed Copilot run, so this waits for the real tier.",
     "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
   }
 }

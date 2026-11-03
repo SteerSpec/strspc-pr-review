@@ -134,9 +134,9 @@ inputs:
     required: false
     default: '0'
     description: >-
-      Times to re-request Copilot's review on the same head commit when its
-      review errored ("unable to review this pull request"). Errored reviews
-      never approve or count as rounds either way. 0 (default) disables the
+      Times to re-request Copilot's review on the same head commit when it
+      reviewed nothing because its run errored or the requester was out of
+      quota. Such reviews never approve or count as rounds either way. 0 (default) disables the
       automatic re-request. Uses github-token; failures only log a warning.
   allow-no-checks:
     required: false
@@ -160,8 +160,11 @@ inputs:
       the job), and GitHub holds runs Copilot triggers at "action_required"
       pending manual approval. Without this, a PR whose Copilot review lands
       AFTER CI is never re-evaluated. Opt-in because waiting consumes billable
-      Actions minutes on private repos (it is free on public ones); 300 is a
-      sensible starting point, as Copilot typically reports within ~3 minutes.
+      Actions minutes on private repos (it is free on public ones); 600 is a
+      sensible starting point: Copilot finished more than 300s after CI on 11%
+      of the reviews sampled, and more than 600s after on 3%. The wait ends as
+      soon as Copilot finishes, so a longer budget costs minutes only when the
+      review is slow or never comes.
       The wait is skipped when any other check is still running, since CI
       finishing re-triggers this workflow anyway.
   test-copilot-logins:

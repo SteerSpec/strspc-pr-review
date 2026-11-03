@@ -161,7 +161,7 @@ Copilot finishes *after* CI — the common ordering — nothing wakes the action
 unapproved forever.
 
 ```yaml
-wait-for-copilot-seconds: '300'
+wait-for-copilot-seconds: '600'
 ```
 
 Makes the CI-triggered run wait for Copilot instead of skipping: for its check run while that is
@@ -196,8 +196,9 @@ gets the default threshold. Keep `edited` in `pull_request_target.types` so reti
 re-evaluate. To stop Copilot reviewing those PRs at all, turn off the ruleset's automatic review and
 set `request-copilot-review: 'true'`.
 
-To retry automatically when Copilot's review errors ("unable to review this pull request"), set
-`copilot-error-retries: '2'`; the default `0` leaves the re-request to a human.
+To retry automatically when Copilot reviews nothing because its run errored or the requester was out
+of quota, set `copilot-error-retries: '2'`; the default `0` leaves the re-request to a human. A PR
+whose files are all excluded from Copilot review never gets a clean review: a human approves it.
 
 ### Make blocking checks required
 

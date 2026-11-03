@@ -28,7 +28,7 @@
         },
         "language": {
           "enum": ["en"],
-          "description": "The Realm's natural language as a BCP 47 tag (RLMMNFST-006). Top-level Realms only (RLM-018)."
+          "description": "The Realm's natural language as a BCP 47 tag (RLMMNFST-006). Top-level Realms only (RLM-022)."
         },
         "standards": {
           "type": "array",

@@ -178,5 +178,7 @@ variable; and a whitespace-only `BASE_BRANCH` proves `main` still passes the job
 ## Notes
 
 - Scenarios are sequential, because a profile changes repo variables and one sandbox serves them all.
+- `base-near-match` creates and deletes a base branch named `mai`, so that name is reserved for the
+  harness: the scenario refuses to start while it exists, and `sandbox.sh reset` deletes it.
 - `changes-requested` opens its PR as the bot, because GitHub refuses REQUEST_CHANGES from a PR's author.
 - Timeouts apply per assertion. Adjust `E2E_TIMEOUT` for slow CI environments.

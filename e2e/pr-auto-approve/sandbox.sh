@@ -177,6 +177,11 @@ reset_prs() {
     done < <(gh api --paginate "repos/$REPO/git/matching-refs/heads/$prefix" \
       --jq '.[].ref | ltrimstr("refs/heads/")')
   done
+  # base-near-match's base branch. The name is reserved for the harness: the
+  # scenario refuses to start while it exists, so a copy here was left by a run.
+  if has_branch mai; then
+    gh api -X DELETE "repos/$REPO/git/refs/heads/mai" >/dev/null
+  fi
 }
 
 # main only moves forward: the enterprise Compliance ruleset forbids a force-push

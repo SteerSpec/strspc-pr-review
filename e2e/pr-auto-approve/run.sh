@@ -79,12 +79,15 @@ assert_loop_guard() {
   [[ -n "$approved_at" ]] || fail "$SCENARIO: no approval to check the loop guard against"
   deadline=$(( $(date +%s) + TIMEOUT ))
   while (( $(date +%s) < deadline )); do
-    if runs=$(gh run list -R "$REPO" --workflow "$CALLER_WORKFLOW" --limit 40 \
-        --json headBranch,event,status,conclusion,createdAt 2>/dev/null); then
+    # The REST list, because gh run list cannot say who triggered a run, and the
+    # sandbox's real Copilot may review after the approval, in a run that is
+    # rightly not skipped.
+    if runs=$(gh api "repos/$REPO/actions/workflows/$CALLER_WORKFLOW/runs?event=pull_request_review&branch=$branch&per_page=50" \
+        2>/dev/null); then
       # GitHub stamps both times, so they compare on one clock.
-      verdict=$(printf '%s' "$runs" | jq -r --arg b "$branch" --arg s "$approved_at" '
-        [.[] | select(.headBranch == $b and .event == "pull_request_review"
-          and .createdAt >= $s and .status == "completed")]
+      verdict=$(printf '%s' "$runs" | jq -r --arg s "$approved_at" --arg bot "$APPROVER_LOGIN" '
+        [.workflow_runs[] | select(.triggering_actor.login == $bot
+          and .created_at >= $s and .status == "completed")]
         | if any(.conclusion != "skipped") then "ran"
           elif length > 0 then "skipped" else "" end')
       case "$verdict" in
@@ -121,9 +124,13 @@ scenario_ci_failing() {
 # needed: the base gate comes first.
 scenario_base_near_match() {
   local saved="$BASE_BRANCH" main_sha
+  # Only a branch this run created is deleted. One left by an interrupted run is
+  # removed by sandbox.sh reset, which owns the name; anything else stops here.
+  if gh api "repos/$REPO/branches/mai" >/dev/null 2>&1; then
+    fail "$SCENARIO: branch mai already exists; sandbox.sh reset removes the harness's copy"
+  fi
   main_sha=$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)
-  gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/mai -f sha="$main_sha" >/dev/null 2>&1 ||
-    gh api -X PATCH "repos/$REPO/git/refs/heads/mai" -f sha="$main_sha" -F force=true >/dev/null
+  gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/mai -f sha="$main_sha" >/dev/null
   EXTRA_BRANCHES+=(mai)
   BASE_BRANCH=mai
   open_pr base-near-match "e2e: base near-match"

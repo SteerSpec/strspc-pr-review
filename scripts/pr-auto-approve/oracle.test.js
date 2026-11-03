@@ -41,7 +41,13 @@ const EXTRA = [
   ['open issues', OVERVIEW('🟡 Changes recommended', '<details open>\n<summary><strong>2 open issues</strong></summary>\n\n- a\n</details>')],
   ['no statement', OVERVIEW('🟢 Approval recommended', 'Nothing else.')],
   ['unknown verdict', OVERVIEW('🟣 Ship it', '**No open issues** 🎉')],
-  ['fenced quote', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n\`\`\`\n<summary>Suppressed comments (3)</summary>\n\`\`\``],
+  ['suppressed, no number', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n<details>\n<summary>Suppressed comments (many)</summary>\n\nx\n</details>`],
+  ['suppressed, zero', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n<details>\n<summary>Suppressed comments (0)</summary>\n\nx\n</details>`],
+  ['suppressed heading', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n**Suppressed comments (2)**\n\nx`],
+  ['suppressed in prose', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\nNo suppressed comments (3) were found.`],
+  ['unlabelled details', `${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n<details>hidden findings</details>`],
+  ['zero open issues', OVERVIEW('🟢 Approval recommended', '<details open>\n<summary><strong>0 open issues</strong></summary>\n\n</details>')],
+  ['fenced quote',`${OVERVIEW('🟢 Approval recommended', '**No open issues** 🎉')}\n\n\`\`\`\n<summary>Suppressed comments (3)</summary>\n\`\`\``],
 ];
 
 // The reason decide.js gives after "latest Copilot review ", or '' when clean.
@@ -80,6 +86,7 @@ test('the probe flags a body in no known shape', () => {
     'unknown section': /unknown section 'Hidden findings'/,
     'no statement': /states neither/,
     'unknown verdict': /unknown verdict heading 'Ship it'/,
+    'unlabelled details': /has no label/,
   };
   const bodies = EXTRA.filter(([name]) => name in cases);
   const got = jq('[.[] | {state: "COMMENTED", body: .} | probe]', bodies.map(([, b]) => b));

@@ -68,14 +68,17 @@ pr_head() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 # Every review on the PR, as one array.
 all_reviews() { gh api "repos/$REPO/pulls/$1/reviews" --paginate | jq -s 'add // []'; }
 
-# Polls until a Copilot review, of any kind, names this head.
+# Polls until a Copilot review, of any kind, names this head. Any bot with Copilot
+# in its login counts, so a new Copilot login reaches the probe, which reports it,
+# instead of timing out here.
 wait_copilot_review() {
   local pr="$1" head="$2" deadline
   deadline=$(( $(date +%s) + COPILOT_TIMEOUT ))
   log "waiting for Copilot to review ${head:0:8} on PR #$pr…"
   while (( $(date +%s) < deadline )); do
     if all_reviews "$pr" 2>/dev/null | jq -e --arg h "$head" --argjson l "$COPILOT_LOGINS" \
-        'any(.[]; .commit_id == $h and (.user.login as $u | $l | index($u)))' >/dev/null; then
+        'any(.[]; .commit_id == $h and ((.user.login as $u | $l | index($u))
+           or (.user.type == "Bot" and (.user.login | test("copilot"; "i")))))' >/dev/null; then
       return 0
     fi
     sleep "$POLL_INTERVAL"
@@ -96,7 +99,7 @@ wait_settled() {
   deadline=$(( $(date +%s) + SETTLE_TIMEOUT ))
   while (( $(date +%s) < deadline )); do
     if runs=$(caller_runs "$since" 2>/dev/null) &&
-      ! awk -F'\t' '$3 != "completed" { busy = 1 } END { exit !busy }' <<<"$runs" &&
+      ! awk -F'\t' '$3 != "completed" && $3 != "action_required" { busy = 1 } END { exit !busy }' <<<"$runs" &&
       awk -F'\t' '$2 == "workflow_run" { found = 1 } END { exit !found }' <<<"$runs"; then
       return 0
     fi
@@ -131,7 +134,9 @@ real_decisions() {
 }
 
 # Everything the oracle reads, from GitHub: the head, its first failed check, and
-# each review, with its inline comment count when it is Copilot's.
+# each review, with its inline comment count when it is Copilot's. Checks are read
+# as the action reads them: an unfinished run of the caller's own job is ignored, a
+# finished one still counts, and only the latest attempt of each (name, app) does.
 snapshot() {
   local pr="$1" head="$2" checks reviews id n
   checks=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100")
@@ -143,8 +148,10 @@ snapshot() {
   jq -n --arg head "$head" --argjson checks "$checks" --argjson reviews "$reviews" \
     --argjson logins "$COPILOT_LOGINS" --argjson threshold "$THRESHOLD" --arg clean_on "$CLEAN_ON" --arg pattern "$APPROVE_CHECK_PATTERN" '{
       head: $head, threshold: $threshold, clean_on: $clean_on, logins: $logins,
-      failed_check: ([$checks.check_runs[]
-        | select((.name | contains($pattern) | not) and .status == "completed"
+      failed_check: ([[$checks.check_runs[]
+        | select(((.name | contains($pattern)) and .status != "completed") | not)]
+        | group_by([.name, .app.id]) | map(max_by(.started_at // .completed_at // ""))
+        | .[] | select(.status == "completed"
             and (.conclusion | IN("success", "neutral", "skipped", "cancelled", "stale") | not))
         | "\(.name) (\(.conclusion))"] | first),
       checks: [$checks.check_runs[] | {name, app: .app.slug, status, conclusion}],

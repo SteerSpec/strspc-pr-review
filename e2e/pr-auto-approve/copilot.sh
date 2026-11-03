@@ -86,10 +86,11 @@ wait_copilot_review() {
   fail "Copilot did not review ${head:0:8} in ${COPILOT_TIMEOUT}s"
 }
 
-# The caller's runs since $1, oldest first: id, event, status, conclusion, created_at.
+# The caller's runs since $1, oldest first: id, event, status, conclusion, and when
+# the run started, which can be well after it was created and queued.
 caller_runs() {
   gh api "repos/$REPO/actions/workflows/$CALLER_WORKFLOW/runs?per_page=100&created=%3E%3D$1" \
-    -q '.workflow_runs | sort_by(.created_at) | .[] | [.id, .event, .status, .conclusion, .created_at] | @tsv'
+    -q '.workflow_runs | sort_by(.created_at) | .[] | [.id, .event, .status, .conclusion, (.run_started_at // .created_at)] | @tsv'
 }
 
 # Polls until every caller run since $1 has finished and one of them ran on CI
@@ -108,11 +109,11 @@ wait_settled() {
   fail "the caller's runs since $since did not finish in ${SETTLE_TIMEOUT}s"
 }
 
-# "<event>\t<decision>\t<created_at>\t<reason>" for each evaluation of PR $1 since
+# "<event>\t<decision>\t<started_at>\t<reason>" for each evaluation of PR $1 since
 # $2, oldest first. Finished runs' logs never change, so each is read once.
 real_decisions() {
-  local pr="$1" since="$2" id event conclusion created log text
-  while IFS=$'\t' read -r id event _ conclusion created; do
+  local pr="$1" since="$2" id event conclusion started log text
+  while IFS=$'\t' read -r id event _ conclusion started; do
     [[ "$conclusion" == success || "$conclusion" == failure ]] || continue
     log="$LOG_DIR/$id.log"
     if [[ ! -e "$log" ]]; then
@@ -121,13 +122,13 @@ real_decisions() {
       # tr, not [^\r] in the pattern: BSD grep reads that as "not \ or r".
       tr -d '\r' <<<"$text" | grep -oE 'pr-auto-approve(:| pr=).*' >"$log" || true
     fi
-    awk -v pr="$pr" -v event="$event" -v created="$created" '
+    awk -v pr="$pr" -v event="$event" -v started="$started" '
       index($0, "pr-auto-approve pr=" pr " decision=") == 1 {
         line = $0
         sub(/^pr-auto-approve pr=[0-9]+ decision=/, "", line)
         decision = line; sub(/ reason=.*/, "", decision)
         reason = line; sub(/^[a-z]+ reason=/, "", reason)
-        print event "\t" decision "\t" created "\t" reason
+        print event "\t" decision "\t" started "\t" reason
       }' "$log"
   done < <(caller_runs "$since")
 }
@@ -188,7 +189,7 @@ approval_reason() {
 # Settles one push and judges it. Sets ACTUAL, EXPECTED and VIA for the caller;
 # fails the scenario on drift or on the oracle's disagreement.
 judge_step() {
-  local pr="$1" since="$2" head="$3" snap found expected reason line event decision created review_at deadline
+  local pr="$1" since="$2" head="$3" snap found expected reason line event decision started review_at deadline
   # The PR's head lags a push by a few seconds. Judging what it still reports
   # would judge the previous step, whose review is already in.
   deadline=$(( $(date +%s) + 120 ))
@@ -230,16 +231,16 @@ judge_step() {
     # or on its review, and the check wait logs nothing to look for.
     line=$(real_decisions "$pr" "$since" | awk -F'\t' '$2 == "approved"' | tail -n 1)
     if [[ -n "$line" ]]; then
-      IFS=$'\t' read -r event decision created _ <<<"$line"
+      IFS=$'\t' read -r event decision started _ <<<"$line"
       VIA="$event"
-      if [[ -n "$review_at" && "$created" < "$review_at" ]]; then VIA="$VIA, waited for Copilot"; fi
+      if [[ -n "$review_at" && "$started" < "$review_at" ]]; then VIA="$VIA, waited for Copilot"; fi
     else
       VIA="run not found"
     fi
   else
     line=$(real_decisions "$pr" "$since" | awk -F'\t' '$4 !~ /^(check still running|no checks on head SHA yet)/' | tail -n 1)
     [[ -n "$line" ]] || fail "no evaluation of PR #$pr since $since"
-    IFS=$'\t' read -r event decision created reason <<<"$line"
+    IFS=$'\t' read -r event decision started reason <<<"$line"
     ACTUAL="$decision $reason"
     VIA="$event"
   fi

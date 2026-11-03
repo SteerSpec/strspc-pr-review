@@ -115,6 +115,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: sleep 10
+      # ci-failing titles its PR with this marker to get a failed check. Read from
+      # env, never interpolated: the title is PR-controlled.
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: '[[ "$TITLE" != *"[e2e-ci-fail]"* ]]'
 EOF
 }
 

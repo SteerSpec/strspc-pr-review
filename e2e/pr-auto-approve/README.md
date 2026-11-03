@@ -103,7 +103,8 @@ It differs from the sandbox on purpose:
   Copilot's review would start is held at `action_required` or never starts.
 - Its CI runs the tests of the library in `testbed/`, which `sync` keeps on `main`.
 - The bot approves with `BOT_TOKEN_COPILOT`, a fine-grained token of the approver limited to this repo, with
-  Pull requests read and write and Contents read.
+  Pull requests read and write only. It posts and dismisses the bot's approval; the action reads everything
+  else with the workflow's `github-token`.
 - It has only `main`.
 
 `setup` gives an empty repo its first commit through the contents API, which leaves it unsigned, so it must run
@@ -166,7 +167,7 @@ test, so a PR's action code can read that token. If it reached production, a PR 
 | `E2E_BASE_BRANCH` | `main` | Base branch PRs target |
 | `E2E_TIMEOUT` | `180` | Seconds to wait per assertion |
 | `E2E_GRACE` | `15` | Seconds to wait before asserting no approval. The expected decision has already been seen by then |
-| `E2E_GH_RETRIES` | `3` | Retries of a `gh` call that hits a transient GitHub error: a 5xx, or GraphQL's "Something went wrong". Nothing else is retried |
+| `E2E_GH_RETRIES` | `3` | Retries of a `gh` call that hits a transient GitHub error: a 5xx, GraphQL's "Something went wrong", or a dropped connection. Nothing else is retried |
 | `E2E_GH_RETRY_DELAY` | `10` | Seconds before the first retry. Each later retry waits that much longer |
 | `E2E_NUDGE_AFTER` | `120` | Seconds with no CI check on a PR before it is closed and reopened, once, to trigger CI again |
 | `E2E_POLL_INTERVAL` | `10` | Seconds between polls |

@@ -86,10 +86,11 @@ wait_copilot_review() {
   fail "Copilot did not review ${head:0:8} in ${COPILOT_TIMEOUT}s"
 }
 
-# The caller's runs since $1, oldest first: id, event, status.
+# The caller's runs since $1, oldest first: id, event, status, conclusion, and when
+# the run started, which can be well after it was created and queued.
 caller_runs() {
   gh api "repos/$REPO/actions/workflows/$CALLER_WORKFLOW/runs?per_page=100&created=%3E%3D$1" \
-    -q '.workflow_runs | sort_by(.created_at) | .[] | [.id, .event, .status, .conclusion] | @tsv'
+    -q '.workflow_runs | sort_by(.created_at) | .[] | [.id, .event, .status, .conclusion, (.run_started_at // .created_at)] | @tsv'
 }
 
 # Polls until every caller run since $1 has finished and one of them ran on CI
@@ -108,27 +109,26 @@ wait_settled() {
   fail "the caller's runs since $since did not finish in ${SETTLE_TIMEOUT}s"
 }
 
-# "<event>\t<decision>\t<waited>\t<reason>" for each evaluation of PR $1 since $2,
-# oldest first. waited is 1 when that run polled for Copilot's review. Finished
-# runs' logs never change, so each is read once.
+# "<event>\t<decision>\t<started_at>\t<reason>" for each evaluation of PR $1 since
+# $2, oldest first. Finished runs' logs never change, so each is read once.
 real_decisions() {
-  local pr="$1" since="$2" id event conclusion log text
-  while IFS=$'\t' read -r id event _ conclusion; do
+  local pr="$1" since="$2" id event conclusion started log text
+  while IFS=$'\t' read -r id event _ conclusion started; do
     [[ "$conclusion" == success || "$conclusion" == failure ]] || continue
     log="$LOG_DIR/$id.log"
     if [[ ! -e "$log" ]]; then
       # A log GitHub has not finished storing is not cached, so it is read again.
       text=$(gh run view "$id" -R "$REPO" --log 2>/dev/null) || continue
-      grep -oE 'pr-auto-approve(:| pr=)[^\r]*' <<<"$text" >"$log" || true
+      # tr, not [^\r] in the pattern: BSD grep reads that as "not \ or r".
+      tr -d '\r' <<<"$text" | grep -oE 'pr-auto-approve(:| pr=).*' >"$log" || true
     fi
-    awk -v pr="$pr" -v event="$event" '
-      /pr-auto-approve: waiting for Copilot to review/ { waited = 1 }
+    awk -v pr="$pr" -v event="$event" -v started="$started" '
       index($0, "pr-auto-approve pr=" pr " decision=") == 1 {
         line = $0
         sub(/^pr-auto-approve pr=[0-9]+ decision=/, "", line)
         decision = line; sub(/ reason=.*/, "", decision)
         reason = line; sub(/^[a-z]+ reason=/, "", reason)
-        print event "\t" decision "\t" (waited ? 1 : 0) "\t" reason
+        print event "\t" decision "\t" started "\t" reason
       }' "$log"
   done < <(caller_runs "$since")
 }
@@ -189,8 +189,14 @@ approval_reason() {
 # Settles one push and judges it. Sets ACTUAL, EXPECTED and VIA for the caller;
 # fails the scenario on drift or on the oracle's disagreement.
 judge_step() {
-  local pr="$1" since="$2" head snap found expected reason line event decision waited
-  head=$(pr_head "$pr")
+  local pr="$1" since="$2" head="$3" snap found expected reason line event decision started review_at deadline
+  # The PR's head lags a push by a few seconds. Judging what it still reports
+  # would judge the previous step, whose review is already in.
+  deadline=$(( $(date +%s) + 120 ))
+  until [[ "$(pr_head "$pr")" == "$head" ]]; do
+    (( $(date +%s) < deadline )) || fail "PR #$pr never showed the pushed commit ${head:0:8}"
+    sleep 5
+  done
   wait_for_ci "$pr"
   wait_copilot_review "$pr" "$head"
   wait_settled "$since"
@@ -212,23 +218,29 @@ judge_step() {
 
   expected=$(oracle expect <<<"$snap")
   EXPECTED="$(jq -r .decision <<<"$expected") /$(jq -r .reason <<<"$expected")/"
+  # When Copilot first reviewed this head.
+  review_at=$(jq -r --arg h "$head" '. as $s
+    | [.reviews[] | select(.commit_id == $h and (.user.login as $u | $s.logins | index($u))) | .submitted_at] | min // ""' <<<"$snap")
   reason=$(approval_reason "$pr" "$head")
   VIA=""
   if [[ -n "$reason" ]]; then
     ACTUAL="approved $reason"
-    # Which run approved, and whether it had to wait for Copilot to do it.
+    # Which run approved, and whether it had to wait for Copilot to do it: a run
+    # that started before the review it approved on can only have waited for it.
+    # That holds whichever of the action's two waits did it, on Copilot's check
+    # or on its review, and the check wait logs nothing to look for.
     line=$(real_decisions "$pr" "$since" | awk -F'\t' '$2 == "approved"' | tail -n 1)
     if [[ -n "$line" ]]; then
-      IFS=$'\t' read -r event decision waited _ <<<"$line"
+      IFS=$'\t' read -r event decision started _ <<<"$line"
       VIA="$event"
-      if ((waited)); then VIA="$VIA, waited for Copilot"; fi
+      if [[ -n "$review_at" && "$started" < "$review_at" ]]; then VIA="$VIA, waited for Copilot"; fi
     else
       VIA="run not found"
     fi
   else
     line=$(real_decisions "$pr" "$since" | awk -F'\t' '$4 !~ /^(check still running|no checks on head SHA yet)/' | tail -n 1)
     [[ -n "$line" ]] || fail "no evaluation of PR #$pr since $since"
-    IFS=$'\t' read -r event decision waited reason <<<"$line"
+    IFS=$'\t' read -r event decision started reason <<<"$line"
     ACTUAL="$decision $reason"
     VIA="$event"
   fi
@@ -241,10 +253,9 @@ judge_step() {
   # Copilot reviewed after CI finished, so only a run that waited could approve.
   # A scenario claiming wait-for-copilot-seconds fails when the approval came
   # without one. When Copilot was first, nothing had to wait; the summary says so.
-  WAIT_NEEDED=$(jq -r --arg h "$head" '. as $s
-    | ([.reviews[] | select(.commit_id == $h and (.user.login as $u | $s.logins | index($u))) | .submitted_at] | min) as $r
-    | ([.checks[] | select((.name | test("copilot"; "i") | not) and .name != "auto-approve" and .completed_at != null) | .completed_at] | max) as $c
-    | if $r != null and $c != null and $r > $c then 1 else 0 end' <<<"$snap")
+  WAIT_NEEDED=$(jq -r --arg r "$review_at" '
+    ([.checks[] | select((.name | test("copilot"; "i") | not) and .name != "auto-approve" and .completed_at != null) | .completed_at] | max) as $c
+    | if $r != "" and $c != null and $r > $c then 1 else 0 end' <<<"$snap")
   if ((CLAIMS_WAIT && WAIT_NEEDED)) && [[ "${ACTUAL%% *}" == approved && "$VIA" != *waited* ]]; then
     fail "Copilot reviewed after CI, yet the approving run (${VIA:-unknown}) did not wait: wait-for-copilot-seconds is not working"
   fi
@@ -256,7 +267,7 @@ run_real_scenario() (
   set -eE
   # shellcheck disable=SC2154  # BASH_COMMAND is set by bash
   trap 'warn "failed at copilot.sh:$LINENO: $BASH_COMMAND"' ERR
-  local name="$1" title branch pr="" step i=0 since intent url steps
+  local name="$1" title branch pr="" step i=0 since intent url steps pushed
   PR_NUM=""
   DRIFT=0 ACTUAL="" EXPECTED="" VIA="" WAIT_NEEDED=0 CLAIMS_WAIT=0
   if jq -e --arg n "$name" '.scenarios[] | select(.name == $n) | .inputs | index("wait-for-copilot-seconds")' \
@@ -282,7 +293,8 @@ run_real_scenario() (
   for step in "${steps[@]}"; do
     i=$((i + 1))
     since=$(now_utc)
-    commit_dir "$branch" "$FIXTURES/$step" "$title ($name, step $i: $step)" >/dev/null
+    pushed=$(commit_dir "$branch" "$FIXTURES/$step" "$title ($name, step $i: $step)")
+    [[ -n "$pushed" ]] || fail "commit_dir returned no commit for step $i"
     if [[ -z "$pr" ]]; then
       url=$(gh pr create -R "$REPO" --base "$BASE_BRANCH" --head "$branch" --title "$title" \
         --body "e2e real-Copilot scenario $name — auto-closed by copilot.sh")
@@ -291,7 +303,7 @@ run_real_scenario() (
       log "PR #$pr"
     fi
     log "step $i: $step"
-    judge_step "$pr" "$since"
+    judge_step "$pr" "$since" "$pushed"
   done
   [[ "${ACTUAL%% *}" == "$intent" ]] ||
     warn "$name: intended '$intent', Copilot's review led to '$ACTUAL'. The oracle agreed, so this is Copilot's judgement, not the action's"

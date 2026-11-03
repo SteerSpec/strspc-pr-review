@@ -10,7 +10,8 @@ End-to-end tests for the `pr-auto-approve` action, run against a sandbox reposit
 | `scenarios.json` | **The suite.** Each scenario's profile, expected decision and reason, and the inputs it covers. |
 | `run.sh` | **Synthetic tier.** Sets the scene for each scenario. Fakes Copilot via `test-copilot-logins`. Deterministic. |
 | `lib.sh` | Shared helpers: PR lifecycle, decision and approval polling. Sourced, not executed. |
-| `sandbox.sh` | Keeps the sandbox in a known shape, as code. Puts a SHA under test. |
+| `sandbox.sh` | Keeps the sandbox in a known shape, as code. Puts a SHA under test. `--real` does the same for the real-Copilot testbed. |
+| `testbed/` | The library the real-Copilot testbed holds on `main`, for Copilot to review fixture diffs against. |
 | `sandbox-vars.sh` | Tests org/repo variable precedence, which needs `admin:org`. See [Variable precedence](#variable-precedence). |
 
 The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so every
@@ -76,6 +77,32 @@ The rulesets match production's, with one difference: the enterprise owner may b
 `sync` refuses to run if an `STRSPC_PR_AUTO_APPROVE_*` org variable is visible to the sandbox. A profile
 unsets a value by deleting the repo variable, so an org value would show through. If one is left from
 `sandbox-vars.sh`, run `sandbox-vars.sh down` first.
+
+### Real-Copilot testbed
+
+`testbed-multi-org/strspc-pr-review-copilot` is where Copilot reviews for real. It is set up and synced the
+same way, with `--real`:
+
+```bash
+e2e/pr-auto-approve/sandbox.sh --real setup
+e2e/pr-auto-approve/sandbox.sh --real sync "$(git rev-parse HEAD)"
+```
+
+It differs from the sandbox on purpose:
+
+- Its caller is the template as a production repo copies it, with only the pin and the secret changed. It
+  has no `test-copilot-logins` and no `sandbox-repos`, so only Copilot counts as Copilot and the self-approval
+  guard stays live.
+- A `pr-copilot` ruleset makes Copilot review every push. Each review costs a premium request.
+- `WAIT_FOR_COPILOT_SECONDS` is 600. The run that CI starts is the only one that can approve, because the run
+  Copilot's review would start is held at `action_required` or never starts.
+- Its CI runs the tests of the library in `testbed/`, which `sync` keeps on `main`.
+- The bot approves with `BOT_TOKEN_COPILOT`, a fine-grained token of the approver limited to this repo, with
+  Pull requests read and write and Contents read.
+- It has only `main`.
+
+`setup` gives an empty repo its first commit through the contents API, which leaves it unsigned, so it must run
+as the enterprise owner. `sync` refuses to run if an org variable would show through, as for the sandbox.
 
 ## Run
 

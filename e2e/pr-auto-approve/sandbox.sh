@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Keeps the synthetic-tier sandbox in a known shape, as code.
+# Keeps the e2e testbeds in a known shape, as code.
 #
-#   sandbox.sh setup        one-time, as a repo admin: bot access and rulesets
-#   sandbox.sh sync <sha>   put the action at <sha> under test
-#   sandbox.sh reset        close PRs, restore the fixture files, and put develop on main
-#   sandbox.sh status       show what is under test
+#   sandbox.sh [--real] setup        one-time, as a repo admin: bot access and rulesets
+#   sandbox.sh [--real] sync <sha>   put the action at <sha> under test
+#   sandbox.sh [--real] reset        close PRs and restore the fixture files
+#   sandbox.sh [--real] status       show what is under test
+#
+# Without --real this is the synthetic tier's sandbox, where the harness fakes
+# Copilot. With --real it is the real-Copilot testbed: Copilot reviews every push,
+# and the caller is the template as a production repo would copy it, with only
+# the pin and the secret changed.
 #
 # Everything is idempotent, so CI can run `sync` before each suite and a failed
 # run leaves nothing for the next one to trip on.
@@ -15,16 +20,35 @@
 # for each scenario's profile. sandbox-vars.sh stays the test of org precedence.
 set -euo pipefail
 
+REAL=false
+if [[ "${1:-}" == --real ]]; then
+  REAL=true
+  shift
+fi
+
 SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=e2e/pr-auto-approve/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-REPO="${E2E_REPO:-${E2E_SANDBOX_REPO:-testbed-multi-org/strspc-pr-review-sandbox}}"
+if $REAL; then
+  REPO="${E2E_REPO:-testbed-multi-org/strspc-pr-review-copilot}"
+  # The commit under test runs with this token, so it is a secret of this repo
+  # alone, scoped to it, never an org secret.
+  BOT_SECRET=BOT_TOKEN_COPILOT
+else
+  REPO="${E2E_REPO:-${E2E_SANDBOX_REPO:-testbed-multi-org/strspc-pr-review-sandbox}}"
+  BOT_SECRET=BOT_TOKEN_SANDBOX
+fi
 ACTION_REPO="${ACTION_REPO:-SteerSpec/strspc-pr-review}"
 BOT_LOGIN="${E2E_APPROVER_LOGIN:-cnslr-bt}"
 REVIEWER_LOGIN="${E2E_REVIEWER_LOGIN:-pleberre}"
 WORKFLOW=.github/workflows/pr-auto-approve.yml
 CI=.github/workflows/ci.yml
+# The real testbed's library, which Copilot reviews the fixtures against.
+TESTBED_FILES=(src/stats.js src/stats.test.js)
+# Seconds the CI-triggered run waits for Copilot's review. It is the only run that
+# can approve: the run Copilot's own review starts is held or never starts.
+REAL_WAIT_SECONDS=600
 
 # --- setup ------------------------------------------------------------------
 
@@ -46,18 +70,41 @@ ruleset() { # name, ref, approvals, merge method(s) as a JSON array
       required_review_thread_resolution: ($count > 0)}}]}'
 }
 
+# Production's automatic Copilot review: every push to a ready PR is reviewed.
+# No bypass, because nobody needs to skip a review.
+copilot_ruleset() { # name
+  jq -n --arg name "$1" '{
+    name: $name, target: "branch", enforcement: "active", bypass_actors: [],
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [{type: "copilot_code_review",
+      parameters: {review_on_push: true, review_draft_pull_requests: false}}]}'
+}
+
 # Writes the whole definition either way, so a re-run repairs a ruleset that has
-# drifted instead of accepting anything with the right name.
+# drifted instead of accepting anything with the right name. $1 builds it, from
+# the rest of the arguments, the first of which is its name.
 ensure_ruleset() {
-  local name="$1" id
+  local build="$1" name="$2" id
+  shift
   id=$(gh api "repos/$REPO/rulesets" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
   if [[ -n "$id" ]]; then
-    ruleset "$@" | gh api -X PUT "repos/$REPO/rulesets/$id" --input - >/dev/null
+    "$build" "$@" | gh api -X PUT "repos/$REPO/rulesets/$id" --input - >/dev/null
     log "ruleset $name updated"
   else
-    ruleset "$@" | gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null
+    "$build" "$@" | gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null
     log "ruleset $name created"
   fi
+}
+
+# createCommitOnBranch needs a branch to commit on, so an empty repo gets its
+# first commit from the contents API. That commit is unsigned, which only the
+# enterprise owner may push past the Signed Commit ruleset.
+bootstrap() {
+  [[ "$(gh api "repos/$REPO/branches" -q length)" == 0 ]] || return 0
+  gh api -X PUT "repos/$REPO/contents/README.md" -f message="chore: initialize the e2e testbed" \
+    -f content="$(printf '# %s\n\nManaged by SteerSpec/strspc-pr-review e2e/pr-auto-approve/sandbox.sh.\n' \
+      "${REPO#*/}" | b64_oneline)" >/dev/null
+  log "initialized $REPO"
 }
 
 setup() {
@@ -65,8 +112,14 @@ setup() {
   # bot would make every promotion scenario skip.
   gh api -X PUT "repos/$REPO/collaborators/$BOT_LOGIN" -f permission=push >/dev/null
   log "$BOT_LOGIN has write"
-  ensure_ruleset pr-mandatory-main refs/heads/main 1 '["merge"]'
-  ensure_ruleset pr-mandatory-develop refs/heads/develop 1 '["squash"]'
+  if $REAL; then
+    bootstrap
+    ensure_ruleset ruleset pr-mandatory-main refs/heads/main 1 '["squash"]'
+    ensure_ruleset copilot_ruleset pr-copilot
+  else
+    ensure_ruleset ruleset pr-mandatory-main refs/heads/main 1 '["merge"]'
+    ensure_ruleset ruleset pr-mandatory-develop refs/heads/develop 1 '["squash"]'
+  fi
 }
 
 # --- sync -------------------------------------------------------------------
@@ -77,16 +130,19 @@ raw() { # repo, path, ref
   gh api "repos/$1/contents/$2?ref=$3" -H 'Accept: application/vnd.github.raw'
 }
 
-# The template at $1, pinned to $1, with the two sandbox-only inputs added.
+# The template at $1, pinned to $1. The synthetic sandbox also gets its two
+# sandbox-only inputs; the real testbed gets none, so the caller is the one a
+# production repo copies and Copilot alone can count as Copilot.
 render_caller() {
   raw "$ACTION_REPO" templates/pr-auto-approve.yml "$1" | awk \
-    -v sha="$1" -v repo="$ACTION_REPO" -v reviewer="$REVIEWER_LOGIN" -v sandbox="$REPO" '
+    -v sha="$1" -v repo="$ACTION_REPO" -v reviewer="$REVIEWER_LOGIN" -v sandbox="$REPO" \
+    -v secret="$BOT_SECRET" -v real="$REAL" '
     $0 == "      - uses: " repo "@v1" { print "      - uses: " repo "@" sha; used = 1; next }
     # The commit under test runs with this token, and it can be any PR'"'"'s code. So it
-    # must be the sandbox-only repo secret, never the org'"'"'s BOT_GITHUB_TOKEN.
-    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, "BOT_TOKEN_SANDBOX")) scoped = 1 }
+    # must be the testbed-only repo secret, never the org'"'"'s BOT_GITHUB_TOKEN.
+    /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, secret)) scoped = 1 }
     { print }
-    /^          bot-github-token: / {
+    real != "true" && /^          bot-github-token: / {
       print ""
       print "          # Sandbox only: treat the e2e reviewer as Copilot and allow the bot-authored"
       print "          # PRs through the self-approval guard. Never set these in a production caller."
@@ -94,7 +150,7 @@ render_caller() {
       print "          sandbox-repos: " sandbox
       added = 1
     }
-    END { if (!used || !added || !scoped) exit 1 }'
+    END { if (!used || !scoped || (real != "true" && !added)) exit 1 }'
 }
 
 ci_workflow() {
@@ -120,6 +176,33 @@ jobs:
       - env:
           TITLE: ${{ github.event.pull_request.title }}
         run: '[[ "$TITLE" != *"[e2e-ci-fail]"* ]]'
+EOF
+}
+
+# The real testbed's CI runs the library's tests, so a fixture's bug that the
+# tests catch fails CI. The fixtures that want Copilot's view of a bug must keep
+# their tests green, or the action skips on the check before reading the review.
+real_ci_workflow() {
+  cat <<'EOF'
+name: CI
+
+# The caller's workflow_run trigger matches this workflow by NAME, so keep it
+# literally "CI".
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: node --test src/
 EOF
 }
 
@@ -154,10 +237,16 @@ sync() {
   reset_prs
   caller=$(render_caller "$sha") || fail "template at $sha lacks the expected uses:/bot-github-token: lines"
   put "$WORKFLOW" "$caller"
-  put "$CI" "$(ci_workflow)"
-  restore
   gh variable set STRSPC_PR_AUTO_APPROVE_BOT_LOGIN -R "$REPO" --body "$BOT_LOGIN"
-  ok "sandbox at $sha"
+  if $REAL; then
+    put "$CI" "$(real_ci_workflow)"
+    restore_library
+    gh variable set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS -R "$REPO" --body "$REAL_WAIT_SECONDS"
+  else
+    put "$CI" "$(ci_workflow)"
+    restore
+  fi
+  ok "$REPO at $sha"
 }
 
 # --- reset ------------------------------------------------------------------
@@ -199,6 +288,15 @@ restore() {
   fi
 }
 
+# Scenarios change the library on their own branches only, so this repairs a main
+# that someone edited by hand.
+restore_library() {
+  local path
+  for path in "${TESTBED_FILES[@]}"; do
+    put "$path" "$(cat "$SCRIPT_DIR/testbed/$path")"
+  done
+}
+
 ref_or_none() { # a 404's error body goes to stdout, so print only on success
   local out
   out=$(gh api "repos/$REPO/git/ref/$1" -q .object.sha 2>/dev/null) && echo "$out" || echo none
@@ -215,7 +313,7 @@ status() {
 case "${1:-}" in
   setup) setup ;;
   sync) sync "${2:-}" ;;
-  reset) reset_prs; restore ;;
+  reset) reset_prs; if $REAL; then restore_library; else restore; fi ;;
   status) status ;;
-  *) fail "usage: $0 setup|sync <sha>|reset|status" ;;
+  *) fail "usage: $0 [--real] setup|sync <sha>|reset|status" ;;
 esac

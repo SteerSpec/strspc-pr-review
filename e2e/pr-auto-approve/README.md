@@ -12,6 +12,11 @@ End-to-end tests for the `pr-auto-approve` action, run against a sandbox reposit
 | `lib.sh` | Shared helpers: PR lifecycle, decision and approval polling. Sourced, not executed. |
 | `sandbox.sh` | Keeps the sandbox in a known shape, as code. Puts a SHA under test. `--real` does the same for the real-Copilot testbed. |
 | `testbed/` | The library the real-Copilot testbed holds on `main`, for Copilot to review fixture diffs against. |
+| `copilot.sh` | **Real-Copilot tier.** Pushes fixtures, lets Copilot review them, and judges what the action did. See [Real-Copilot tier](#real-copilot-tier). |
+| `copilot-scenarios.json` | The real tier's scenarios: the fixture steps each one pushes and the outcome it is meant for. |
+| `oracle.jq` | The real tier's format probe and decision oracle. `scripts/pr-auto-approve/oracle.test.js` holds it against `decide.js`. |
+| `fixtures/real/` | The files each real-tier step commits, in one commit. |
+| `fixtures/captured/` | Review bodies real Copilot posted, kept so the oracle's agreement test covers them. |
 | `sandbox-vars.sh` | Tests org/repo variable precedence, which needs `admin:org`. See [Variable precedence](#variable-precedence). |
 
 The synthetic tier is deliberately not a real-Copilot test: it posts the reviews itself, so every
@@ -175,6 +180,45 @@ harness authors the release PRs. Those scenarios merge to `develop` and `main`, 
 of the sandbox. Setup merges run as the reviewer. The last merge of `promotion-clean` and `release-clean`
 runs as the bot, which has no bypass, so it needs `E2E_BOT_TOKEN`. `request-copilot` asks for a real Copilot review, so it spends one, and the
 sandbox must not have the automatic Copilot review ruleset or its docs half cannot pass.
+
+## Real-Copilot tier
+
+`copilot.sh` runs the scenarios in `copilot-scenarios.json` against the [real-Copilot testbed](#real-copilot-testbed).
+Each step commits a fixture from `fixtures/real/` in one commit, so one step is one Copilot review, and one
+premium request. The three scenarios push four times in all. Run it on demand and before a release, never on a
+schedule.
+
+```bash
+e2e/pr-auto-approve/sandbox.sh --real sync "$(git rev-parse HEAD)"
+e2e/pr-auto-approve/copilot.sh               # every scenario
+e2e/pr-auto-approve/copilot.sh real-clean    # just these
+```
+
+`gh` must be authenticated as the enterprise owner, who authors the PRs and resets the testbed.
+
+Copilot's verdict is not deterministic, so a scenario states the outcome it is meant for, not the decision it
+must get. After each push, `copilot.sh` waits for Copilot's review and for the caller's runs to finish, then
+checks three things:
+
+| Check | What it asserts | On a miss |
+|---|---|---|
+| Probe | Every Copilot review is in a shape Copilot is known to post: a `ccr-overview` body with a known verdict heading, an open-issues statement and known sections, or one of the reviews of nothing. Reviewer logins and Copilot check names are known ones. | **Fails.** Copilot's output changed. The body is printed. |
+| Oracle | The action's decision is the one `oracle.jq` computes from the checks, reviews and inline comment counts. | **Fails.** The action misjudged real data. |
+| Intent | The clean fixture was approved and the buggy one skipped. | Warns. Copilot judged the fixture differently. |
+
+The probe is what catches drift. An oracle that knows the same shapes as `decide.js` would agree with it about a
+body neither understands, and both would just skip. The oracle is jq so that it does not load `decide.js` and test
+the implementation against itself. `oracle.test.js` holds the two against each other on every body in `fixtures/`.
+
+The summary table says which run approved and whether it waited for Copilot's review. That is the proof for
+`wait-for-copilot-seconds`. It also says when no review reached `copilot-clean`, because then the approval path
+went untested against real Copilot.
+
+The buggy fixture's tests pass, on purpose. A bug they caught would fail CI, and the action would skip on the
+check before reading Copilot's review.
+
+When Copilot posts a new shape, save the body under `fixtures/captured/` and teach both `decide.js` and
+`oracle.jq` to read it. `oracle.test.js` fails until they agree on it.
 
 ## Variable precedence
 

@@ -73,10 +73,10 @@ const COPILOT_CHECK_NAMES = new Set(
 // is a different reason for withholding. The gate does not care why — it exists
 // to catch findings the comments API hides, whatever the stated cause.
 //
-// Treat this as unstable and expect a third wording. Nothing here re-checks the
-// markup against live reviews yet — the unit tests only assert these fixtures,
-// so a third wording would again pass CI and fail in production. A real-Copilot
-// e2e tier that catches that is planned but not yet built.
+// Treat this as unstable and expect a third wording. The unit tests only assert
+// these fixtures, so a third wording would pass them and fail in production. The
+// real-Copilot e2e tier (e2e/pr-auto-approve/copilot.sh) is what checks the
+// markup against live reviews, and it runs only on demand and before a release.
 const SUPPRESSED_PHRASE =
   String.raw`(?:Comments? suppressed due to low confidence|Suppressed comments?)`;
 

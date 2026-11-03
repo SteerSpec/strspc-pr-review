@@ -29,7 +29,26 @@ function declaredInputs() {
   return new Set([...block.matchAll(/^ {2}([a-z0-9_-]+):$/gm)].map((m) => m[1]));
 }
 
-const claimed = () => new Set(manifest.scenarios.flatMap((s) => s.inputs));
+// The real-Copilot tier's scenarios claim inputs too: some can only be shown with
+// Copilot reviewing for real.
+const real = JSON.parse(read('e2e/pr-auto-approve/copilot-scenarios.json'));
+const realHarness = read('e2e/pr-auto-approve/copilot.sh');
+
+const claimed = () => new Set([...manifest.scenarios, ...real.scenarios].flatMap((s) => s.inputs));
+
+test('every real-Copilot scenario has an intent and fixtures that exist', () => {
+  const names = real.scenarios.map((s) => s.name);
+  assert.equal(new Set(names).size, names.length, 'scenario names are unique');
+  for (const s of real.scenarios) {
+    assert.ok(DECISIONS.has(s.intent), `${s.name}: intent ${s.intent}`);
+    assert.ok(s.steps.length > 0, `${s.name}: has steps`);
+    for (const step of s.steps) {
+      assert.ok(fs.existsSync(path.join(ROOT, 'e2e/pr-auto-approve/fixtures/real', step)), `${s.name}: fixture ${step}`);
+    }
+    assert.ok(!names.some((n) => manifest.scenarios.some((m) => m.name === n)), `${s.name}: also a synthetic scenario`);
+  }
+  assert.match(realHarness, /copilot-scenarios\.json/);
+});
 
 test('every action.yml input has a scenario or a stated exemption', () => {
   const exempt = new Set(Object.keys(manifest.exemptions));

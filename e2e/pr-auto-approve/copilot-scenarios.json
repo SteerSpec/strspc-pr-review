@@ -1,0 +1,26 @@
+{
+  "description": "The real-Copilot tier, run by copilot.sh against the testbed sandbox.sh --real keeps. Copilot's verdict is not deterministic, so a scenario states its intent, not its decision: copilot.sh asserts the decision its oracle computes from what GitHub holds, and only warns when the intent is missed. Each step is one push, so one Copilot review and one premium request.",
+  "scenarios": [
+    {
+      "name": "real-clean",
+      "title": "feat: add median",
+      "steps": ["clean"],
+      "intent": "approved",
+      "inputs": ["wait-for-copilot-seconds"]
+    },
+    {
+      "name": "real-buggy",
+      "title": "feat: add median",
+      "steps": ["buggy"],
+      "intent": "skip",
+      "inputs": []
+    },
+    {
+      "name": "real-iterate",
+      "title": "feat: add median",
+      "steps": ["buggy", "clean"],
+      "intent": "approved",
+      "inputs": []
+    }
+  ]
+}

@@ -86,7 +86,7 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-Node 22 (`.nvmrc`). The unit tests use the native test runner and need no external tools.
+Node 22 (`.nvmrc`). The unit tests use the native test runner; `oracle.test.js` also needs `jq`.
 
 ```bash
 npm install

@@ -4,9 +4,9 @@
 # Shared helpers for the pr-auto-approve e2e harnesses.
 #
 # Sourced by run.sh, the synthetic tier (which fakes Copilot via
-# test-copilot-logins), and sandbox.sh. Split out ahead of a second, real-Copilot
-# harness that would otherwise duplicate run.sh's lines; that harness does not
-# exist yet, which is why require_gh and the repo variable are parameterised.
+# test-copilot-logins), copilot.sh, the real-Copilot tier, and sandbox.sh. The
+# tiers use different repos and identities, which is why require_gh and the repo
+# variable are parameterised.
 #
 # Entrypoints own `set -euo pipefail`; this file only defines state and
 # functions, so sourcing it can never change the caller's shell options.
@@ -140,6 +140,28 @@ commit_file() {
         message: {headline: $message}, expectedHeadOid: $head,
         fileChanges: {additions: [{path: $path, contents: $contents}]}}}}' \
     | gh api graphql --input - >/dev/null
+}
+
+# As commit_file, for every file under a directory, at the same path relative to
+# it, in ONE commit. The real tier needs that: each push is a Copilot review, and
+# a premium request.
+commit_dir() {
+  local branch="$1" dir="$2" message="$3" head path additions='[]'
+  head=$(gh api "repos/$REPO/git/ref/heads/$branch" -q .object.sha)
+  [[ -n "$head" ]] || fail "could not read $branch from $REPO"
+  while IFS= read -r path; do
+    additions=$(jq -c --arg p "$path" --arg c "$(b64_oneline <"$dir/$path")" \
+      '. + [{path: $p, contents: $c}]' <<<"$additions")
+  done < <(cd "$dir" && find . -type f | sed 's|^\./||' | sort)
+  [[ "$additions" != '[]' ]] || fail "commit_dir: no files under $dir"
+  jq -n --arg repo "$REPO" --arg branch "$branch" --arg head "$head" \
+    --arg message "$message" --argjson additions "$additions" '{
+      query: "mutation($i: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $i) { commit { oid } } }",
+      variables: {i: {
+        branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+        message: {headline: $message}, expectedHeadOid: $head,
+        fileChanges: {additions: $additions}}}}' \
+    | gh api graphql --input - -q .data.createCommitOnBranch.commit.oid
 }
 
 # As commit_file, for removing a file.

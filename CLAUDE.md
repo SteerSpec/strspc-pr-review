@@ -120,7 +120,9 @@ never checks out PR code.
 - `.github/workflows/sync-marketplace-pin.yml` — after a release, opens the PR in `SteerSpec/.claude`
   that moves that pin. It selects the marketplace entry by `source.url`, not by name.
 - `e2e/pr-auto-approve/` — synthetic end-to-end suite (`scenarios.json`, `run.sh`, `lib.sh`, `sandbox.sh`),
-  run by `.github/workflows/e2e.yml` against the commit under test.
+  run by `.github/workflows/e2e.yml` against the commit under test. Its real-Copilot tier (`copilot.sh`,
+  `oracle.jq`) runs from `.github/workflows/e2e-copilot.yml` on promotion PRs and on dispatch; each run
+  costs about four Copilot premium requests.
 - `rules/` — the `dev.steerspec.prreview` realm. `APPROVE` states what the approval logic must
   guarantee, so a behaviour change in `decide.js` goes with a rule change. Edit it only through the
   `strspc` CLI, and use a `chore(rules):` title: `feat:` or `fix:` would release the action.

@@ -202,7 +202,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: node --test src/
+      # No path: `node --test src/` reads src/ as a file, and fails. Bare, it finds
+      # every *.test.js.
+      - run: node --test
 EOF
 }
 

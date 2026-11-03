@@ -39,8 +39,7 @@
     }
   },
   "exemptions": {
-    "copilot-error-retries": "A synthetic reviewer cannot produce Copilot's errored review, so this waits for the real tier.",
-    "wait-for-copilot-seconds": "Only meaningful against a real Copilot check, so this waits for the real tier.",
+    "copilot-error-retries": "Real Copilot cannot be made to error on demand, so the real tier cannot drive it. A synthetic scenario that posts the errored wording and asserts the re-request is tracked separately.",
     "allow-no-checks": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "slack-channel": "The sandbox has no Slack workspace to assert against.",
     "slack-bot-token": "The sandbox has no Slack workspace to assert against."

@@ -6,8 +6,7 @@
 # sandbox's caller workflow sets test-copilot-logins so decide.js treats them as
 # Copilot reviews. That makes every scenario deterministic and fast, at the cost
 # of not exercising real Copilot at all — so it cannot detect drift in Copilot's
-# own output format. A real-Copilot tier that can is planned, and lib.sh is
-# factored to be shared with it; nothing covers that gap today.
+# own output format. copilot.sh, the real-Copilot tier, covers that, sharing lib.sh.
 #
 # scenarios.json holds each scenario's profile, expected decision and reason. A
 # function here only sets the scene and calls expect_outcome. Every scenario runs

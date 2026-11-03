@@ -192,7 +192,9 @@ schedule.
 `.github/workflows/e2e-copilot.yml` runs it in CI, with the action pinned to the commit under test. It runs on a
 promotion PR (`develop` into `main`), the release candidate, and on dispatch. It skips release-please's PRs,
 whose code `main` already holds. Runs take turns on the testbed as in `e2e.yml`. Its check, `e2e-copilot`, is
-not a required one, but on a promotion PR its failure still blocks the bot's approval, as any failed check does.
+not a required one, so it is advisory: while it runs or after it fails the bot does not approve, but nothing
+withdraws an approval given before the check appeared. To gate releases on it, require it in the `e2e-main`
+ruleset, as `e2e` is.
 
 ```bash
 gh workflow run e2e-copilot.yml --ref my-branch                        # every scenario

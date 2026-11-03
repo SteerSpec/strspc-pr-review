@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     # Longer than the steps' own timeouts added up, on purpose. A step timeout fails
     # the check. A job timeout cancels it, and decide.js counts cancelled as passed.
-    timeout-minutes: 200
+    timeout-minutes: 240
     permissions:
       contents: read
       actions: read

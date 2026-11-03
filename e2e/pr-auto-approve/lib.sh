@@ -58,7 +58,8 @@ warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # Every gh call in the harnesses goes through this, and retries GitHub's transient
-# failures: a 5xx, or GraphQL's "Something went wrong" catch-all. Anything else,
+# failures: a 5xx, GraphQL's "Something went wrong" catch-all, or a connection
+# that never reached GitHub. Anything else,
 # a 4xx or a refused merge, fails at once, so a real refusal still fails its
 # scenario. Only the last attempt's output is kept: gh prints an error body to
 # stdout, which would otherwise end up in the caller's result. A retried call that
@@ -67,7 +68,9 @@ fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 #
 # The retry notes go to fd 3, a copy of stderr taken here, when the harness is
 # sourced. Callers that parse `gh ... 2>&1` would otherwise read them as output.
-GH_TRANSIENT_RE='HTTP 5[0-9][0-9]|Something went wrong while executing your query'
+# A dropped connection is retried too: the real-Copilot tier runs for many
+# minutes, and one lost request should not cost a scenario and its premium requests.
+GH_TRANSIENT_RE='HTTP 5[0-9][0-9]|Something went wrong while executing your query|error connecting to api\.github\.com|i/o timeout|connection reset by peer'
 exec 3>&2
 gh() {
   local retries="${E2E_GH_RETRIES:-3}" delay="${E2E_GH_RETRY_DELAY:-10}" attempt=1 rc out err input=""

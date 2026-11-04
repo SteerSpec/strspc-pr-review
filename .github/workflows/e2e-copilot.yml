@@ -12,11 +12,10 @@ name: E2E Copilot
 # Not on release-please's PRs into main. Their code is main's, which the promotion
 # already tested, and release-please pushes to them on every merge to main.
 #
-# It is not a required check (no ruleset names it), so it is advisory. While it
-# runs or after it fails, pr-auto-approve skips the PR, but nothing withdraws an
-# approval given before its check appeared, and its failure starts no new
-# evaluation (auto-approve.yml re-runs on its success only). To gate releases on
-# it, require `e2e-copilot` in the e2e-main ruleset, as `e2e` is.
+# The e2e-main ruleset requires `e2e-copilot` on main, as it does `e2e`, so a
+# promotion PR cannot merge until this passes. On release-please's PRs the job's
+# if: skips it, and GitHub counts a skipped job as passing. Its success re-runs
+# auto-approve.yml, so a PR skipped while it ran gets evaluated again.
 #
 # pull_request, not pull_request_target: this has to run the PR's own harness and
 # action. So a same-repo PR can read the secret by editing this file, and its

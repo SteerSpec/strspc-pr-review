@@ -502,6 +502,9 @@
     "APPROVE-015": "Which token made a request can't be observed from outside; unit tests cover it.",
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
-    "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
+    "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal.",
+    "APPROVE-024": "A 5xx or a dropped connection cannot be forced from real GitHub; unit tests drive the real retry plugin with a stub fetch.",
+    "APPROVE-025": "Needs GitHub to save an approval yet answer 5xx, then a change mid-approval; unit tests cover the withdrawal.",
+    "APPROVE-026": "Needs GitHub to save an approval yet fail the call; unit tests cover the lookup."
   }
 }

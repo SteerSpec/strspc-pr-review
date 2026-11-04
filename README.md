@@ -743,7 +743,9 @@ npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + iss
 `npm run lint` shells out to `actionlint`, `shellcheck` and `python3`, so install those separately.
 The unit tests need none of them. End-to-end tests run against two testbed repos, one with
 synthetic Copilot reviews and one where Copilot reviews for real: see
-[`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md). A PR into `main` needs both to pass.
+[`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md). A PR into `main` needs the
+synthetic suite to pass, and a promotion from `develop` also needs the real-Copilot tier; release-please's
+PRs skip it.
 
 ### Layout
 
@@ -780,7 +782,7 @@ strspc-pr-review/
     └── workflows/
         ├── auto-approve.yml          # this repo running the action on itself
         ├── e2e.yml                   # synthetic e2e suite, required on main
-        ├── e2e-copilot.yml           # real-Copilot e2e tier, required on main
+        ├── e2e-copilot.yml           # real-Copilot e2e tier, on promotions into main
         ├── pr-auto-approve.yml       # reusable workflow, deprecated, kept for compatibility
         ├── test-pr-auto-approve.yml  # CI: tests, actionlint, shellcheck, issue forms, PR title
         ├── release-please.yml        # semver tagging on main

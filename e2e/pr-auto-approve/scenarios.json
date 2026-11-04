@@ -309,7 +309,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -322,7 +323,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -335,7 +337,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -348,7 +351,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -361,7 +365,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -374,7 +379,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -388,7 +394,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -402,7 +409,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -416,7 +424,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -430,7 +439,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -444,7 +454,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -458,7 +469,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -472,7 +484,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -486,7 +499,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     }
   ],
@@ -494,6 +508,8 @@
     "APPROVE-002": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "APPROVE-006": "A synthetic reviewer is allowlisted by test-copilot-logins; unit tests cover the login match.",
     "APPROVE-009": "Needs a change landing mid-run; unit tests cover the re-read.",
+    "APPROVE-027": "Needs a change landing mid-run to show the re-read; unit tests cover it.",
+    "APPROVE-028": "Needs a change landing mid-run; unit tests cover the withdrawal.",
     "APPROVE-010": "The sandbox is in sandbox-repos so that bot-authored scenarios can run, which bypasses this refusal; unit tests cover it.",
     "APPROVE-012": "An empty bot-login would fail every run in the sandbox; unit tests cover the failed job.",
     "APPROVE-017": "The draft scenario proves only half of this rule, and a fork scenario needs a fork: strspc-pr-review-t9w.20.14.",

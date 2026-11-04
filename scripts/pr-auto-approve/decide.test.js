@@ -2191,6 +2191,41 @@ test('isCopilot helper: strict allowlist (no substring fallback)', () => {
   assert.equal(decide.isCopilot(null), false);
 });
 
+test('makeIsCopilot: test logins extend the allowlist without replacing it', () => {
+  const matches = decide.makeIsCopilot(new Set(['axeptio-bot']));
+  assert.equal(matches({ login: 'axeptio-bot', type: 'User' }), true);
+  // Real Copilot must still match when test logins are set.
+  assert.equal(matches({ login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' }), true);
+  assert.equal(matches({ login: 'alice', type: 'User' }), false);
+  assert.equal(matches(null), false);
+  // No test logins: the plain allowlist itself.
+  assert.equal(decide.makeIsCopilot(new Set()), decide.isCopilot);
+});
+
+test('check runs past the first page are read: a failure on page 2 blocks approval', async () => {
+  const core = makeCore();
+  const page1 = Array.from({ length: 100 }, (_, i) => ({
+    ...DEFAULT_CHECK_RUNS[0], name: `ci-${i}`,
+  }));
+  const page2 = [{ ...DEFAULT_CHECK_RUNS[0], name: 'late-check', conclusion: 'failure' }];
+  const { github, calls } = makeFakeGithub({
+    reviews: [CLEAN_COPILOT_REVIEW],
+    reviewComments: { 1: [] },
+  });
+  const pages = [];
+  github.rest.checks.listForRef = async ({ page, per_page }) => {
+    pages.push(page);
+    assert.equal(per_page, 100);
+    const runs = page === 1 ? page1 : page === 2 ? page2 : [];
+    return { data: { total_count: page1.length + page2.length, check_runs: runs } };
+  };
+  const result = await decide({ github, context: makeContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /failing check: late-check \(failure\)/);
+  assert.deepEqual(pages, [1, 2]);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('countSuppressedComments: parses the real Copilot markup', () => {
   // Exact strings observed in production (axeptio/caas-api#2280,
   // axeptio/caas-styleguide#3502/#3501/#3496/#3493).

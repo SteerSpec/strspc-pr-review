@@ -1,0 +1,107 @@
+name: E2E Copilot
+
+# Runs the real-Copilot tier in e2e/pr-auto-approve (copilot.sh) against the
+# testbed in testbed-multi-org, with the action pinned to the commit under test.
+# Copilot reviews every push there for real, so this is what notices Copilot
+# changing its output underneath the action, which the synthetic e2e.yml cannot.
+#
+# Each Copilot review is a premium request, and a run costs about four. So it runs
+# only before a release and on demand, never on a schedule:
+#   - on a promotion PR, develop into main: the release candidate;
+#   - on dispatch, to check a branch, optionally with only some scenarios.
+# Not on release-please's PRs into main. Their code is main's, which the promotion
+# already tested, and release-please pushes to them on every merge to main.
+#
+# The e2e-main ruleset requires `e2e-copilot` on main, as it does `e2e`, so a
+# promotion PR cannot merge until this passes. On release-please's PRs the job's
+# if: skips it, and GitHub counts a skipped job as passing. Its success re-runs
+# auto-approve.yml, so a PR skipped while it ran gets evaluated again.
+#
+# pull_request, not pull_request_target: this has to run the PR's own harness and
+# action. So a same-repo PR can read the secret by editing this file, and its
+# action code runs in the testbed with the testbed's own approval token. That is
+# the model e2e.yml accepts: only someone who can already push here can open such
+# a PR, and every token it can reach is limited to the e2e repos, where the worst
+# it can do is approve testbed PRs. None is the production BOT_TOKEN.
+# Fork PRs get no secrets, so the job's if: skips them.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: Scenario names, separated by spaces. Blank runs them all, about four premium requests.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  e2e-copilot:
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.ref == 'develop'
+      )
+    runs-on: ubuntu-latest
+    # Longer than the steps' own timeouts added up, on purpose. A step timeout fails
+    # the check. A job timeout cancels it, and decide.js counts cancelled as passed.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # The enterprise owner: sandbox.sh commits to the testbed's main, and
+      # copilot.sh authors the PRs, so Copilot's reviews are billed to this seat.
+      GH_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+      E2E_REPO: testbed-multi-org/strspc-pr-review-copilot
+      E2E_AUTHOR_LOGIN: pleberre
+      E2E_APPROVER_LOGIN: cnslr-bt
+    steps:
+      # One testbed serves every run, so runs take turns in the order they started.
+      # Not a concurrency: group: one that cancels a displaced run throws away the
+      # premium requests it spent, and decide.js counts a cancelled check as passed.
+      - name: Wait for runs that started earlier
+        timeout-minutes: 120
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The default shell has no pipefail, so a failed lookup would count as no runs.
+          set -o pipefail
+          me=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          ahead() {
+            local s
+            for s in requested waiting pending queued in_progress; do
+              gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/e2e-copilot.yml/runs?status=$s&per_page=100" \
+                --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID
+                  and (.run_started_at < \"$me\" or (.run_started_at == \"$me\" and .id < $GITHUB_RUN_ID)))
+                  | .id" || return 1
+            done
+          }
+          while true; do
+            earlier=$(ahead | wc -l) || earlier=unknown
+            [ "$earlier" -eq 0 ] 2>/dev/null && break
+            sleep 60
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+      - name: Put this commit under test
+        timeout-minutes: 5
+        run: e2e/pr-auto-approve/sandbox.sh --real sync "$SHA"
+      - name: Run the real-Copilot scenarios
+        timeout-minutes: 90
+        # copilot.sh rejects any name that isn't a scenario.
+        run: |
+          read -r -a selected <<<"$SCENARIOS"
+          e2e/pr-auto-approve/copilot.sh "${selected[@]}"
+        env:
+          E2E_EXPECT_SHA: ${{ env.SHA }}
+          SCENARIOS: ${{ inputs.scenarios }}

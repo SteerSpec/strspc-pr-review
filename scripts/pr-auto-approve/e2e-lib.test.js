@@ -63,6 +63,18 @@ test("GraphQL's catch-all error is retried with the same stdin", { skip }, () =>
   assert.deepEqual(r.calls.map((c) => c.stdin), ['{"query":1}\n', '{"query":1}\n']);
 });
 
+test('a connection that never reached GitHub is retried', { skip }, () => {
+  const dropped = [
+    [1, '', 'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com\n'],
+    [1, '', 'Get "https://api.github.com/repos/o/r": dial tcp 20.250.119.72:443: i/o timeout\n'],
+    [1, '', 'Post "https://api.github.com/graphql": read tcp 10.0.0.2:5000->20.250.119.72:443: read: connection reset by peer\n'],
+  ];
+  const r = run([...dropped, [0, 'ok-output\n', '']], 'gh api repos/o/r');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'ok-output\n');
+  assert.equal(r.calls.length, 4);
+});
+
 test('a 4xx is not retried and keeps its exit code and message', { skip }, () => {
   const r = run([[1, '{"message":"Not Found"}', 'gh: Not Found (HTTP 404)\n'], [0, 'never', '']], 'gh api repos/o/r');
   assert.equal(r.status, 1);

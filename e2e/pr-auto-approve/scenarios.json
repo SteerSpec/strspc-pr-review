@@ -39,8 +39,7 @@
     }
   },
   "exemptions": {
-    "copilot-error-retries": "A synthetic reviewer cannot produce Copilot's errored review, so this waits for the real tier.",
-    "wait-for-copilot-seconds": "Only meaningful against a real Copilot check, so this waits for the real tier.",
+    "copilot-error-retries": "Real Copilot cannot be made to error on demand, so the real tier cannot drive it. A synthetic scenario that posts the errored wording and asserts the re-request is tracked separately.",
     "allow-no-checks": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "slack-channel": "The sandbox has no Slack workspace to assert against.",
     "slack-bot-token": "The sandbox has no Slack workspace to assert against."
@@ -67,7 +66,8 @@
         "test-copilot-logins"
       ],
       "rules": [
-        "APPROVE-004"
+        "APPROVE-004",
+        "APPROVE-011"
       ]
     },
     {
@@ -155,6 +155,30 @@
       "decision": "none",
       "inputs": [],
       "rules": []
+    },
+    {
+      "name": "ci-failing",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^failing check: check \\(failure\\)",
+      "inputs": [],
+      "rules": [
+        "APPROVE-001"
+      ]
+    },
+    {
+      "name": "base-near-match",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^PR base ref 'mai' not in \\[main\\]",
+      "inputs": [
+        "base-branch"
+      ],
+      "rules": [
+        "APPROVE-018"
+      ]
     },
     {
       "name": "type-zero-docs",
@@ -467,19 +491,16 @@
     }
   ],
   "rule_exemptions": {
-    "APPROVE-001": "Scenarios wait for CI first; unit tests cover failing and unfinished checks.",
     "APPROVE-002": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "APPROVE-006": "A synthetic reviewer is allowlisted by test-copilot-logins; unit tests cover the login match.",
     "APPROVE-009": "Needs a change landing mid-run; unit tests cover the re-read.",
     "APPROVE-010": "The sandbox is in sandbox-repos so that bot-authored scenarios can run, which bypasses this refusal; unit tests cover it.",
-    "APPROVE-011": "No scenario asserts the caller's loop guard yet; unit tests cover the skip and the guard's expression.",
     "APPROVE-012": "An empty bot-login would fail every run in the sandbox; unit tests cover the failed job.",
     "APPROVE-017": "The draft scenario proves only half of this rule, and a fork scenario needs a fork: strspc-pr-review-t9w.20.14.",
     "APPROVE-013": "Needs an API failure mid-run; unit tests cover the skip.",
     "APPROVE-014": "Needs an API failure mid-run; unit tests cover the failed job.",
     "APPROVE-015": "Which token made a request can't be observed from outside; unit tests cover it.",
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
-    "APPROVE-018": "The caller's substring filter runs first and needs a near-match branch; unit tests cover the exact match.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
     "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
   }

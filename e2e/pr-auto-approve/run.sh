@@ -6,8 +6,7 @@
 # sandbox's caller workflow sets test-copilot-logins so decide.js treats them as
 # Copilot reviews. That makes every scenario deterministic and fast, at the cost
 # of not exercising real Copilot at all — so it cannot detect drift in Copilot's
-# own output format. A real-Copilot tier that can is planned, and lib.sh is
-# factored to be shared with it; nothing covers that gap today.
+# own output format. copilot.sh, the real-Copilot tier, covers that, sharing lib.sh.
 #
 # scenarios.json holds each scenario's profile, expected decision and reason. A
 # function here only sets the scene and calls expect_outcome. Every scenario runs
@@ -68,12 +67,73 @@ open_pr_as_bot() {
   OPEN_PRS+=("$PR_NUM")
 }
 
+# The bot's APPROVE review fires pull_request_review as the bot, and the caller's
+# loop guard must skip that run: a run that evaluated it could approve, re-trigger
+# itself and loop. Passes on a skipped run of that review, fails on one that ran.
+assert_loop_guard() {
+  local pr_num="$1" branch approved_at deadline runs verdict
+  branch=$(gh pr view "$pr_num" -R "$REPO" --json headRefName -q .headRefName)
+  approved_at=$(gh api "repos/$REPO/pulls/$pr_num/reviews" | jq -r --arg login "$APPROVER_LOGIN" \
+    '[.[] | select(.user.login == $login and .state == "APPROVED")] | last | .submitted_at // empty')
+  [[ -n "$approved_at" ]] || fail "$SCENARIO: no approval to check the loop guard against"
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    # The REST list, because gh run list cannot say who triggered a run, and the
+    # sandbox's real Copilot may review after the approval, in a run that is
+    # rightly not skipped.
+    if runs=$(gh api "repos/$REPO/actions/workflows/$CALLER_WORKFLOW/runs?event=pull_request_review&branch=$branch&per_page=50" \
+        2>/dev/null); then
+      # GitHub stamps both times, so they compare on one clock.
+      verdict=$(printf '%s' "$runs" | jq -r --arg s "$approved_at" --arg bot "$APPROVER_LOGIN" '
+        [.workflow_runs[] | select(.triggering_actor.login == $bot
+          and .created_at >= $s and .status == "completed")]
+        | if any(.conclusion != "skipped") then "ran"
+          elif length > 0 then "skipped" else "" end')
+      case "$verdict" in
+        ran) fail "$SCENARIO: the bot's own review started an evaluation; the loop guard is off" ;;
+        skipped) return 0 ;;
+      esac
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  fail "$SCENARIO: no run of the bot's review appeared in ${TIMEOUT}s"
+}
+
 # --- Scenarios -----------------------------------------------------------
 
 scenario_copilot_clean() {
   open_pr clean "e2e: copilot-clean"
   wait_for_ci "$PR_NUM"
   post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+  assert_loop_guard "$PR_NUM"
+}
+
+# A clean review cannot outweigh a failed check. The marker in the title makes
+# the sandbox's CI fail (sandbox.sh ci_workflow).
+scenario_ci_failing() {
+  open_pr ci-failing "e2e: failing CI [e2e-ci-fail]"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+}
+
+# 'mai' passes the caller's contains() pre-filter for 'main', so the run reaches
+# the action, whose exact match must refuse it. No CI runs on 'mai', and none is
+# needed: the base gate comes first.
+scenario_base_near_match() {
+  local saved="$BASE_BRANCH" main_sha
+  # Only a branch this run created is deleted. One left by an interrupted run is
+  # removed by sandbox.sh reset, which owns the name; anything else stops here.
+  if gh api "repos/$REPO/branches/mai" >/dev/null 2>&1; then
+    fail "$SCENARIO: branch mai already exists; sandbox.sh reset removes the harness's copy"
+  fi
+  main_sha=$(gh api "repos/$REPO/git/ref/heads/main" -q .object.sha)
+  gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/mai -f sha="$main_sha" >/dev/null
+  EXTRA_BRANCHES+=(mai)
+  BASE_BRANCH=mai
+  open_pr base-near-match "e2e: base near-match"
+  BASE_BRANCH="$saved"
   expect_outcome "$PR_NUM"
 }
 
@@ -413,6 +473,7 @@ run_scenario() (
   SCENARIO_SINCE=$(now_utc)
   OPEN_PRS=()
   KEPT_PRS=()
+  EXTRA_BRANCHES=()
   PR_NUM=""
   LANDED=""
   # shellcheck disable=SC2329  # invoked by the trap
@@ -425,6 +486,10 @@ run_scenario() (
     # It may have merged, which close refuses, and that must not fail the scenario.
     for n in "${KEPT_PRS[@]:-}"; do
       [[ -n "$n" ]] && { gh pr close "$n" -R "$REPO" >/dev/null 2>&1 || true; }
+    done
+    # Base branches a scenario made, deleted after the PRs into them are closed.
+    for n in "${EXTRA_BRANCHES[@]:-}"; do
+      [[ -n "$n" ]] && { gh api -X DELETE "repos/$REPO/git/refs/heads/$n" >/dev/null 2>&1 || true; }
     done
     return 0
   }

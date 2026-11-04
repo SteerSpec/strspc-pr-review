@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.29",
-    "timestamp": "2026-11-02T20:45:46Z",
-    "hash": "blake3:dfc274e8c742c6c65f9e785672d35a25a4f8548186517a26520c83659fe9e97b"
+    "version": "0.1.31",
+    "timestamp": "2026-11-04T15:47:22Z",
+    "hash": "blake3:cdd87d438bb7ddb5e0734d5677524d6e989818d19cb943202e4a520fe2b2de47"
   },
   "rules": [
     {
@@ -216,6 +216,24 @@
       "body": "A release-please pull request into a configured base MUST bypass the Copilot rules, and the action MUST approve it only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-024",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST retry a GitHub API request that fails with a 5xx status or a dropped connection, a bounded number of times with backoff, before it treats the request as failed, but not a request refused as invalid, unauthorized, forbidden or not found (400, 401, 403, 404, 410, 422, 451).",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-025",
+      "revision": 0,
+      "state": "D",
+      "body": "When the action withdraws its approval because the pull request changed while approving, it MUST withdraw every approval of the head by the bot, because a retried approval request can leave two.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
       "supersedes": null
     }
   ],

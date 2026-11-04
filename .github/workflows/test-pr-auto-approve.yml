@@ -101,6 +101,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
+      # The retry tests drive the real @actions/github and @octokit/plugin-retry
+      # (devDependencies pinned to what actions/github-script bundles).
+      # --ignore-scripts: nothing here needs the husky hook install.
+      - name: Install dev dependencies
+        run: npm ci --ignore-scripts
       - name: Run unit tests (with coverage gate)
         run: npm run test:coverage
 

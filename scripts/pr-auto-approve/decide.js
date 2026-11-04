@@ -620,6 +620,22 @@ async function waitForCopilotCheck({
   }
 }
 
+// Every client the action uses is built here, so a transient GitHub failure (a
+// 5xx, or a dropped connection, which @octokit/request reports as a 500) is
+// retried before the run gives up: 3 retries, 1 s + 4 s + 9 s apart, through
+// @octokit/plugin-retry, which github-script v9's injected getOctokit carries.
+// 4xx stay unretried (the plugin's doNotRetry default: 400, 401, 403, 404, 410,
+// 422, 451), so a refused PAT still reaches dismissReview's fallback at once.
+// Do NOT use github-script's `retries` input instead: it sets the count in
+// `request.retries`, and the plugin then retries every status, exempt ones
+// included, with no delay (verified against plugin-retry 8.1.0). Keeping the
+// count in `retry.retries` is what makes doNotRetry hold.
+const API_RETRIES = 3;
+
+function makeApiClient(getOctokit, token) {
+  return getOctokit(token, { retry: { enabled: true, retries: API_RETRIES } });
+}
+
 // A Copilot review "covers" the head when it names the head commit, or when
 // enough rounds exist for the threshold rule to decide without freshness.
 // Dismissing needs write access, not the bot's identity. The bot PAT that can
@@ -1544,23 +1560,46 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
   }
   if (changedWhileApproving) {
-    try {
-      await dismissReview({
-        github,
-        botGithub,
-        params: {
-          owner,
-          repo,
-          pull_number: prNumber,
-          review_id: created.id,
-          message: `Withdrawn: ${changedWhileApproving}.`,
-        },
-      });
-    } catch (err) {
-      const failure = `approved, then ${changedWhileApproving}, and the approval could not be withdrawn (review ${created.id}): ${err.status || ''} ${err.message || err}`.trim();
+    const withdrawFailed = (what, err) => {
+      const failure = `approved, then ${changedWhileApproving}, and ${what}: ${err.status || ''} ${err.message || err}`.trim();
       core.error(`pr-auto-approve ${failure}`);
       if (typeof core.setFailed === 'function') core.setFailed(failure);
       return setDecision('error', failure);
+    };
+    const withdraw = (reviewId) => dismissReview({
+      github,
+      botGithub,
+      params: {
+        owner,
+        repo,
+        pull_number: prNumber,
+        review_id: reviewId,
+        message: `Withdrawn: ${changedWhileApproving}.`,
+      },
+    });
+    try {
+      await withdraw(created.id);
+    } catch (err) {
+      return withdrawFailed(`the approval could not be withdrawn (review ${created.id})`, err);
+    }
+    // The approval POST is retried on a 5xx (makeApiClient). If GitHub saved
+    // the first attempt but answered 502, the retry posts a second approval and
+    // `created` names only that one, so look for any other bot approval of this
+    // head and withdraw it too. A failed listing fails the job, as a failed
+    // withdrawal does: an approval may still stand.
+    let twins;
+    try {
+      twins = (await loadReviews()).filter((r) => r.id !== created.id &&
+        r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED' && r.commit_id === headSha);
+    } catch (err) {
+      return withdrawFailed('the reviews could not be listed to find a duplicate approval', err);
+    }
+    for (const r of twins) {
+      try {
+        await withdraw(r.id);
+      } catch (err) {
+        return withdrawFailed(`the approval could not be withdrawn (review ${r.id})`, err);
+      }
     }
     return setDecision('skip', `${changedWhileApproving}; approval withdrawn`);
   }
@@ -1584,3 +1623,5 @@ module.exports.changedFileNames = changedFileNames;
 module.exports.requestCopilotReview = requestCopilotReview;
 module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
 module.exports.getErrorRetries = getErrorRetries;
+module.exports.makeApiClient = makeApiClient;
+module.exports.API_RETRIES = API_RETRIES;

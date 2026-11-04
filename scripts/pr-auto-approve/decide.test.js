@@ -4255,3 +4255,185 @@ test('requestCopilotReview: an API error only warns', async () => {
   assert.equal(out, 'error');
   assert.match(warnings[0], /could not request a Copilot review: 422 Validation Failed/);
 });
+
+// -- Transient API errors are retried (makeApiClient) ----------------------
+
+test('makeApiClient puts the retry count in the retry options, not in request.retries', () => {
+  const seen = [];
+  const client = decide.makeApiClient((token, options) => { seen.push({ token, options }); return 'client'; }, 'tok');
+  assert.equal(client, 'client');
+  assert.deepEqual(seen, [{ token: 'tok', options: { retry: { enabled: true, retries: decide.API_RETRIES } } }]);
+  assert.equal(decide.API_RETRIES, 3);
+});
+
+// github-script v9 hands the script a wrapped getOctokit (src/main.ts and
+// src/create-configured-getoctokit.ts at the pinned SHA): with the `retries`
+// input left at 0 its defaults are `retry: { enabled: false }` plus
+// @actions/github's request defaults, merged under the caller's options, with
+// the retry plugin always added. This rebuilds that wrapper around the real
+// @actions/github and @octokit/plugin-retry (the versions github-script v9
+// bundles), with a stub fetch and a 1 ms backoff unit instead of 1 s.
+async function githubScriptGetOctokit(fetch) {
+  const { getOctokit } = await import('@actions/github');
+  const { retry } = await import('@octokit/plugin-retry');
+  const defaults = { retry: { enabled: false, retryAfterBaseValue: 1 }, request: { fetch } };
+  return (token, options = {}) => getOctokit(token, {
+    ...defaults,
+    ...options,
+    request: { ...defaults.request, ...(options.request || {}) },
+    retry: { ...defaults.retry, ...(options.retry || {}) },
+  }, retry);
+}
+
+// A stub fetch that answers the approval POST from `answers` in turn (the last
+// one repeats): a status code, or 'reset' for a dropped connection.
+function approvalFetch(answers) {
+  const posts = [];
+  const fetch = async (url, init) => {
+    assert.equal(init.method, 'POST');
+    assert.match(String(url), /\/repos\/axeptio\/test-only-repo\/pulls\/42\/reviews$/);
+    const answer = answers[Math.min(posts.length, answers.length - 1)];
+    posts.push(answer);
+    if (answer === 'reset') {
+      throw Object.assign(new TypeError('fetch failed'), { cause: new Error('socket hang up') });
+    }
+    const body = answer === 200 ? { id: 999, state: 'APPROVED' } : { message: answer >= 500 ? 'Server Error' : 'Forbidden' };
+    return new Response(JSON.stringify(body), { status: answer, headers: { 'content-type': 'application/json' } });
+  };
+  return { fetch, posts };
+}
+
+async function approveThrough(answers) {
+  const { fetch, posts } = approvalFetch(answers);
+  const getOctokit = await githubScriptGetOctokit(fetch);
+  const { github } = makeApprovableGithub();
+  const botGithub = decide.makeApiClient(getOctokit, 'bot-pat');
+  const result = await decide({ github, botGithub, core: makeCore(), context: makeContext() });
+  return { result, posts };
+}
+
+test('a 502 on the approval is retried and the PR is approved', async () => {
+  const { result, posts } = await approveThrough([502, 200]);
+  assert.equal(result.decision, 'approved');
+  assert.deepEqual(posts, [502, 200]);
+});
+
+test('a dropped connection on the approval is retried and the PR is approved', async () => {
+  const { result, posts } = await approveThrough(['reset', 200]);
+  assert.equal(result.decision, 'approved');
+  assert.deepEqual(posts, ['reset', 200]);
+});
+
+test('a 5xx that persists through every retry still reports the API failure', async () => {
+  const { result, posts } = await approveThrough([502]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^approval API call failed: 502 /);
+  assert.equal(posts.length, 1 + decide.API_RETRIES);
+});
+
+test('a 4xx on the approval is not retried', async () => {
+  const { result, posts } = await approveThrough([403, 200]);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^approval API call failed: 403 /);
+  assert.deepEqual(posts, [403]);
+});
+
+// Every github-script step builds its clients with makeApiClient and leaves the
+// step's own `retries` input unset: that input retries 4xx too (see decide.js).
+test('action.yml: every github-script step uses makeApiClient and no retries input', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const yml = fs.readFileSync(path.join(__dirname, '..', '..', 'action.yml'), 'utf8');
+  const steps = yml.split(/\n {4}- name: /).slice(1).filter((s) => s.includes('actions/github-script@'));
+  assert.equal(steps.length, 3);
+  for (const step of steps) {
+    const name = step.split('\n')[0];
+    assert.match(step, /makeApiClient\(getOctokit, process\.env\.AUTO_APPROVE_GITHUB_TOKEN\)/, name);
+    assert.match(step, /AUTO_APPROVE_GITHUB_TOKEN: \$\{\{ inputs\.github-token \}\}/, name);
+    assert.doesNotMatch(step, /^\s+retries:/m, name);
+    assert.doesNotMatch(step, /\bgithub\.(rest|graphql|paginate)\b/, name);
+  }
+});
+
+// A retried approval POST can leave two bot approvals of the head: GitHub saved
+// the first attempt but answered 502. Withdrawing after a mid-approval change
+// must take back both, not only the review the POST finally returned.
+function makeTwinApprovalGithub({ listReviewsImpl } = {}) {
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const bot = { login: 'axeptio-bot', type: 'User' };
+  let gets = 0;
+  const copilotReviews = [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp }));
+  const { github } = makeFakeGithub({
+    reviews: copilotReviews,
+    getPrImpl: (num) => {
+      const { data } = getPrWithTitle('docs: x')(num);
+      return { data: { ...data, base: { ref: gets++ === 0 ? 'develop' : 'main' } } };
+    },
+  });
+  let lists = 0;
+  const original = github.rest.pulls.listReviews;
+  github.rest.pulls.listReviews = async (a) => {
+    lists += 1;
+    if (listReviewsImpl) return listReviewsImpl(lists, original, a);
+    // After the approval, the list holds the twin (998), the returned approval
+    // (999), an older bot approval of another commit, and a dismissed one.
+    if (lists === 1) return original(a);
+    const { data } = await original(a);
+    return { data: data.concat([
+      { id: 997, state: 'APPROVED', commit_id: 'oldsha', user: bot },
+      { id: 996, state: 'DISMISSED', commit_id: 'deadbeef', user: bot },
+      { id: 998, state: 'APPROVED', commit_id: 'deadbeef', user: bot },
+      { id: 999, state: 'APPROVED', commit_id: 'deadbeef', user: bot },
+    ]) };
+  };
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  return { github, dismissed };
+}
+
+test('a change while approving withdraws a duplicate approval of the head too', async () => {
+  const { github, dismissed } = makeTwinApprovalGithub();
+  const result = await decide({ github, core: makeCore(), context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
+  assert.deepEqual(dismissed.map((d) => d.review_id), [999, 998]);
+  assert.ok(dismissed.every((d) => d.message === 'Withdrawn: PR head, base, title or draft state changed while approving.'));
+});
+
+test('a change while approving fails the job if the reviews cannot be listed to find a duplicate', async () => {
+  const { github, dismissed } = makeTwinApprovalGithub({
+    listReviewsImpl: (n, original, a) => {
+      if (n === 1) return original(a);
+      throw Object.assign(new Error('Server Error'), { status: 502 });
+    },
+  });
+  const core = makeCore();
+  const failed = [];
+  core.setFailed = (m) => failed.push(m);
+  const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'error');
+  assert.equal(result.reason, 'approved, then PR head, base, title or draft state changed while approving, and the reviews could not be listed to find a duplicate approval: 502 Server Error');
+  assert.deepEqual(failed, [result.reason]);
+  assert.deepEqual(dismissed.map((d) => d.review_id), [999]);
+});
+
+test('a change while approving fails the job if a duplicate approval cannot be withdrawn', async () => {
+  const { github, dismissed } = makeTwinApprovalGithub();
+  github.rest.pulls.dismissReview = async (a) => {
+    if (a.review_id === 998) throw Object.assign(new Error('Server Error'), { status: 502 });
+    dismissed.push(a);
+    return { data: {} };
+  };
+  const result = await decide({ github, core: makeCore(), context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'error');
+  assert.equal(result.reason, 'approved, then PR head, base, title or draft state changed while approving, and the approval could not be withdrawn (review 998): 502 Server Error');
+  assert.deepEqual(dismissed.map((d) => d.review_id), [999]);
+});
+
+test('a change while approving fails the job if the returned approval cannot be withdrawn', async () => {
+  const { github } = makeTwinApprovalGithub();
+  github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); };
+  const result = await decide({ github, core: makeCore(), context: makeContext({ prOverrides: { title: 'docs: x' } }) });
+  assert.equal(result.decision, 'error');
+  assert.equal(result.reason, 'approved, then PR head, base, title or draft state changed while approving, and the approval could not be withdrawn (review 999): 502 Server Error');
+});

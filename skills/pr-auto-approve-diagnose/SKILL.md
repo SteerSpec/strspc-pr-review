@@ -58,7 +58,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `cannot read release-please-config.json at …` / `… is not valid JSON` / `… has no packages` | The file must exist on the base branch |
 | `… has N unpromoted commit(s): …; promote first` | Merging now would lose those from the changelog. Merge the promotion: release-please updates the PR, which re-evaluates it |
 | `cannot compare … with … (404)…` | No such source branch. Use a bare base in `release-branches` |
-| `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message |
+| `evaluation failed: …` | An API error, deliberately converted to a skip so it never reds a required check. The status code is in the message. A `5xx` or dropped connection was already retried 3 times, so it means a GitHub outage: check githubstatus.com and re-run the job once it clears |
 
 ## 2a. Copilot's check is red but its review is clean
 

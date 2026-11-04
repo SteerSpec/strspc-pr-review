@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.32",
-    "timestamp": "2026-11-04T16:04:01Z",
-    "hash": "blake3:80fe725fbe83404c80b394ae370aecf56de91b7d93bd1eb7eaa8e206baa03a1f"
+    "version": "0.1.40",
+    "timestamp": "2026-11-04T20:48:36Z",
+    "hash": "blake3:d9ab37d190a4815564cbcc9b3204d3d35562177567bd763a29cb8104051be879"
   },
   "rules": [
     {
@@ -85,9 +85,9 @@
     },
     {
       "id": "APPROVE-009",
-      "revision": 1,
+      "revision": 2,
       "state": "D",
-      "body": "The action MUST pin an approval to the head commit it evaluated, MUST re-read the head, base branch, title and draft state before and after approving, and MUST NOT let an approval stand if any of them changed.",
+      "body": "The action MUST pin an approval to the head commit it evaluated.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
@@ -184,18 +184,18 @@
     },
     {
       "id": "APPROVE-020",
-      "revision": 1,
+      "revision": 2,
       "state": "D",
-      "body": "A Copilot review in which Copilot reviewed nothing, because its run failed or was cancelled, the requester had reached their quota, or every changed file was excluded from review, MUST NOT count as a Copilot review: it MUST NOT satisfy APPROVE-004 or count toward the rounds threshold.",
+      "body": "A Copilot review in which Copilot reviewed nothing, because its run failed or was cancelled, the requester had reached their quota, or every changed file was excluded from review, MUST NOT count as a Copilot review, either to satisfy APPROVE-004 or toward the rounds threshold.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
     {
       "id": "APPROVE-021",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "A pull request matching a configured promotion pair MUST bypass the Copilot rules, and the action MUST approve it only when its head is in this repository and is the tip of the head branch, its title is of type chore and is not marked breaking, its checks pass, and every commit came from a merged pull request into the head branch that, at its merge, had an approval of its final head from a reviewer with push access and no outstanding request for changes.",
+      "body": "A pull request matching a configured promotion pair MUST bypass the Copilot rules.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
@@ -211,9 +211,9 @@
     },
     {
       "id": "APPROVE-023",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "A release-please pull request into a configured base MUST bypass the Copilot rules, and the action MUST approve it only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
+      "body": "A release-please pull request into a configured base MUST bypass the Copilot rules.",
       "added_by": "@pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
@@ -241,6 +241,42 @@
       "revision": 0,
       "state": "D",
       "body": "When the approval request fails, the action MUST look for an approval of the head by the bot that GitHub saved anyway, and treat one it finds as the approval it posted.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-027",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST re-read the head, base branch, title and draft state of the pull request before and after approving.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-028",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT let an approval stand if the head, base branch, title or draft state changed while it approved.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-029",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST approve a pull request matching a configured promotion pair only when its head is in this repository and is the tip of the head branch, its title is of type chore and is not marked breaking, its checks pass, and every commit came from a merged pull request into the head branch that, at its merge, had an approval of its final head from a reviewer with push access and no outstanding request for changes.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-030",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST approve a release-please pull request into a configured base only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
       "added_by": "@pleberre",
       "added_at": "2026-11-04",
       "supersedes": null

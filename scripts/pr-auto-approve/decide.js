@@ -1515,6 +1515,8 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   const approvalStamp = copilotOptional || reason.includes('-rounds ')
     ? `\n\n${thresholdMarker(threshold)}`
     : '';
+  const botApprovalsOfHead = async () => (await loadReviews()).filter((r) =>
+    r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED' && r.commit_id === headSha);
   let created;
   try {
     // botGithub, not github: this is the ONE call that must come from the bot
@@ -1532,11 +1534,23 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       body: `Auto-approved: ${reason}.${approvalStamp}`,
     }));
   } catch (err) {
-    // No approval exists, so an ordinary skip is accurate here.
-    return setDecision(
-      'skip',
-      `approval API call failed: ${err.status || ''} ${err.message || err}`.trim(),
-    );
+    const failed = `approval API call failed: ${err.status || ''} ${err.message || err}`.trim();
+    // A failed call does not prove that nothing was saved: the call is retried
+    // on a 5xx (makeApiClient), and GitHub can save an attempt yet answer 5xx.
+    // Look for an approval of this head; if one stands, carry on as if the call
+    // had returned it, so the re-read below can still withdraw it.
+    let saved;
+    try {
+      saved = await botApprovalsOfHead();
+    } catch (listErr) {
+      return setDecision('skip', `${failed}; could not list the reviews to check whether it was saved: ${listErr.status || ''} ${listErr.message || listErr}`.trim());
+    }
+    if (saved.length === 0) {
+      // No approval exists, so an ordinary skip is accurate here.
+      return setDecision('skip', failed);
+    }
+    created = saved[saved.length - 1];
+    core.warning(`pr-auto-approve ${failed}, but GitHub saved the approval (review ${created.id})`);
   }
 
   // From here an approval exists, so nothing below may fall back to a plain
@@ -1560,46 +1574,41 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
   }
   if (changedWhileApproving) {
-    const withdrawFailed = (what, err) => {
-      const failure = `approved, then ${changedWhileApproving}, and ${what}: ${err.status || ''} ${err.message || err}`.trim();
+    const describe = (err) => `${err.status || ''} ${err.message || err}`.trim();
+    // The approval POST is retried on a 5xx (makeApiClient). If GitHub saved
+    // an attempt but answered 502, the retry posts a second approval and
+    // `created` names only one, so withdraw every bot approval of this head.
+    // Every one is tried before any failure is reported; a failed listing or
+    // withdrawal fails the job, because an approval may still stand.
+    const failures = [];
+    let ids = [created.id];
+    try {
+      ids = [...new Set([created.id, ...(await botApprovalsOfHead()).map((r) => r.id)])];
+    } catch (err) {
+      failures.push(`the reviews could not be listed to find a duplicate approval: ${describe(err)}`);
+    }
+    for (const id of ids) {
+      try {
+        await dismissReview({
+          github,
+          botGithub,
+          params: {
+            owner,
+            repo,
+            pull_number: prNumber,
+            review_id: id,
+            message: `Withdrawn: ${changedWhileApproving}.`,
+          },
+        });
+      } catch (err) {
+        failures.push(`the approval could not be withdrawn (review ${id}): ${describe(err)}`);
+      }
+    }
+    if (failures.length > 0) {
+      const failure = `approved, then ${changedWhileApproving}, and ${failures.join('; ')}`;
       core.error(`pr-auto-approve ${failure}`);
       if (typeof core.setFailed === 'function') core.setFailed(failure);
       return setDecision('error', failure);
-    };
-    const withdraw = (reviewId) => dismissReview({
-      github,
-      botGithub,
-      params: {
-        owner,
-        repo,
-        pull_number: prNumber,
-        review_id: reviewId,
-        message: `Withdrawn: ${changedWhileApproving}.`,
-      },
-    });
-    try {
-      await withdraw(created.id);
-    } catch (err) {
-      return withdrawFailed(`the approval could not be withdrawn (review ${created.id})`, err);
-    }
-    // The approval POST is retried on a 5xx (makeApiClient). If GitHub saved
-    // the first attempt but answered 502, the retry posts a second approval and
-    // `created` names only that one, so look for any other bot approval of this
-    // head and withdraw it too. A failed listing fails the job, as a failed
-    // withdrawal does: an approval may still stand.
-    let twins;
-    try {
-      twins = (await loadReviews()).filter((r) => r.id !== created.id &&
-        r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED' && r.commit_id === headSha);
-    } catch (err) {
-      return withdrawFailed('the reviews could not be listed to find a duplicate approval', err);
-    }
-    for (const r of twins) {
-      try {
-        await withdraw(r.id);
-      } catch (err) {
-        return withdrawFailed(`the approval could not be withdrawn (review ${r.id})`, err);
-      }
     }
     return setDecision('skip', `${changedWhileApproving}; approval withdrawn`);
   }

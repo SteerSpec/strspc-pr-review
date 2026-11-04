@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.31",
-    "timestamp": "2026-11-04T15:47:22Z",
-    "hash": "blake3:cdd87d438bb7ddb5e0734d5677524d6e989818d19cb943202e4a520fe2b2de47"
+    "version": "0.1.32",
+    "timestamp": "2026-11-04T16:04:01Z",
+    "hash": "blake3:80fe725fbe83404c80b394ae370aecf56de91b7d93bd1eb7eaa8e206baa03a1f"
   },
   "rules": [
     {
@@ -231,7 +231,16 @@
       "id": "APPROVE-025",
       "revision": 0,
       "state": "D",
-      "body": "When the action withdraws its approval because the pull request changed while approving, it MUST withdraw every approval of the head by the bot, because a retried approval request can leave two.",
+      "body": "When the action withdraws its approval because the pull request changed while approving, it MUST try to withdraw every approval of the head by the bot, because a retried approval request can leave two.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-026",
+      "revision": 0,
+      "state": "D",
+      "body": "When the approval request fails, the action MUST look for an approval of the head by the bot that GitHub saved anyway, and treat one it finds as the approval it posted.",
       "added_by": "@pleberre",
       "added_at": "2026-11-04",
       "supersedes": null

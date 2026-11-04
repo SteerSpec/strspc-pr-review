@@ -4430,10 +4430,80 @@ test('a change while approving fails the job if a duplicate approval cannot be w
   assert.deepEqual(dismissed.map((d) => d.review_id), [999]);
 });
 
-test('a change while approving fails the job if the returned approval cannot be withdrawn', async () => {
+// A failed withdrawal must not stop the others: a retried dismissal that GitHub
+// saved can answer 422, and the twin would otherwise stay.
+test('a change while approving still withdraws the duplicate when the returned approval fails to', async () => {
   const { github } = makeTwinApprovalGithub();
-  github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); };
+  const tried = [];
+  github.rest.pulls.dismissReview = async (a) => {
+    tried.push(a.review_id);
+    if (a.review_id === 999) throw Object.assign(new Error('Can not dismiss a dismissed review'), { status: 422 });
+    return { data: {} };
+  };
   const result = await decide({ github, core: makeCore(), context: makeContext({ prOverrides: { title: 'docs: x' } }) });
   assert.equal(result.decision, 'error');
-  assert.equal(result.reason, 'approved, then PR head, base, title or draft state changed while approving, and the approval could not be withdrawn (review 999): 502 Server Error');
+  assert.equal(result.reason, 'approved, then PR head, base, title or draft state changed while approving, and the approval could not be withdrawn (review 999): 422 Can not dismiss a dismissed review');
+  assert.deepEqual(tried, [999, 998]);
+});
+
+// GitHub can save an approval yet answer 5xx to the last attempt. The action
+// then finds the saved approval and goes on as if the call had returned it.
+function makeSavedApprovalGithub({ saved = true, listFails = false, baseChanges = false } = {}) {
+  const bot = { login: 'axeptio-bot', type: 'User' };
+  const { github, calls } = makeApprovableGithub();
+  if (baseChanges) {
+    let gets = 0;
+    const getPr = github.rest.pulls.get;
+    github.rest.pulls.get = async (a) => {
+      const { data } = await getPr(a);
+      return { data: { ...data, base: { ref: gets++ === 0 ? 'develop' : 'main' } } };
+    };
+  }
+  let posted = false;
+  github.rest.pulls.createReview = async (args) => {
+    calls.createReview.push(args);
+    posted = true;
+    throw Object.assign(new Error('Server Error'), { status: 502 });
+  };
+  const listReviews = github.rest.pulls.listReviews;
+  github.rest.pulls.listReviews = async (a) => {
+    const { data } = await listReviews(a);
+    if (!posted) return { data };
+    if (listFails) throw Object.assign(new Error('Bad Gateway'), { status: 502 });
+    return { data: saved ? data.concat([{ id: 555, state: 'APPROVED', commit_id: 'deadbeef', user: bot }]) : data };
+  };
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  return { github, dismissed };
+}
+
+test('an approval call that fails after GitHub saved the approval reads as approved', async () => {
+  const { github, dismissed } = makeSavedApprovalGithub();
+  const core = makeCore();
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'approved');
+  assert.deepEqual(dismissed, []);
+  assert.match(core.warnings.join('\n'), /approval API call failed: 502 Server Error, but GitHub saved the approval \(review 555\)/);
+});
+
+test('an approval saved despite a failed call is withdrawn if the PR changed while approving', async () => {
+  const { github, dismissed } = makeSavedApprovalGithub({ baseChanges: true });
+  const result = await decide({ github, core: makeCore(), context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'PR head, base, title or draft state changed while approving; approval withdrawn');
+  assert.deepEqual(dismissed.map((d) => d.review_id), [555]);
+});
+
+test('an approval call that failed with nothing saved is a plain skip', async () => {
+  const { github } = makeSavedApprovalGithub({ saved: false });
+  const result = await decide({ github, core: makeCore(), context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'approval API call failed: 502 Server Error');
+});
+
+test('an approval call that failed, when the reviews cannot be listed, says so', async () => {
+  const { github } = makeSavedApprovalGithub({ listFails: true });
+  const result = await decide({ github, core: makeCore(), context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'approval API call failed: 502 Server Error; could not list the reviews to check whether it was saved: 502 Bad Gateway');
 });

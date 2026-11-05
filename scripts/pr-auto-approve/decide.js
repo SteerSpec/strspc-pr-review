@@ -571,11 +571,14 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
       // happens to share the name is still a real result and keeps counting.
       !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
   );
-  // Dedupe by (name, app.id) keeping the most-recently-started run.
+  // Dedupe by (name, app.id) keeping the most-recently-started run. A run with
+  // no timestamp has not started yet, so it is the newest, not the oldest:
+  // scoring it 0 would let an older green run hide a queued rerun.
   const latestByKey = new Map();
   for (const cr of notSelf) {
     const key = `${cr.name}::${cr.app && cr.app.id}`;
-    const ts = Date.parse(cr.started_at || cr.completed_at || '') || 0;
+    const stamp = cr.started_at || cr.completed_at;
+    const ts = stamp ? (Date.parse(stamp) || 0) : Infinity;
     const prev = latestByKey.get(key);
     const isNewer =
       !prev ||
@@ -731,6 +734,38 @@ function getErrorRetries(env = process.env) {
   return /^\d+$/.test(raw) ? parseInt(raw, 10) : 0;
 }
 
+// Whether a Copilot review request is pending on the PR. Read from GraphQL: the
+// REST requested_reviewers list leaves a pending Copilot request out (seen on
+// #179, 2026-11-05: REST gave [] while GraphQL reviewRequests held it), so a
+// REST-only check never sees the request in flight. GraphQL names the bot
+// without the "[bot]" suffix, as a Bot node. Exact names of Bot nodes only: a
+// substring match, or a User, could mask a missing Copilot request.
+async function copilotRequestPending({ github, owner, repo, prNumber }) {
+  const data = await github.graphql(
+    `query ($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewRequests(first: 100) {
+            nodes { requestedReviewer { __typename ... on Bot { login } } }
+          }
+        }
+      }
+    }`,
+    { owner, repo, number: prNumber },
+  );
+  // A response without the list can't prove nothing is pending: throw, so the
+  // caller warns and skips the re-request instead of requesting again.
+  const pr = data && data.repository && data.repository.pullRequest;
+  const nodes = pr && pr.reviewRequests && pr.reviewRequests.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error('the PR\'s review requests could not be read (incomplete GraphQL response)');
+  }
+  return nodes.some((n) => {
+    const r = n && n.requestedReviewer;
+    return Boolean(r) && r.__typename === 'Bot' && COPILOT_CHECK_NAMES.has(r.login);
+  });
+}
+
 // Re-requests the Copilot review after an errored one on the current head.
 // `erroredOnHead` comes from the review history, so the cap needs no stored
 // state and a re-run cannot exceed it. Best-effort like requestCopilotReview:
@@ -744,12 +779,7 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
     // The budget counts only reviews that already errored, so every run between
     // this request and Copilot's next review would otherwise request again.
     // A request still pending on the PR means the retry is already in flight.
-    const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    // Exact logins only: a substring match would let an unrelated "copilot-x"
-    // reviewer mask a missing Copilot request. 'Copilot' is the display login
-    // GitHub uses for the bot on requested reviewers (not seen on a live PR
-    // yet; the canonical bot logins are checked as well).
-    if ((live.requested_reviewers || []).some((r) => isCopilot(r) || r.login === 'Copilot')) return 'pending';
+    if (await copilotRequestPending({ github, owner, repo, prNumber })) return 'pending';
     await github.rest.pulls.requestReviewers({
       owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
     });
@@ -911,7 +941,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // extract from the associated PRs, same shape as the check_run path above.
   if (!pr && context.payload.workflow_run) {
     const wr = context.payload.workflow_run;
-    if (wr.conclusion !== 'success') {
+    // Only a skipped run says nothing. A failed, timed-out or cancelled run goes
+    // through to the check gate, which reads the head's checks itself: a failure
+    // on a head the bot already approved must reach the withdrawal there.
+    if (wr.conclusion === 'skipped') {
       return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
     }
     const prs = wr.pull_requests || [];
@@ -1187,7 +1220,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
-  const checkGate = (allRuns) => {
+  const checkGate = async (allRuns) => {
     // When Copilot is not required, its own check run (pending while an automatic
     // review is still running, or non-success) is not CI and must not hold the PR.
     // Unfinished only: Copilot's check is a github-actions check like any CI job
@@ -1204,10 +1237,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     const badCheck = runs.find(isFailedCheck);
     if (badCheck) {
-      return setDecision(
-        'skip',
-        `failing check: ${badCheck.name} (${badCheck.conclusion})`,
-      );
+      const reason = `failing check: ${badCheck.name} (${badCheck.conclusion})`;
+      // A check can fail on a head the bot already approved: a retitle reruns the
+      // title check with the head unchanged, and so does a manual rerun. Branch
+      // protection dismisses approvals only on a push, so withdraw ours here, or
+      // the PR stays approved and mergeable on a red check.
+      if (BOT_LOGIN) {
+        const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
+        if (failed) return failed;
+      }
+      return setDecision('skip', reason);
     }
     const pending = runs.find((cr) => cr.status !== 'completed');
     if (pending) {
@@ -1215,7 +1254,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     return null;
   };
-  const gated = checkGate(checkRuns);
+  const gated = await checkGate(checkRuns);
   if (gated) return gated;
 
   reviews = reviews || await loadReviews();
@@ -1339,7 +1378,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       // Minutes may have passed: a rerun on this head or a check registered
       // late must still block approval.
       checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
-      const regated = checkGate(checkRuns);
+      const regated = await checkGate(checkRuns);
       if (regated) return regated;
     }
   }

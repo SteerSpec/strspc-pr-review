@@ -168,6 +168,17 @@
       ]
     },
     {
+      "name": "ci-fail-withdraws",
+      "group": "core",
+      "profile": "base",
+      "decision": "skip",
+      "reason": "^failing check: check \\(failure\\)",
+      "inputs": [],
+      "rules": [
+        "APPROVE-031"
+      ]
+    },
+    {
       "name": "base-near-match",
       "group": "core",
       "profile": "base",
@@ -521,6 +532,8 @@
     "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal.",
     "APPROVE-024": "A 5xx or a dropped connection cannot be forced from real GitHub; unit tests drive the real retry plugin with a stub fetch.",
     "APPROVE-025": "Needs GitHub to save an approval yet answer 5xx, then a change mid-approval; unit tests cover the withdrawal.",
-    "APPROVE-026": "Needs GitHub to save an approval yet fail the call; unit tests cover the lookup."
+    "APPROVE-026": "Needs GitHub to save an approval yet fail the call; unit tests cover the lookup.",
+    "APPROVE-032": "Needs a rerun caught between being queued and starting; unit tests cover the ordering.",
+    "APPROVE-033": "The sandbox reviewer is a user posting reviews, so no Copilot request is ever pending there; unit tests cover the GraphQL lookup with the shape seen live on #179."
   }
 }

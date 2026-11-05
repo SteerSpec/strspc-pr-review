@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.40",
-    "timestamp": "2026-11-04T20:48:36Z",
-    "hash": "blake3:d9ab37d190a4815564cbcc9b3204d3d35562177567bd763a29cb8104051be879"
+    "version": "0.1.44",
+    "timestamp": "2026-11-05T13:51:18Z",
+    "hash": "blake3:e81e87c6a3a9d7955d7a82f65211b71fbe8a940bbc7ac3e53574d0f4bf517bce"
   },
   "rules": [
     {
@@ -16,7 +16,7 @@
       "revision": 0,
       "state": "D",
       "body": "Apart from an unfinished Copilot check on a pull request that does not need a Copilot review, the action MUST NOT approve a pull request while any CI check on its head is unfinished or has concluded with anything other than success, neutral, skipped, cancelled or stale.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -25,7 +25,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT approve a pull request with no CI checks on its head unless allow-no-checks is enabled.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -34,7 +34,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT approve a pull request while the latest non-dismissed Copilot review requests changes, whatever the number of review rounds.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -43,7 +43,7 @@
       "revision": 3,
       "state": "D",
       "body": "Below the rounds threshold, the action MUST approve only on a Copilot review of the current head that has no inline comments and no suppressed comments, and whose body carries a verdict overview, without which no body counts as clean, stating no open or previously missed issues and giving either an approval verdict or, when the copilot-clean-on input is set to no-open-issues, the Needs a closer look verdict.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -52,7 +52,7 @@
       "revision": 1,
       "state": "D",
       "body": "Subject to APPROVE-003, the action MAY approve a pull request that has reached its rounds threshold whatever commit the latest Copilot review covers and whatever comments, issues or verdict it carries, so that a review that never clears cannot wedge the pull request.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -61,7 +61,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST identify Copilot by an exact allowlist of logins, never by a partial match.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -70,7 +70,7 @@
       "revision": 0,
       "state": "D",
       "body": "A rounds-by-type threshold below the default MUST apply only when the complete list of changed files is known, every file matches copilot-optional-paths and the diff has a merge base, because the pull request title alone is author-controlled.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -79,7 +79,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST withdraw an approval stamped with a relaxed threshold, before applying any other gate, once the pull request needs more review rounds or its changed files cannot be listed.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -88,7 +88,7 @@
       "revision": 2,
       "state": "D",
       "body": "The action MUST pin an approval to the head commit it evaluated.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -97,7 +97,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT approve a pull request authored by the bot account, except in a repository listed in sandbox-repos.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -106,7 +106,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT evaluate a pull request in response to the bot account's own review.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -115,7 +115,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST fail the job, rather than skip, when bot-login is empty, because the caller loop guard cannot then stop the approval from re-triggering the workflow.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -124,7 +124,7 @@
       "revision": 0,
       "state": "D",
       "body": "An unexpected failure during evaluation MUST end in a skip, never in an approval.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -133,7 +133,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST fail the job, rather than skip, when it cannot list reviews to find a stale approval or cannot withdraw one, because that approval may still stand.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -142,7 +142,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST use bot-github-token only to post an approval or dismiss a review, and github-token for every other request.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -151,7 +151,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT check out or execute pull request code.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -160,7 +160,7 @@
       "revision": 0,
       "state": "D",
       "body": "A draft pull request or a pull request from a fork MUST NOT be approved.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -169,7 +169,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST approve only pull requests whose base branch exactly matches a configured base branch.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -178,7 +178,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT approve a pull request whose author, commit author or committer is in a configured list of identities that require human review.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -187,7 +187,7 @@
       "revision": 2,
       "state": "D",
       "body": "A Copilot review in which Copilot reviewed nothing, because its run failed or was cancelled, the requester had reached their quota, or every changed file was excluded from review, MUST NOT count as a Copilot review, either to satisfy APPROVE-004 or toward the rounds threshold.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -196,7 +196,7 @@
       "revision": 1,
       "state": "D",
       "body": "A pull request matching a configured promotion pair MUST bypass the Copilot rules.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -205,7 +205,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST withdraw an earlier bot approval of a different head before it evaluates a promotion pull request.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -214,7 +214,7 @@
       "revision": 1,
       "state": "D",
       "body": "A release-please pull request into a configured base MUST bypass the Copilot rules.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-10-31",
       "supersedes": null
     },
@@ -223,7 +223,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST retry a GitHub API request that fails with a 5xx status or a dropped connection, a bounded number of times with backoff, before it treats the request as failed, but not a request refused as invalid, unauthorized, forbidden or not found (400, 401, 403, 404, 410, 422, 451).",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -232,7 +232,7 @@
       "revision": 0,
       "state": "D",
       "body": "When the action withdraws its approval because the pull request changed while approving, it MUST try to withdraw every approval of the head by the bot, because a retried approval request can leave two.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -241,7 +241,7 @@
       "revision": 0,
       "state": "D",
       "body": "When the approval request fails, the action MUST look for an approval of the head by the bot that GitHub saved anyway, and treat one it finds as the approval it posted.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -250,7 +250,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST re-read the head, base branch, title and draft state of the pull request before and after approving.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -259,7 +259,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST NOT let an approval stand if the head, base branch, title or draft state changed while it approved.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -268,7 +268,7 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST approve a pull request matching a configured promotion pair only when its head is in this repository and is the tip of the head branch, its title is of type chore and is not marked breaking, its checks pass, and every commit came from a merged pull request into the head branch that, at its merge, had an approval of its final head from a reviewer with push access and no outstanding request for changes.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
       "supersedes": null
     },
@@ -277,8 +277,35 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST approve a release-please pull request into a configured base only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
-      "added_by": "@pleberre",
+      "added_by": "github:pleberre",
       "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-031",
+      "revision": 0,
+      "state": "D",
+      "body": "When a check on the head of a pull request has failed, the action MUST withdraw every approval of the pull request by the bot before it skips.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-05",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-032",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST treat a check run that has not started as the latest run of its check, so that a queued rerun counts as pending rather than letting an earlier passing run stand for it.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-05",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-033",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT re-request a Copilot review after an errored one while a Copilot review request is still pending on the pull request.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-05",
       "supersedes": null
     }
   ],

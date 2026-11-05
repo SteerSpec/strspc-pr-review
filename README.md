@@ -621,7 +621,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `reason` | Cause and fix |
 | -------- | ------------- |
 | `check still running: <name>`<br>`no checks on head SHA yet` | CI hasn't finished. The action re-runs when it completes: through `workflow_run` for GitHub Actions CI, or `check_run` for third-party checks. If it never re-runs, see [If your CI is GitHub Actions](#if-your-ci-is-github-actions-you-need-workflow_run) |
-| `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI: approval requires all checks green |
+| `failing check: <name> (<conclusion>)` | That check didn't pass. Fix CI: approval requires all checks green. An earlier bot approval of the PR is withdrawn |
 
 ### The PR changed during the run
 
@@ -664,11 +664,12 @@ holds nothing new to review, and it isn't a substitute for human judgment where 
 - **Keep required human reviewers** (branch protection, `CODEOWNERS`) on sensitive paths. The bot's
   approval fills a review slot but shouldn't be your only gate.
 - **Make any check that must block a merge a required status check** in your branch protection or
-  ruleset. The action reads your checks when it approves and doesn't enforce them afterwards: a check
-  that fails later on the same commit, such as a PR title check after a retitle or a re-run, leaves
-  the approval in place. The action withdraws a stamped bot approval when a retitle or a push raises
-  the PR's rounds threshold above the stamp, or when a promotion or release PR gets a new head or
-  fails one of its own gates, but a failing check on its own never does.
+  ruleset. When a check fails on a commit the bot already approved, such as a PR title check after a
+  retitle or a re-run, the action withdraws its approval, but only once it runs again. The caller
+  template re-runs it when a workflow in its `workflow_run` list fails, and a check from a third-party
+  app re-runs it through `check_run`. A workflow missing from that list, or a caller still on the old
+  template that re-runs only on success, leaves the approval in place until something else re-runs
+  the action. A required status check blocks the merge at once.
 - **Treat `BOT_GITHUB_TOKEN` like any write-scoped credential.** Keep it in secrets, give it
   **`Pull requests: write` and nothing more**, and rotate it periodically.
 
@@ -735,7 +736,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 410 unit tests; oracle.test.js needs jq
+npm test               # 414 unit tests; oracle.test.js needs jq
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

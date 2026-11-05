@@ -202,12 +202,12 @@ whose files are all excluded from Copilot review never gets a clean review: a hu
 
 ### Make blocking checks required
 
-A failing check stops the action from approving, but it doesn't remove an approval already given. A
-check that fails later on the same commit, such as a PR title check after a retitle or a re-run,
-leaves the PR approved and mergeable. The action does withdraw a stamped bot approval when a retitle
-or a push raises the PR's rounds threshold above the stamp, but a failing check on its own never
-does. Make any check that must block a merge a required status check in the branch protection or
-ruleset.
+A check can fail on a commit the bot already approved, such as a PR title check after a retitle or a
+re-run. The action then withdraws its approval the next time it runs. The template re-runs it when a
+workflow in its `workflow_run` list fails, so list every CI workflow there. A caller on an older
+template re-runs only on success and leaves the approval in place. Make any check that must block a
+merge a required status check in the branch protection or ruleset too: that blocks the merge at once,
+without waiting for the action.
 
 ## 4. Verify
 

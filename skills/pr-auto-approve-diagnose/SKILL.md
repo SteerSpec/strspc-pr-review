@@ -37,7 +37,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `no Copilot review yet` | Copilot hasn't reviewed. Confirm automatic Copilot review is enabled |
 | `no checks on head SHA yet` | No check runs exist. Either CI hasn't started, or the repo has no PR-time CI at all |
 | `check still running: <name>` | Waiting on that check. If it's `copilot-pull-request-reviewer` and never resolves, set `wait-for-copilot-seconds` |
-| `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green. If `<name>` is `copilot-pull-request-reviewer`, see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) — the review can be clean and the check still red |
+| `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green, and an earlier bot approval of the PR is withdrawn. If `<name>` is `copilot-pull-request-reviewer`, see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) — the review can be clean and the check still red |
 | `latest Copilot review requested changes` | `CHANGES_REQUESTED` always blocks, regardless of round count |
 | `latest Copilot review has N comments` | Inline comments present and round count below `rounds-threshold` |
 | `latest Copilot review has N suppressed comment(s)` | Copilot's summary looked clean but it hid findings in a collapsed block in the review **body**. Open the review and expand it |

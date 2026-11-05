@@ -159,8 +159,11 @@ name: CI
 
 # The caller's workflow_run trigger matches this workflow by NAME, so keep it
 # literally "CI". It only has to give the e2e harness a check to wait for.
+# edited: ci-fail-withdraws retitles an approved PR to make this check fail on
+# the same head.
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
     branches: [main, develop]
 
 permissions:

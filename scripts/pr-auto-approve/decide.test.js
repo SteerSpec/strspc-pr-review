@@ -354,6 +354,69 @@ test('skip: failing check run', async () => {
   assert.match(result.reason, /failing check: build/);
 });
 
+// A retitle reruns the title check on the same head: an approval given while the
+// old title's check was green must not outlive the new title's failing check.
+const FAILING_COMMITS = [{
+  name: 'commits', status: 'completed', conclusion: 'failure',
+  started_at: '2026-04-15T10:05:00Z', app: { id: 1 }, details_url: 'https://x/runs/888',
+}];
+const botApprovalOf = (id, login = 'axeptio-bot') => ({
+  id, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login }, body: 'Auto-approved: copilot-clean.',
+});
+
+test('failing check withdraws the bot approval of the head, then skips', async () => {
+  const core = makeCore();
+  const reviews = [botApprovalOf(41)];
+  const { github, calls } = makeFakeGithub({ checkRuns: FAILING_COMMITS, reviews });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => {
+    dismissed.push(a);
+    reviews[0].state = 'DISMISSED';
+    return { data: {} };
+  };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^failing check: commits \(failure\)/);
+  assert.deepEqual(dismissed.map((d) => d.review_id), [41]);
+  assert.match(dismissed[0].message, /^Withdrawn: failing check: commits \(failure\)\.$/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('failing check leaves approvals by others alone', async () => {
+  const core = makeCore();
+  const { github } = makeFakeGithub({ checkRuns: FAILING_COMMITS, reviews: [botApprovalOf(42, 'a-human')] });
+  github.rest.pulls.dismissReview = async () => { throw new Error('must not dismiss'); };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^failing check: commits/);
+});
+
+test('failing check fails closed when the bot approval cannot be withdrawn', async () => {
+  const core = makeCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const { github } = makeFakeGithub({ checkRuns: FAILING_COMMITS, reviews: [botApprovalOf(43)] });
+  github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('forbidden'), { status: 403 }); };
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /could not withdraw the stale approval \(review 43\): 403 forbidden/);
+  assert.equal(failures.length, 1);
+});
+
+test('a queued rerun with no timestamps hides the older green run of the same check', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub({
+    checkRuns: [
+      { id: 1, name: 'commits', status: 'completed', conclusion: 'success', started_at: '2026-04-15T10:00:00Z', app: { id: 1 }, details_url: 'https://x/runs/1' },
+      { id: 2, name: 'commits', status: 'queued', conclusion: null, started_at: null, completed_at: null, app: { id: 1 }, details_url: 'https://x/runs/2' },
+    ],
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^check still running: commits/);
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('self-pending filter: current workflow run is ignored', async () => {
   const core = makeCore();
   const ctx = makeContext({ runId: 12345 });
@@ -2685,16 +2748,53 @@ test('workflow_run event: extracts PR and approves on 3-rounds', async () => {
   assert.equal(calls.createReview.length, 1);
 });
 
-test('workflow_run event: non-success conclusion → skip', async () => {
+test('workflow_run event: skipped conclusion → skip', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ conclusion: 'skipped' }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /conclusion is skipped/);
+});
+
+// The retitle case end to end: the title check fails on a head the bot already
+// approved, and its failed workflow run is what re-enters the action.
+test('workflow_run event: a failed run withdraws the bot approval of the head', async () => {
+  const core = makeCore();
+  const reviews = [botApprovalOf(51)];
+  const { github, calls } = makeFakeGithub({ checkRuns: FAILING_COMMITS, reviews });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => {
+    dismissed.push(a);
+    reviews[0].state = 'DISMISSED';
+    return { data: {} };
+  };
   const result = await decide({
     github,
     context: makeWorkflowRunContext({ conclusion: 'failure' }),
     core,
   });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /conclusion is failure/);
+  assert.match(result.reason, /^failing check: commits \(failure\)/);
+  assert.deepEqual(dismissed.map((d) => d.review_id), [51]);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('workflow_run event: a failed run on a green head does not approve on its own', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ conclusion: 'failure' }),
+    core,
+  });
+  // The check gate reads the head: green CI and no Copilot review → the usual skip.
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no Copilot review yet/);
+  assert.equal(calls.createReview.length, 0);
 });
 
 test('workflow_run event: no associated PRs → skip', async () => {
@@ -3888,7 +3988,11 @@ test('stale no-Copilot approval is withdrawn even when CI is failing', async () 
       getPrImpl: getPrWithTitle('fix: code'),
     });
     const dismissed = [];
-    github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+    github.rest.pulls.dismissReview = async (a) => {
+      dismissed.push(a);
+      reviews[0].state = 'DISMISSED';
+      return { data: {} };
+    };
     const result = await decide({ github, core, context: makeContext({ prOverrides: { title: 'fix: code' } }) });
     assert.equal(dismissed.length, 1);
     assert.match(result.reason, /failing check/);

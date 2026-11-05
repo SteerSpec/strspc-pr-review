@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.40",
-    "timestamp": "2026-11-04T20:48:36Z",
-    "hash": "blake3:d9ab37d190a4815564cbcc9b3204d3d35562177567bd763a29cb8104051be879"
+    "version": "0.1.42",
+    "timestamp": "2026-11-05T07:18:05Z",
+    "hash": "blake3:ad7a346823fe15711e69a30909297531adcb2eb14e81d460c3bcaeba47e786cc"
   },
   "rules": [
     {
@@ -279,6 +279,24 @@
       "body": "The action MUST approve a release-please pull request into a configured base only when its head is in this repository and is the tip of the head branch, the configured release author wrote it and all its commits, every changed file is owned by release-please as read from its configuration at the base, its checks pass, and any configured source branch holds no commit the changelog would show.",
       "added_by": "@pleberre",
       "added_at": "2026-11-04",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-031",
+      "revision": 0,
+      "state": "D",
+      "body": "When a check on the head of a pull request has failed, the action MUST withdraw every approval of the pull request by the bot before it skips.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-05",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-032",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST treat a check run that has not started as the latest run of its check, so that a queued rerun counts as pending rather than letting an earlier passing run stand for it.",
+      "added_by": "@pleberre",
+      "added_at": "2026-11-05",
       "supersedes": null
     }
   ],

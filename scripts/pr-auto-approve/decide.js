@@ -571,11 +571,14 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
       // happens to share the name is still a real result and keeps counting.
       !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
   );
-  // Dedupe by (name, app.id) keeping the most-recently-started run.
+  // Dedupe by (name, app.id) keeping the most-recently-started run. A run with
+  // no timestamp has not started yet, so it is the newest, not the oldest:
+  // scoring it 0 would let an older green run hide a queued rerun.
   const latestByKey = new Map();
   for (const cr of notSelf) {
     const key = `${cr.name}::${cr.app && cr.app.id}`;
-    const ts = Date.parse(cr.started_at || cr.completed_at || '') || 0;
+    const stamp = cr.started_at || cr.completed_at;
+    const ts = stamp ? (Date.parse(stamp) || 0) : Infinity;
     const prev = latestByKey.get(key);
     const isNewer =
       !prev ||
@@ -911,7 +914,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // extract from the associated PRs, same shape as the check_run path above.
   if (!pr && context.payload.workflow_run) {
     const wr = context.payload.workflow_run;
-    if (wr.conclusion !== 'success') {
+    // Only a skipped run says nothing. A failed, timed-out or cancelled run goes
+    // through to the check gate, which reads the head's checks itself: a failure
+    // on a head the bot already approved must reach the withdrawal there.
+    if (wr.conclusion === 'skipped') {
       return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
     }
     const prs = wr.pull_requests || [];
@@ -1187,7 +1193,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
 
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
-  const checkGate = (allRuns) => {
+  const checkGate = async (allRuns) => {
     // When Copilot is not required, its own check run (pending while an automatic
     // review is still running, or non-success) is not CI and must not hold the PR.
     // Unfinished only: Copilot's check is a github-actions check like any CI job
@@ -1204,10 +1210,16 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     const badCheck = runs.find(isFailedCheck);
     if (badCheck) {
-      return setDecision(
-        'skip',
-        `failing check: ${badCheck.name} (${badCheck.conclusion})`,
-      );
+      const reason = `failing check: ${badCheck.name} (${badCheck.conclusion})`;
+      // A check can fail on a head the bot already approved: a retitle reruns the
+      // title check with the head unchanged, and so does a manual rerun. Branch
+      // protection dismisses approvals only on a push, so withdraw ours here, or
+      // the PR stays approved and mergeable on a red check.
+      if (BOT_LOGIN) {
+        const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
+        if (failed) return failed;
+      }
+      return setDecision('skip', reason);
     }
     const pending = runs.find((cr) => cr.status !== 'completed');
     if (pending) {
@@ -1215,7 +1227,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     }
     return null;
   };
-  const gated = checkGate(checkRuns);
+  const gated = await checkGate(checkRuns);
   if (gated) return gated;
 
   reviews = reviews || await loadReviews();
@@ -1339,7 +1351,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       // Minutes may have passed: a rerun on this head or a check registered
       // late must still block approval.
       checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
-      const regated = checkGate(checkRuns);
+      const regated = await checkGate(checkRuns);
       if (regated) return regated;
     }
   }

@@ -118,6 +118,21 @@ scenario_ci_failing() {
   expect_outcome "$PR_NUM"
 }
 
+# An approval must not outlive a check that fails on the same head. The retitle
+# reruns the sandbox's CI with the head unchanged, and the marker makes it fail;
+# the failed CI run re-enters the caller through workflow_run.
+scenario_ci_fail_withdraws() {
+  open_pr ci-fail-withdraws "e2e: CI fails after approval"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  wait_for_approval "$PR_NUM" || fail "$SCENARIO: no initial approval"
+  local since
+  since=$(now_utc)
+  gh pr edit -R "$REPO" "$PR_NUM" --title "e2e: CI fails after approval [e2e-ci-fail]" >/dev/null
+  wait_approval_withdrawn "$PR_NUM" || fail "$SCENARIO: approval still stands"
+  expect_outcome "$PR_NUM" "$since"
+}
+
 # 'mai' passes the caller's contains() pre-filter for 'main', so the run reaches
 # the action, whose exact match must refuse it. No CI runs on 'mai', and none is
 # needed: the base gate comes first.

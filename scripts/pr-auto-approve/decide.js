@@ -734,6 +734,38 @@ function getErrorRetries(env = process.env) {
   return /^\d+$/.test(raw) ? parseInt(raw, 10) : 0;
 }
 
+// Whether a Copilot review request is pending on the PR. Read from GraphQL: the
+// REST requested_reviewers list leaves a pending Copilot request out (seen on
+// #179, 2026-11-05: REST gave [] while GraphQL reviewRequests held it), so a
+// REST-only check never sees the request in flight. GraphQL names the bot
+// without the "[bot]" suffix, as a Bot node. Exact names of Bot nodes only: a
+// substring match, or a User, could mask a missing Copilot request.
+async function copilotRequestPending({ github, owner, repo, prNumber }) {
+  const data = await github.graphql(
+    `query ($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewRequests(first: 100) {
+            nodes { requestedReviewer { __typename ... on Bot { login } } }
+          }
+        }
+      }
+    }`,
+    { owner, repo, number: prNumber },
+  );
+  // A response without the list can't prove nothing is pending: throw, so the
+  // caller warns and skips the re-request instead of requesting again.
+  const pr = data && data.repository && data.repository.pullRequest;
+  const nodes = pr && pr.reviewRequests && pr.reviewRequests.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error('the PR\'s review requests could not be read (incomplete GraphQL response)');
+  }
+  return nodes.some((n) => {
+    const r = n && n.requestedReviewer;
+    return Boolean(r) && r.__typename === 'Bot' && COPILOT_CHECK_NAMES.has(r.login);
+  });
+}
+
 // Re-requests the Copilot review after an errored one on the current head.
 // `erroredOnHead` comes from the review history, so the cap needs no stored
 // state and a re-run cannot exceed it. Best-effort like requestCopilotReview:
@@ -747,12 +779,7 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
     // The budget counts only reviews that already errored, so every run between
     // this request and Copilot's next review would otherwise request again.
     // A request still pending on the PR means the retry is already in flight.
-    const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    // Exact logins only: a substring match would let an unrelated "copilot-x"
-    // reviewer mask a missing Copilot request. 'Copilot' is the display login
-    // GitHub uses for the bot on requested reviewers (not seen on a live PR
-    // yet; the canonical bot logins are checked as well).
-    if ((live.requested_reviewers || []).some((r) => isCopilot(r) || r.login === 'Copilot')) return 'pending';
+    if (await copilotRequestPending({ github, owner, repo, prNumber })) return 'pending';
     await github.rest.pulls.requestReviewers({
       owner, repo, pull_number: prNumber, reviewers: [COPILOT_REVIEWER],
     });

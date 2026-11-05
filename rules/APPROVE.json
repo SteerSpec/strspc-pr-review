@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.43",
-    "timestamp": "2026-11-05T08:10:53Z",
-    "hash": "blake3:d746ba2a4c022ed53a67e94355463f65310374d2b6b47544bc8e9908a5d78ffc"
+    "version": "0.1.44",
+    "timestamp": "2026-11-05T13:51:18Z",
+    "hash": "blake3:e81e87c6a3a9d7955d7a82f65211b71fbe8a940bbc7ac3e53574d0f4bf517bce"
   },
   "rules": [
     {
@@ -295,6 +295,15 @@
       "revision": 0,
       "state": "D",
       "body": "The action MUST treat a check run that has not started as the latest run of its check, so that a queued rerun counts as pending rather than letting an earlier passing run stand for it.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-05",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-033",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT re-request a Copilot review after an errored one while a Copilot review request is still pending on the pull request.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-05",
       "supersedes": null

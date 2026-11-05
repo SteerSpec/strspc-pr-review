@@ -1178,7 +1178,13 @@ function erroredOnHead(id, hour, commit = 'deadbeef') {
   };
 }
 
-async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = []) {
+// The shape GraphQL gave for a pending Copilot request on #179 (2026-11-05).
+const PENDING_COPILOT = { __typename: 'Bot', login: 'copilot-pull-request-reviewer' };
+
+// `pendingReviewers` are GraphQL requestedReviewer nodes. The REST list is set
+// to the same logins, as a REST check would read them, so a test also proves
+// the REST list is not what decides.
+async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = [], { restReviewers, graphqlError, graphqlData } = {}) {
   const prev = process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   if (retries === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = retries;
@@ -1191,7 +1197,15 @@ async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = 
     const originalGet = github.rest.pulls.get;
     github.rest.pulls.get = async (a) => {
       const out = await originalGet(a);
-      return { ...out, data: { ...out.data, requested_reviewers: pendingReviewers } };
+      return { ...out, data: { ...out.data, requested_reviewers: restReviewers || [] } };
+    };
+    const originalGraphql = github.graphql;
+    github.graphql = async (query, vars) => {
+      if (!/reviewRequests/.test(query)) return originalGraphql(query, vars);
+      if (graphqlError) throw graphqlError;
+      if (graphqlData !== undefined) return graphqlData;
+      const nodes = pendingReviewers.map((requestedReviewer) => ({ requestedReviewer }));
+      return { repository: { pullRequest: { reviewRequests: { nodes } } } };
     };
     github.rest.pulls.requestReviewers = async (a) => {
       if (requestImpl) return requestImpl(a);
@@ -1252,20 +1266,63 @@ test('retries: a stale review with retries off keeps the plain waiting reason pl
 
 test('retries: a Copilot request already pending is not requested again', async () => {
   const { result, requested } = await runWithRetries(
-    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'Copilot' }],
+    '2', [erroredOnHead(7, '10')], undefined, [PENDING_COPILOT],
   );
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /re-request already pending, retry 1\/2/);
   assert.equal(requested.length, 0);
 });
 
-test('retries: an unrelated reviewer with "copilot" in its login does not mask the retry', async () => {
+test('retries: the pending request is read from GraphQL, which REST leaves out', async () => {
+  // Live shape: REST requested_reviewers is empty while GraphQL holds the request.
   const { result, requested } = await runWithRetries(
-    '2', [erroredOnHead(7, '10')], undefined, [{ login: 'copilot-helper' }],
+    '2', [erroredOnHead(7, '10')], undefined, [PENDING_COPILOT], { restReviewers: [] },
+  );
+  assert.match(result.reason, /re-request already pending/);
+  assert.equal(requested.length, 0);
+});
+
+test('retries: an unrelated bot with "copilot" in its login does not mask the retry', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ __typename: 'Bot', login: 'copilot-helper' }],
   );
   assert.match(result.reason, /re-requested, retry 1\/2/);
   assert.equal(requested.length, 1);
 });
+
+test('retries: a user named like the Copilot bot does not mask the retry', async () => {
+  const { result, requested } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [{ __typename: 'User', login: 'copilot-pull-request-reviewer' }],
+  );
+  assert.match(result.reason, /re-requested, retry 1\/2/);
+  assert.equal(requested.length, 1);
+});
+
+test('retries: a failed pending-request lookup does not re-request', async () => {
+  const { result, requested, warnings } = await runWithRetries(
+    '2', [erroredOnHead(7, '10')], undefined, [],
+    { graphqlError: Object.assign(new Error('Something went wrong'), { status: 502 }) },
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /automatic re-request failed/);
+  assert.match(warnings.join('\n'), /could not re-request a Copilot review: 502/);
+  assert.equal(requested.length, 0);
+});
+
+for (const [label, graphqlData] of [
+  ['a null pullRequest', { repository: { pullRequest: null } }],
+  ['a null repository', { repository: null }],
+  ['no nodes list', { repository: { pullRequest: { reviewRequests: null } } }],
+]) {
+  test(`retries: an incomplete GraphQL response (${label}) does not re-request`, async () => {
+    const { result, requested, warnings } = await runWithRetries(
+      '2', [erroredOnHead(7, '10')], undefined, [], { graphqlData },
+    );
+    assert.match(result.reason, /automatic re-request failed/);
+    assert.match(warnings.join('\n'), /review requests could not be read/);
+    assert.equal(requested.length, 0);
+  });
+}
 
 test('retries: a re-request failure only warns and still skips', async () => {
   const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {

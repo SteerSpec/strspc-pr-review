@@ -2748,16 +2748,53 @@ test('workflow_run event: extracts PR and approves on 3-rounds', async () => {
   assert.equal(calls.createReview.length, 1);
 });
 
-test('workflow_run event: non-success conclusion → skip', async () => {
+test('workflow_run event: skipped conclusion → skip', async () => {
   const core = makeCore();
   const { github } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ conclusion: 'skipped' }),
+    core,
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /conclusion is skipped/);
+});
+
+// The retitle case end to end: the title check fails on a head the bot already
+// approved, and its failed workflow run is what re-enters the action.
+test('workflow_run event: a failed run withdraws the bot approval of the head', async () => {
+  const core = makeCore();
+  const reviews = [botApprovalOf(51)];
+  const { github, calls } = makeFakeGithub({ checkRuns: FAILING_COMMITS, reviews });
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => {
+    dismissed.push(a);
+    reviews[0].state = 'DISMISSED';
+    return { data: {} };
+  };
   const result = await decide({
     github,
     context: makeWorkflowRunContext({ conclusion: 'failure' }),
     core,
   });
   assert.equal(result.decision, 'skip');
-  assert.match(result.reason, /conclusion is failure/);
+  assert.match(result.reason, /^failing check: commits \(failure\)/);
+  assert.deepEqual(dismissed.map((d) => d.review_id), [51]);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('workflow_run event: a failed run on a green head does not approve on its own', async () => {
+  const core = makeCore();
+  const { github, calls } = makeFakeGithub();
+  const result = await decide({
+    github,
+    context: makeWorkflowRunContext({ conclusion: 'failure' }),
+    core,
+  });
+  // The check gate reads the head: green CI and no Copilot review → the usual skip.
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /no Copilot review yet/);
+  assert.equal(calls.createReview.length, 0);
 });
 
 test('workflow_run event: no associated PRs → skip', async () => {

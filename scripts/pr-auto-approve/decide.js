@@ -914,7 +914,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // extract from the associated PRs, same shape as the check_run path above.
   if (!pr && context.payload.workflow_run) {
     const wr = context.payload.workflow_run;
-    if (wr.conclusion !== 'success') {
+    // Only a skipped run says nothing. A failed, timed-out or cancelled run goes
+    // through to the check gate, which reads the head's checks itself: a failure
+    // on a head the bot already approved must reach the withdrawal there.
+    if (wr.conclusion === 'skipped') {
       return setDecision('skip', `workflow_run: conclusion is ${wr.conclusion}`);
     }
     const prs = wr.pull_requests || [];

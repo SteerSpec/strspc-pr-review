@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.1...v1.10.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* retry transient GitHub 5xx errors and dropped connections inside the action ([#175](https://github.com/SteerSpec/strspc-pr-review/issues/175)) ([ac11e5b](https://github.com/SteerSpec/strspc-pr-review/commit/ac11e5b8fc8f2b367fc6ac1c04fead0a33b0b0ae))
+
 ## [1.10.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.0...v1.10.1) (2026-11-03)
 
 

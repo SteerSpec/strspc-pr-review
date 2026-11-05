@@ -1184,7 +1184,7 @@ const PENDING_COPILOT = { __typename: 'Bot', login: 'copilot-pull-request-review
 // `pendingReviewers` are GraphQL requestedReviewer nodes. The REST list is set
 // to the same logins, as a REST check would read them, so a test also proves
 // the REST list is not what decides.
-async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = [], { restReviewers, graphqlError } = {}) {
+async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = [], { restReviewers, graphqlError, graphqlData } = {}) {
   const prev = process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   if (retries === undefined) delete process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES;
   else process.env.AUTO_APPROVE_COPILOT_ERROR_RETRIES = retries;
@@ -1203,6 +1203,7 @@ async function runWithRetries(retries, reviews, requestImpl, pendingReviewers = 
     github.graphql = async (query, vars) => {
       if (!/reviewRequests/.test(query)) return originalGraphql(query, vars);
       if (graphqlError) throw graphqlError;
+      if (graphqlData !== undefined) return graphqlData;
       const nodes = pendingReviewers.map((requestedReviewer) => ({ requestedReviewer }));
       return { repository: { pullRequest: { reviewRequests: { nodes } } } };
     };
@@ -1307,6 +1308,21 @@ test('retries: a failed pending-request lookup does not re-request', async () =>
   assert.match(warnings.join('\n'), /could not re-request a Copilot review: 502/);
   assert.equal(requested.length, 0);
 });
+
+for (const [label, graphqlData] of [
+  ['a null pullRequest', { repository: { pullRequest: null } }],
+  ['a null repository', { repository: null }],
+  ['no nodes list', { repository: { pullRequest: { reviewRequests: null } } }],
+]) {
+  test(`retries: an incomplete GraphQL response (${label}) does not re-request`, async () => {
+    const { result, requested, warnings } = await runWithRetries(
+      '2', [erroredOnHead(7, '10')], undefined, [], { graphqlData },
+    );
+    assert.match(result.reason, /automatic re-request failed/);
+    assert.match(warnings.join('\n'), /review requests could not be read/);
+    assert.equal(requested.length, 0);
+  });
+}
 
 test('retries: a re-request failure only warns and still skips', async () => {
   const { result, warnings } = await runWithRetries('2', [erroredOnHead(7, '10')], async () => {

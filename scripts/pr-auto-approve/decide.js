@@ -753,8 +753,13 @@ async function copilotRequestPending({ github, owner, repo, prNumber }) {
     }`,
     { owner, repo, number: prNumber },
   );
+  // A response without the list can't prove nothing is pending: throw, so the
+  // caller warns and skips the re-request instead of requesting again.
   const pr = data && data.repository && data.repository.pullRequest;
-  const nodes = (pr && pr.reviewRequests && pr.reviewRequests.nodes) || [];
+  const nodes = pr && pr.reviewRequests && pr.reviewRequests.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error('the PR\'s review requests could not be read (incomplete GraphQL response)');
+  }
   return nodes.some((n) => {
     const r = n && n.requestedReviewer;
     return Boolean(r) && r.__typename === 'Bot' && COPILOT_CHECK_NAMES.has(r.login);

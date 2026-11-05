@@ -309,7 +309,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -322,7 +323,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -335,7 +337,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -348,7 +351,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -361,7 +365,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -374,7 +379,8 @@
         "promotion-branches"
       ],
       "rules": [
-        "APPROVE-021"
+        "APPROVE-021",
+        "APPROVE-029"
       ]
     },
     {
@@ -388,7 +394,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -402,7 +409,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -416,7 +424,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -430,7 +439,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -444,7 +454,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -458,7 +469,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -472,7 +484,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     },
     {
@@ -486,7 +499,8 @@
         "release-author"
       ],
       "rules": [
-        "APPROVE-023"
+        "APPROVE-023",
+        "APPROVE-030"
       ]
     }
   ],
@@ -494,6 +508,8 @@
     "APPROVE-002": "The sandbox always has CI; unit tests cover the no-checks branch.",
     "APPROVE-006": "A synthetic reviewer is allowlisted by test-copilot-logins; unit tests cover the login match.",
     "APPROVE-009": "Needs a change landing mid-run; unit tests cover the re-read.",
+    "APPROVE-027": "Needs a change landing mid-run to show the re-read; unit tests cover it.",
+    "APPROVE-028": "Needs a change landing mid-run; unit tests cover the withdrawal.",
     "APPROVE-010": "The sandbox is in sandbox-repos so that bot-authored scenarios can run, which bypasses this refusal; unit tests cover it.",
     "APPROVE-012": "An empty bot-login would fail every run in the sandbox; unit tests cover the failed job.",
     "APPROVE-017": "The draft scenario proves only half of this rule, and a fork scenario needs a fork: strspc-pr-review-t9w.20.14.",
@@ -502,6 +518,9 @@
     "APPROVE-015": "Which token made a request can't be observed from outside; unit tests cover it.",
     "APPROVE-016": "A property of the code, not a behaviour a scenario can observe.",
     "APPROVE-019": "Not implemented yet: strspc-pr-review-e1p.",
-    "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal."
+    "APPROVE-022": "Needs a new head on develop mid-promotion; unit tests cover the withdrawal.",
+    "APPROVE-024": "A 5xx or a dropped connection cannot be forced from real GitHub; unit tests drive the real retry plugin with a stub fetch.",
+    "APPROVE-025": "Needs GitHub to save an approval yet answer 5xx, then a change mid-approval; unit tests cover the withdrawal.",
+    "APPROVE-026": "Needs GitHub to save an approval yet fail the call; unit tests cover the lookup."
   }
 }

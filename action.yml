@@ -208,6 +208,8 @@ runs:
         # Through env, never interpolated into the script: bot-login can come from
         # an Actions variable, and a quote in it would otherwise inject code.
         BOT_LOGIN: ${{ inputs.bot-login }}
+        ACTION_PATH: ${{ github.action_path }}
+        AUTO_APPROVE_GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
         # The workflow token, not the PAT. Requesting a review FROM the bot does
         # not have to be done BY the bot -- any token with pull-requests: write
@@ -225,13 +227,16 @@ runs:
           // BEFORE the evaluation ever ran.
           const botLogin = process.env.BOT_LOGIN;
           try {
+            // A client that retries a transient 5xx; see makeApiClient in decide.js.
+            const { makeApiClient } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+            const api = makeApiClient(getOctokit, process.env.AUTO_APPROVE_GITHUB_TOKEN);
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const { data: pr } = await api.rest.pulls.get({ owner, repo, pull_number: prNumber });
             if (pr.user.login === botLogin) return; // can't request review from the PR's own author
             const alreadyRequested = pr.requested_reviewers.some(r => r.login === botLogin);
             if (!alreadyRequested) {
-              await github.rest.pulls.requestReviewers({
+              await api.rest.pulls.requestReviewers({
                 owner, repo, pull_number: prNumber,
                 reviewers: [botLogin],
               });
@@ -255,13 +260,15 @@ runs:
         AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
         AUTO_APPROVE_RELEASE_BRANCHES: ${{ inputs.release-branches }}
         ACTION_PATH: ${{ github.action_path }}
+        AUTO_APPROVE_GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           // The logic (and its tests) live in decide.js. It is best-effort and
           // never fails the step: requesting a review must not turn the check red.
-          const { requestCopilotReview } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
-          await requestCopilotReview({ github, context, core });
+          const { requestCopilotReview, makeApiClient } = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
+          const api = makeApiClient(getOctokit, process.env.AUTO_APPROVE_GITHUB_TOKEN);
+          await requestCopilotReview({ github: api, context, core });
 
     - name: Evaluate and approve
       id: evaluate
@@ -283,10 +290,13 @@ runs:
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}
         AUTO_APPROVE_BOT_TOKEN: ${{ inputs.bot-github-token }}
+        AUTO_APPROVE_GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
-        # The READ token: this authenticates `github`, which every read goes
-        # through. The approval needs the bot instead, so a second client is
-        # built below from the PAT.
+        # The READ token. Every read goes through a client built below from the
+        # same token (AUTO_APPROVE_GITHUB_TOKEN); the approval needs the bot
+        # instead, so a second client is built from the PAT. Both come from
+        # makeApiClient, which retries a transient 5xx. Do not set this step's
+        # `retries` input: see makeApiClient in decide.js for why.
         github-token: ${{ inputs.github-token }}
         script: |
           // getOctokit is injected by github-script v9. Do NOT write
@@ -296,8 +306,9 @@ runs:
           // module"), which is why v1.6.0 shipped a hand-rolled fetch client;
           // that client is gone, and with it three bugs Octokit does not have.
           const decide = require(`${process.env.ACTION_PATH}/scripts/pr-auto-approve/decide.js`);
-          const botGithub = getOctokit(process.env.AUTO_APPROVE_BOT_TOKEN);
-          await decide({ github, botGithub, context, core });
+          const api = decide.makeApiClient(getOctokit, process.env.AUTO_APPROVE_GITHUB_TOKEN);
+          const botGithub = decide.makeApiClient(getOctokit, process.env.AUTO_APPROVE_BOT_TOKEN);
+          await decide({ github: api, botGithub, context, core });
 
     - name: Notify Slack (approved)
       if: steps.evaluate.outputs.decision == 'approved' && inputs.slack-bot-token != ''

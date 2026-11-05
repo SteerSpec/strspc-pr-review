@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://steerspec.dev/assets/logo.svg" alt="SteerSpec logo" width="96" height="96">
+<img src=".github/assets/logo-transparent.svg" alt="SteerSpec logo" width="96" height="96">
 
 # PR Auto-Approve (Copilot)
 
@@ -19,9 +19,9 @@
 </div>
 
 A GitHub Action that approves a pull request, as a bot account, once CI is green and GitHub Copilot's
-review is clean. It needs no human click for the rubber stamp, and it is specific about when it
-**won't** approve: stale reviews, findings Copilot hid from the inline comments, a failing check, a
-changed commit.
+review is clean, for maintainers whose rulesets require an approving review that nobody is available to
+give. It needs no human click for the rubber stamp, and it is specific about when it **won't** approve:
+stale reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
 
 ## Why
 
@@ -39,8 +39,9 @@ This action fills that slot with something that looked at the diff. It earns its
 | **Internal repos** | The review requirement is org policy rather than a second pair of eyes |
 
 It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, or mechanical proof
-that a promotion or release PR holds nothing new to review, and neither is a reviewer for those. Keep `CODEOWNERS` and required human reviewers on sensitive paths: the bot's
-approval fills a slot, and it shouldn't be your only gate.
+that a promotion or release PR holds nothing new to review, and neither is a reviewer for those. Keep
+`CODEOWNERS` and required human reviewers on sensitive paths: the bot's approval fills a slot, and it
+shouldn't be your only gate.
 
 ## How it works
 
@@ -67,8 +68,8 @@ flowchart TD
     ROUNDS -->|yes| APPROVE
     ROUNDS -->|no| SKIP
 
-    classDef approve fill:#1a7f37,stroke:#1a7f37,color:#ffffff
-    classDef skip fill:#6e7781,stroke:#6e7781,color:#ffffff
+    classDef approve fill:#238636,stroke:#3FB950,color:#E6EDF3
+    classDef skip fill:#6E7681,stroke:#6E7681,color:#E6EDF3
     class APPROVE approve
     class SKIP skip
 ```
@@ -628,7 +629,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | -------- | ------------- |
 | `head moved from … during evaluation`<br>`PR base changed from … during evaluation`<br>`PR title changed during evaluation…` | The PR's head, base branch or title changed while the run evaluated it, so nothing was approved under the stale inputs. The next run (push, retarget or `edited` event) re-evaluates. Expected and rare |
 | `PR converted to draft during evaluation` | The PR became a draft during the run, so no approval was posted. Mark it ready for review, and the template re-evaluates on `ready_for_review` |
-| `PR head, base, title or draft state changed while approving; approval withdrawn` | The same race, landing between the final re-read and the approval. The approval was posted and immediately dismissed, and the next run re-evaluates |
+| `PR head, base, title or draft state changed while approving; approval withdrawn` | The same race, landing between the final re-read and the approval. The approval was posted and immediately dismissed, along with any second bot approval of the same head that a retried approval request left, and the next run re-evaluates |
 | `base <branch> was rewritten (merge base … -> …) during evaluation`<br>`… while approving; approval withdrawn` | The base branch was force-pushed while the run evaluated a relaxed type, so the diff the path gate judged is no longer the PR's diff. Nothing is approved, or the approval is dismissed, and the next run re-evaluates. A base that merely moved on through unrelated merges keeps its merge base and doesn't trigger this |
 
 ### Relaxed types
@@ -637,7 +638,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | -------- | ------------- |
 | `…; type '<type>' is relaxed to N round(s) but the PR touches files outside copilot-optional-paths, so the default M applies` | The title's type is below the default in `rounds-by-type`, but the diff reaches outside `copilot-optional-paths`, so the default rules apply. The text before `;` is the ordinary reason under those rules. Expected for a code change with a relaxed title, otherwise widen the globs |
 | `evaluation failed: 403 … /compare/…`<br>`evaluation failed: 404 … /compare/…` | The changed-files listing for a relaxed type failed. A `403` means the **read** token lacks `contents: read`, so restore it in the caller's job permissions. A `404` means the evaluated head SHA is no longer on the PR after a force-push, and the next run re-evaluates the new head. Either way any earlier bot approval stamped with a relaxed threshold is **withdrawn first** (`Withdrawn: the changed files of … could not be listed …`) |
-| `could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: …` | The job fails on purpose (`decision=error`): a skip would leave such an approval standing unseen. It's usually transient (rate limit, 5xx), so re-run the job. A persistent `403` means the **read** token can't read pull requests |
+| `could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: …` | The job fails on purpose (`decision=error`): a skip would leave such an approval standing unseen. The action already retries a 5xx or a dropped connection 3 times (1 s, 4 s and 9 s apart), so this means the outage outlasted those retries or a rate limit hit. Re-run the job once GitHub recovers. A persistent `403` means the **read** token can't read pull requests |
 
 ### Tokens and configuration
 
@@ -675,7 +676,8 @@ holds nothing new to review, and it isn't a substitute for human judgment where 
 
 This repository is the `dev.steerspec.prreview` realm. [`rules/APPROVE.json`](rules/APPROVE.json)
 states what the approval logic must guarantee, so a behaviour change in `decide.js` goes with a rule
-change. All rules are Draft today.
+change. [`rules/E2E.json`](rules/E2E.json) states what the end-to-end suite must cover and when it
+gates a merge into `main`. All rules are Draft today.
 
 Edit them only through the [`strspc` CLI](https://github.com/SteerSpec/strspc-CLI), never by hand, so
 versions and hashes stay consistent. Use a `chore(rules):` title for a rule-only PR.
@@ -696,8 +698,8 @@ flowchart LR
     R --> T
     T -.->|sync| D
 
-    classDef branch fill:#1f6feb,stroke:#1f6feb,color:#ffffff
-    classDef release fill:#1a7f37,stroke:#1a7f37,color:#ffffff
+    classDef branch fill:#161B22,stroke:#3FB950,color:#E6EDF3
+    classDef release fill:#238636,stroke:#3FB950,color:#E6EDF3
     class D,M branch
     class T release
 ```
@@ -733,14 +735,17 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 396 unit tests; oracle.test.js needs jq
+npm test               # 410 unit tests; oracle.test.js needs jq
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```
 
 `npm run lint` shells out to `actionlint`, `shellcheck` and `python3`, so install those separately.
-The unit tests need none of them. End-to-end tests run against a sandbox repo: see
-[`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md).
+The unit tests need none of them. End-to-end tests run against two testbed repos, one with
+synthetic Copilot reviews and one where Copilot reviews for real: see
+[`e2e/pr-auto-approve/README.md`](e2e/pr-auto-approve/README.md). A same-repo PR into `main`
+needs the synthetic suite to pass, and a promotion from `develop` also needs the real-Copilot tier;
+release-please's PRs skip that tier. Fork PRs get no secrets, so both skip them.
 
 ### Layout
 
@@ -752,6 +757,9 @@ strspc-pr-review/
 │   │   ├── decide.js                 # all approval rules
 │   │   ├── decide.test.js            # unit tests (Node native test runner)
 │   │   ├── docs.test.js              # guards this README against drifting from action.yml
+│   │   ├── e2e.test.js               # checks the e2e scenario manifests cover every input and rule
+│   │   ├── e2e-lib.test.js           # unit tests for the e2e harness's shell helpers
+│   │   ├── oracle.test.js            # checks the real-Copilot oracle agrees with decide.js
 │   │   ├── promotion.js              # the promotion path's own gates
 │   │   ├── promotion.test.js         # unit tests for that path, through decide.js too
 │   │   ├── release.js                # the release path's own gates
@@ -766,12 +774,15 @@ strspc-pr-review/
 │   ├── pr-auto-approve-setup/
 │   ├── pr-auto-approve-diagnose/
 │   └── pr-caller-sync/
-├── e2e/pr-auto-approve/              # end-to-end harness against a real sandbox repo
+├── e2e/pr-auto-approve/              # end-to-end harness against the testbed repos
 └── .github/
+    ├── assets/                       # the SteerSpec logo, from SteerSpec/strspc-marketing
     ├── ISSUE_TEMPLATE/               # bug report and feature request forms
     ├── dependabot.yml                # keeps the SHA-pinned actions and dev deps current
     └── workflows/
         ├── auto-approve.yml          # this repo running the action on itself
+        ├── e2e.yml                   # synthetic e2e suite, required on main
+        ├── e2e-copilot.yml           # real-Copilot e2e tier, on promotions into main
         ├── pr-auto-approve.yml       # reusable workflow, deprecated, kept for compatibility
         ├── test-pr-auto-approve.yml  # CI: tests, actionlint, shellcheck, issue forms, PR title
         ├── release-please.yml        # semver tagging on main

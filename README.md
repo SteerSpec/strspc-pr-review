@@ -4,13 +4,13 @@
 
 # PR Auto-Approve (Copilot)
 
-**Merge faster. Let Copilot drive.**
+**A GitHub Action that approves a pull request, as a bot account, once CI is green and GitHub Copilot's review is clean, for maintainers whose rulesets require an approving review that nobody is available to give.**
 
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-PR%20Auto--Approve-blue?logo=github)](https://github.com/marketplace/actions/pr-auto-approve-copilot)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-PR%20Auto--Approve-161B22?labelColor=161B22&logo=github&logoColor=3FB950)](https://github.com/marketplace/actions/pr-auto-approve-copilot)
 [![CI](https://github.com/SteerSpec/strspc-pr-review/actions/workflows/test-pr-auto-approve.yml/badge.svg)](https://github.com/SteerSpec/strspc-pr-review/actions/workflows/test-pr-auto-approve.yml)
-[![Release](https://img.shields.io/github/v/release/SteerSpec/strspc-pr-review)](https://github.com/SteerSpec/strspc-pr-review/releases)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-green.svg)](.nvmrc)
+[![Release](https://img.shields.io/github/v/release/SteerSpec/strspc-pr-review?labelColor=161B22&color=161B22)](https://github.com/SteerSpec/strspc-pr-review/releases)
+[![License](https://img.shields.io/badge/License-Apache%202.0-161B22.svg?labelColor=161B22)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-161B22.svg?labelColor=161B22)](.nvmrc)
 
 [Why](#why) · [How it works](#how-it-works) · [Prerequisites](#prerequisites) · [Quick start](#quick-start) · [Usage](#usage) ·
 [Skills](#claude-code-skills) · [Inputs](#inputs) · [Per-type rounds](#per-type-rounds) · [Troubleshooting](#troubleshooting) ·
@@ -18,10 +18,8 @@
 
 </div>
 
-A GitHub Action that approves a pull request, as a bot account, once CI is green and GitHub Copilot's
-review is clean, for maintainers whose rulesets require an approving review that nobody is available to
-give. It needs no human click for the rubber stamp, and it is specific about when it **won't** approve:
-stale reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
+It needs no human click for the rubber stamp, and it is specific about when it **won't** approve: stale
+reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
 
 ## Why
 
@@ -486,7 +484,7 @@ requirement: everything they do is documented on this page.
 
 | Input | Default | Description |
 | ----- | ------- | ----------- |
-| `request-copilot-review` | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. Failures only warn |
+| `request-copilot-review` | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. Needs `pull_request_target` with the `edited` type in the caller. Failures only warn |
 | `copilot-error-retries` | `0` | Times to re-request Copilot's review on the same commit when Copilot reviewed nothing because its run errored or the requester was out of quota. Such reviews never approve or count as rounds. `0` disables, and failures only warn |
 | `wait-for-copilot-seconds` | `0` | Seconds to wait for Copilot's review (its check run when it's the **last** check still running, or the review itself when no check run exists) instead of skipping. `0` disables. See [Copilot cannot re-trigger the workflow](#copilot-cannot-re-trigger-the-workflow) |
 
@@ -777,7 +775,7 @@ strspc-pr-review/
 │   └── pr-caller-sync/
 ├── e2e/pr-auto-approve/              # end-to-end harness against the testbed repos
 └── .github/
-    ├── assets/                       # the SteerSpec logo, from SteerSpec/strspc-marketing
+    ├── assets/                       # the SteerSpec logo (logo-transparent.svg)
     ├── ISSUE_TEMPLATE/               # bug report and feature request forms
     ├── dependabot.yml                # keeps the SHA-pinned actions and dev deps current
     └── workflows/
@@ -799,7 +797,8 @@ promotions.
 - [Contribution guide](https://github.com/SteerSpec/.github/blob/main/CONTRIBUTING.md)
 - [Code of conduct](https://github.com/SteerSpec/.github/blob/main/CODE_OF_CONDUCT.md)
 - [Security policy](https://github.com/SteerSpec/strspc-pr-review/security/policy): report
-  vulnerabilities privately, never as a public issue
+  vulnerabilities privately through **Security → Report a vulnerability** on this repository, never as a
+  public issue
 
 ## License
 

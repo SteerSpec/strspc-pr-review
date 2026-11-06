@@ -330,6 +330,16 @@ test('unset: a promotion PR takes the Copilot path as before', async () => {
   assert.equal(out.calls.listCommits, 0);
 });
 
+// Promotions carry changes already gated one PR at a time into the head branch,
+// so protected-paths does not apply to them. The fake has no compare endpoint, so
+// a comparison would fail the run.
+test('approve: protected-paths does not gate a promotion', async () => {
+  const out = await run({
+    env: { AUTO_APPROVE_PROTECTED_PATHS: 'rules/**', AUTO_APPROVE_PROTECTED_PATHS_MODE: 'manual' },
+  });
+  assert.equal(out.decision, 'approved', out.reason);
+});
+
 test('approve: a passing promotion needs no Copilot review and no wait', async () => {
   let slept = 0;
   const out = await run({

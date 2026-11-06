@@ -113,7 +113,9 @@ This workflow holds a bot PAT. For a **same-repo** PR, the `pull_request` event 
 definition from the PR's **head commit** with your secrets in scope, so anyone who can push a branch
 could edit the workflow in their own PR and exfiltrate the token. That token can approve PRs, so
 leaking it means self-approving arbitrary changes. `pull_request_target` instead *"runs in the context
-of the **default branch of the base repository**"*, so the definition is never PR-controlled. That's
+of the **default branch of the base repository**"* ([GitHub's `pull_request_target`
+documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)),
+so the definition is never PR-controlled. That's
 the **default** branch, not the PR's base branch, and they differ whenever a PR targets a non-default
 branch.
 
@@ -169,7 +171,7 @@ suppressed:
 | `workflow_run` from Copilot's own review workflow | Same actor, so same approval gate |
 
 For the second row, the investigation in
-[#41](https://github.com/SteerSpec/strspc-pr-review/pull/41) found no configuration mistake. In our own
+[#41](https://github.com/SteerSpec/strspc-pr-review/commit/538c735f09f1c3f157dc6e8639a330e8d69a22bc) found no configuration mistake. In our own
 repository the identical workflow, event and actor executed normally on 2026-07-25 and was held at
 `action_required` on 2026-08-18, with no enterprise policy, no enabled org Actions policy, and an
 unchanged fork-PR approval tier.
@@ -186,9 +188,9 @@ finishes rather than skipping with `check still running`:
           wait-for-copilot-seconds: '600'   # or set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS
 ```
 
-At v1.10.2, the action's authors observed that Copilot posts its review without registering a check run
+At v1.10.3, the action's authors observed that Copilot posts its review without registering a check run
 on the head SHA in SteerSpec's repositories (see the `wait-for-copilot-seconds` description in
-[`action.yml` at v1.10.2](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.2/action.yml)). The
+[`action.yml` at v1.10.3](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.3/action.yml)). The
 same budget therefore also polls the PR's reviews until Copilot has reviewed the current head, or enough
 rounds exist for `rounds-threshold`. A run that starts seconds before the review lands waits for it
 instead of skipping with `no Copilot review yet`. After a wait the check runs are fetched again and the
@@ -196,7 +198,7 @@ CI gates re-applied, so a rerun or a late check still blocks.
 
 It's opt-in (`0` by default) because waiting consumes billable Actions minutes on private repos, and
 it's free on public ones. Use `600`. In a sample of 422 Copilot reviews on 241 PRs across 13 SteerSpec
-repositories ([#158](https://github.com/SteerSpec/strspc-pr-review/pull/158), merged 2026-11-02), Copilot
+repositories ([#158](https://github.com/SteerSpec/strspc-pr-review/commit/a25804c7bcaca82872747e81dc2e979de85745ad), merged 2026-11-02), Copilot
 finished a median 111s after the last CI check, but more than 300s after it on 11% of them and more than
 600s after on 3%. The wait ends as soon as Copilot finishes, so the larger budget costs minutes only when
 the review is slow or never comes.

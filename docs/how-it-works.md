@@ -89,7 +89,7 @@ instead, as long as every other check above still passes.
 The risk is that `No open issues` covers published threads only. The sentence under the verdict can
 still name a finding, and the action doesn't read that sentence. In a hand-classified sample of 352
 pull requests from 13 SteerSpec repositories (October 2026, described in
-[#138](https://github.com/SteerSpec/strspc-pr-review/pull/138)), 25 of the 70 such reviews that this
+[#138](https://github.com/SteerSpec/strspc-pr-review/commit/a8162a16d7b075704cd4198d2b05222d60cf5e30)), 25 of the 70 such reviews that this
 setting would newly pass named a concrete defect, finding or required change in that sentence.
 
 ### Promotion PRs
@@ -116,7 +116,7 @@ it means that PR passed these rules. An approval given after a PR merged doesn't
 
 Expect some promotions to skip at first. Replayed over 24 promotions across 6 SteerSpec repositories on
 2026-10-31 (see the comment in
-[`promotion.js` at v1.10.2](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.2/scripts/pr-auto-approve/promotion.js)),
+[`promotion.js` at v1.10.3](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.3/scripts/pr-auto-approve/promotion.js)),
 17 pass, and the other 7 each hold a PR that merged with no standing approval. A person reviews those
 and approves the promotion.
 

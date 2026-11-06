@@ -4,7 +4,7 @@ When the action approves a pull request, when it skips, and why. Back to the [RE
 
 ## Why
 
-Requiring an approving review on every PR is good policy, but some PRs have no one to ask. Think of a
+Requiring an approving review on every PR keeps unreviewed changes out of the default branch, but some PRs have no one to ask. Think of a
 Dependabot bump, a one-line docs fix in an internal tool, or any PR in a repository with one
 maintainer, who can't approve their own work because GitHub blocks self-approval. The rule is doing its
 job, while the review is a click that adds no information, or a PR that waits for a reviewer who

@@ -83,7 +83,7 @@ variable, see [Organization-wide configuration](docs/usage.md#organization-wide-
 
 ## Governance
 
-Open source software by Consulare.
+Open source software by Consulare. See [NOTICE](NOTICE) for the copyright holder.
 
 Licensed under Apache 2.0, see [LICENSE](LICENSE).
 

@@ -173,7 +173,7 @@ suppressed:
 For the second row, the investigation in
 [#41](https://github.com/SteerSpec/strspc-pr-review/pull/41)
 ([merge commit](https://github.com/SteerSpec/strspc-pr-review/commit/538c735f09f1c3f157dc6e8639a330e8d69a22bc))
-found no configuration mistake. The same workflow, event and actor ran normally in July 2026 and were
+found no configuration mistake that the maintainers could identify. The same workflow, event and actor ran normally in July 2026 and were
 later held at `action_required`, with no enterprise policy, no enabled org Actions policy, and an
 unchanged fork-PR approval tier. One of the two runs is
 [public](https://github.com/SteerSpec/strspc-pr-review/actions/runs/30169448476).

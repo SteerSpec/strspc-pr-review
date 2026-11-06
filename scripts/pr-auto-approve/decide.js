@@ -378,9 +378,12 @@ async function compareHead({ github, owner, repo, baseRef, headSha }) {
   const { data } = await github.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 1,
   });
+  // A response without a files array has not listed the files: "cannot tell",
+  // never "nothing changed".
   return {
-    names: changedFileNames(data.files || []),
+    names: Array.isArray(data.files) ? changedFileNames(data.files) : null,
     mergeBase: (data.merge_base_commit && data.merge_base_commit.sha) || null,
+    totalCommits: data.total_commits,
   };
 }
 
@@ -458,6 +461,40 @@ function filesMatchPaths(filenames, globs) {
   if (!filenames || !filenames.length || !globs.length) return false;
   const res = globs.map(globToRegExp);
   return filenames.every((f) => res.some((re) => re.test(f)));
+}
+
+// protected-paths: globs whose change stops auto-approval unless the mode
+// lets the PR through. Empty means the feature is off.
+function getProtectedPaths(env = process.env) {
+  return String(env.AUTO_APPROVE_PROTECTED_PATHS || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+// An empty mode is what a caller passes for an unset variable, so it means the
+// default, manual. An unrecognised mode also means manual: a typo must never
+// turn the protection off.
+const PROTECTED_PATHS_MODES = new Set(['approve', 'manual', 'allowlist']);
+function getProtectedPathsMode(env = process.env, warn = () => {}) {
+  const mode = String(env.AUTO_APPROVE_PROTECTED_PATHS_MODE || '').trim().toLowerCase();
+  if (!mode) return 'manual';
+  if (PROTECTED_PATHS_MODES.has(mode)) return mode;
+  warn(`pr-auto-approve: unknown protected-paths-mode '${mode}', using manual`);
+  return 'manual';
+}
+
+// Logins compare case-insensitively, as GitHub's do. A leading @ is kept, so
+// it matches no login rather than being guessed away.
+function getProtectedPathsAllowed(env = process.env) {
+  return new Set(String(env.AUTO_APPROVE_PROTECTED_PATHS_ALLOWED || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+}
+
+// The first changed file matching any glob, or null. Unlike filesMatchPaths,
+// one match is enough.
+function firstProtectedMatch(filenames, globs) {
+  if (!filenames || !globs.length) return null;
+  const res = globs.map(globToRegExp);
+  return filenames.find((f) => res.some((re) => re.test(f))) || null;
 }
 
 function getSandboxRepos() {
@@ -1668,6 +1705,10 @@ module.exports.resolveThreshold = resolveThreshold;
 module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
 module.exports.changedFileNames = changedFileNames;
+module.exports.getProtectedPaths = getProtectedPaths;
+module.exports.getProtectedPathsMode = getProtectedPathsMode;
+module.exports.getProtectedPathsAllowed = getProtectedPathsAllowed;
+module.exports.firstProtectedMatch = firstProtectedMatch;
 module.exports.requestCopilotReview = requestCopilotReview;
 module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
 module.exports.getErrorRetries = getErrorRetries;

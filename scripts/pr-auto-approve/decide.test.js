@@ -45,8 +45,14 @@ function makeFakeGithub({
   reviewDecision = null,
   graphqlImpl,
   changedFiles = ['README.md'],
+  // Commits on the comparison, for the protected-paths allowlist. The fake
+  // pages them as the compare endpoint does.
+  commits = [],
+  totalCommits = commits.length,
+  // Replaces the whole compare response (or throws); `calls.compare` still records.
+  compareImpl,
 } = {}) {
-  const calls = { createReview: [], graphql: [], compare: [] };
+  const calls = { createReview: [], graphql: [], compare: [], dismiss: [] };
 
   const paginate = async (fn, params, mapper) => {
     const pages = await fn(params);
@@ -70,7 +76,17 @@ function makeFakeGithub({
         // 300: one object, not a paginated list.
         compareCommitsWithBasehead: async (args) => {
           calls.compare.push(args);
-          return { data: { merge_base_commit: { sha: 'mb000001' }, files: changedFiles.map((filename) => ({ filename })) } };
+          if (compareImpl) return compareImpl(args, calls.compare.length);
+          const perPage = args.per_page || 250;
+          const page = args.page || 1;
+          return {
+            data: {
+              merge_base_commit: { sha: 'mb000001' },
+              files: changedFiles.map((filename) => ({ filename })),
+              total_commits: totalCommits,
+              commits: commits.slice((page - 1) * perPage, page * perPage),
+            },
+          };
         },
       },
       pulls: {
@@ -105,6 +121,10 @@ function makeFakeGithub({
           calls.createReview.push(args);
           if (createReviewImpl) return createReviewImpl(args);
           return { data: { id: 999, state: 'APPROVED' } };
+        },
+        dismissReview: async (args) => {
+          calls.dismiss.push(args);
+          return { data: {} };
         },
       },
     },
@@ -4667,4 +4687,60 @@ test('an approval call that failed, when the reviews cannot be listed, says so',
   const result = await decide({ github, core: makeCore(), context: makeContext() });
   assert.equal(result.decision, 'skip');
   assert.equal(result.reason, 'approval API call failed: 502 Server Error; could not list the reviews to check whether it was saved: 502 Bad Gateway');
+});
+
+// -- Protected paths ------------------------------------------------------
+
+// Sets each variable for the duration of fn, restoring the previous value.
+async function withEnv(vars, fn) {
+  const original = {};
+  for (const [k, v] of Object.entries(vars)) {
+    original[k] = process.env[k];
+    process.env[k] = v;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(original)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('getProtectedPaths trims and drops empty globs', () => {
+  assert.deepEqual(decide.getProtectedPaths({ AUTO_APPROVE_PROTECTED_PATHS: ' rules/** , ,.strspc/**,' }), ['rules/**', '.strspc/**']);
+  assert.deepEqual(decide.getProtectedPaths({}), []);
+});
+
+test('getProtectedPathsMode: empty means manual without a warning', () => {
+  const warned = [];
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: '' }, (m) => warned.push(m)), 'manual');
+  assert.equal(decide.getProtectedPathsMode({}, (m) => warned.push(m)), 'manual');
+  assert.equal(warned.length, 0);
+});
+
+test('getProtectedPathsMode: an unknown mode means manual with a warning', () => {
+  const warned = [];
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: 'yolo' }, (m) => warned.push(m)), 'manual');
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /yolo/);
+});
+
+test('getProtectedPathsMode: spacing and case do not change the mode', () => {
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: ' Allowlist ' }), 'allowlist');
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: 'APPROVE' }), 'approve');
+});
+
+test('getProtectedPathsAllowed: spacing and case are forgiven, @ is not', () => {
+  assert.deepEqual([...decide.getProtectedPathsAllowed({ AUTO_APPROVE_PROTECTED_PATHS_ALLOWED: ' Alice, ,bob,@carol' })], ['alice', 'bob', '@carol']);
+});
+
+test('firstProtectedMatch returns the first match, or null', () => {
+  const globs = ['rules/**', '.strspc/**'];
+  assert.equal(decide.firstProtectedMatch(['src/a.js', 'rules/APPROVE.json'], globs), 'rules/APPROVE.json');
+  assert.equal(decide.firstProtectedMatch(['.strspc/config.yaml'], globs), '.strspc/config.yaml');
+  assert.equal(decide.firstProtectedMatch(['rulesets/a.json', 'src/rules/a.json'], globs), null);
+  assert.equal(decide.firstProtectedMatch([], globs), null);
+  assert.equal(decide.firstProtectedMatch(['rules/a.json'], []), null);
 });

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.3...v1.11.0) (2026-11-06)
+
+
+### Features
+
+* add protected paths to the approval gate ([#185](https://github.com/SteerSpec/strspc-pr-review/issues/185)) ([d835b67](https://github.com/SteerSpec/strspc-pr-review/commit/d835b678c998418f7be5ba06b468d0db3370574a))
+
 ## [1.10.3](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.2...v1.10.3) (2026-11-05)
 
 

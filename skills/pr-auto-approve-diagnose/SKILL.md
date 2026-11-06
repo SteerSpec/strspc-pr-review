@@ -44,6 +44,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 | `latest Copilot review has verdict '…'` / `lists N open issue(s)` / `lists a previously missed issue` / `has section '…'` / `does not state no open issues` | The overview in the review **body** doesn't show the PR as clean, even with no new inline comments. Read the body. `Needs a closer look` skips unless `copilot-clean-on` is `no-open-issues`, and its sentence can name a finding even with `No open issues`. A verdict or section you don't recognise may mean Copilot changed its wording |
 | `latest Copilot review is for an older commit (…)` | You pushed after Copilot reviewed. Wait for re-review — no action needed |
 | `latest Copilot review has no commit_id…` | Freshness can't be proven. Check the reviewer really is Copilot |
+| `protected path '<path>' changed; protected-paths-mode is …` / `changed files cannot be completely listed; …` | The PR touches `protected-paths` (or its files can't all be listed) and the mode doesn't let it through, so any bot approval was withdrawn. A human approves it. In `allowlist` mode the text after `and` names the party or commit that isn't allowed |
 | `PR author is the bot itself` | Self-approval is blocked by GitHub. Expected |
 | `PR already approved (reviewDecision=APPROVED)` / `bot already approved head <sha>` | Idempotent no-op. Already done |
 | `check_run:` / `workflow_run:` prefixed skips | The event carried no usable PR — draft, fork, wrong base, or a non-PR run |

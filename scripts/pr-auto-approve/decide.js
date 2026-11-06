@@ -18,6 +18,10 @@
 //                               base, whose release-please PRs take the release
 //                               path; see release.js
 //   AUTO_APPROVE_RELEASE_AUTHOR — login that must have authored a release PR
+//   AUTO_APPROVE_PROTECTED_PATHS — comma-separated globs whose change stops
+//                               auto-approval (default: off); see evaluateProtectedPaths
+//   AUTO_APPROVE_PROTECTED_PATHS_MODE — approve, manual (default) or allowlist
+//   AUTO_APPROVE_PROTECTED_PATHS_ALLOWED — comma-separated logins for allowlist
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');
@@ -378,9 +382,12 @@ async function compareHead({ github, owner, repo, baseRef, headSha }) {
   const { data } = await github.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 1,
   });
+  // A response without a files array has not listed the files: "cannot tell",
+  // never "nothing changed".
   return {
-    names: changedFileNames(data.files || []),
+    names: Array.isArray(data.files) ? changedFileNames(data.files) : null,
     mergeBase: (data.merge_base_commit && data.merge_base_commit.sha) || null,
+    totalCommits: data.total_commits,
   };
 }
 
@@ -390,11 +397,13 @@ async function compareHead({ github, owner, repo, baseRef, headSha }) {
 // when the relaxed threshold was KEPT on the strength of that listing: that is
 // the one outcome that rests on the diff, so it is the one the caller must
 // re-verify before and after approving.
-async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env = process.env }) {
+// `compared`, when given, is a compareHead result for the same head and base
+// (the protected-paths gate's), reused instead of listing the files again.
+async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env = process.env, compared = null }) {
   const { threshold, type, defaultThreshold, roundsThreshold } = resolveThreshold(title, env);
   const unverified = { threshold, type, note: '', mergeBase: null };
   if (threshold !== 0 && threshold >= defaultThreshold) return unverified;
-  const { names, mergeBase } = await compareHead({ github, owner, repo, baseRef, headSha });
+  const { names, mergeBase } = compared || await compareHead({ github, owner, repo, baseRef, headSha });
   const strict = defaultThreshold > threshold ? defaultThreshold : roundsThreshold;
   const relaxedTo = `type '${type || 'none'}' is relaxed to ${threshold} round(s) but`;
   if (!filesMatchPaths(names, getOptionalPaths(env))) {
@@ -417,6 +426,102 @@ async function applyPathGate({ github, owner, repo, baseRef, headSha, title, env
     };
   }
   return { threshold, type, note: '', mergeBase };
+}
+
+// The commits of an allowlist PR must all be read to know its parties; past
+// this many the run cannot afford to, so the PR waits.
+const MAX_COMPARED_COMMITS = 250;
+
+// Logins of every commit's author and committer. A commit with either one not
+// linked to a GitHub account has a party that cannot be checked. `web-flow` as
+// committer is GitHub signing a web or merge commit, not a party; as an author
+// it is a party like any other.
+function commitParties(commits) {
+  const logins = [];
+  for (const c of commits) {
+    const author = c.author && c.author.login;
+    const committer = c.committer && c.committer.login;
+    if (!author || !committer) return { logins, unlinkedSha: String(c.sha || '') };
+    logins.push(author);
+    if (committer.toLowerCase() !== 'web-flow') logins.push(committer);
+  }
+  return { logins, unlinkedSha: null };
+}
+
+// The comparison's commits, page by page. Same SHA-addressed comparison as the
+// file list, so the commits are the evaluated head's; pulls.listCommits would
+// describe whatever the head is when it is called. The response is one object
+// per page, so github.paginate does not apply. Commits are kept once per SHA:
+// a page repeated by the API must not stand in for one that was never read.
+// A page adding nothing new ends the loop.
+async function listCompareCommits({ github, owner, repo, baseRef, headSha, totalCommits }) {
+  const bySha = new Map();
+  for (let page = 1; bySha.size < totalCommits; page++) {
+    const { data } = await github.rest.repos.compareCommitsWithBasehead({
+      owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 100, page,
+    });
+    const before = bySha.size;
+    for (const c of Array.isArray(data.commits) ? data.commits : []) {
+      if (c && c.sha && !bySha.has(c.sha)) bySha.set(c.sha, c);
+    }
+    if (bySha.size === before) break;
+  }
+  return [...bySha.values()];
+}
+
+// Why the parties of an allowlist PR do not all pass, or '' when they do. The
+// PR author first, since that needs no API call.
+async function allowlistBlocker({ github, owner, repo, pr, totalCommits, allowed }) {
+  const author = pr.user && pr.user.login;
+  if (!author) return 'the PR has no author account';
+  const notAllowed = (login) => `party '${login}' is not on protected-paths-allowed`;
+  if (!allowed.has(author.toLowerCase())) return notAllowed(author);
+  if (typeof totalCommits !== 'number') return 'the comparison did not report how many commits the PR has';
+  // A PR that changes a file has a commit; none means the response is wrong.
+  if (totalCommits < 1) return 'the comparison reported no commits';
+  if (totalCommits > MAX_COMPARED_COMMITS) {
+    return `the PR has ${totalCommits} commits, more than the ${MAX_COMPARED_COMMITS} that can be checked`;
+  }
+  const commits = await listCompareCommits({
+    github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, totalCommits,
+  });
+  if (commits.length < totalCommits) return `the comparison returned ${commits.length} of ${totalCommits} commits`;
+  const { logins, unlinkedSha } = commitParties(commits);
+  if (unlinkedSha !== null) {
+    return `commit ${unlinkedSha.slice(0, 8)} has an author or committer with no GitHub account`;
+  }
+  const stranger = logins.find((l) => !allowed.has(l.toLowerCase()));
+  return stranger ? notAllowed(stranger) : '';
+}
+
+// protected-paths: whether a PR touching the listed globs may go on to the
+// normal rules ('normal') or must wait for a human ('wait'). Every way of not
+// knowing the changed files waits, before any party is looked at. `mergeBase`
+// is set on every 'normal' that rested on the comparison, so the caller
+// re-verifies it around the approval; `compared` is that comparison, for
+// applyPathGate to reuse. With no globs, or mode approve, nothing is called.
+async function evaluateProtectedPaths({ github, owner, repo, pr, warn, env = process.env }) {
+  const globs = getProtectedPaths(env);
+  if (!globs.length) return { outcome: 'normal', reason: '', mergeBase: null, compared: null };
+  const mode = getProtectedPathsMode(env, warn);
+  if (mode === 'approve') return { outcome: 'normal', reason: '', mergeBase: null, compared: null };
+  const compared = await compareHead({ github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha });
+  const wait = (why) => ({ outcome: 'wait', reason: why, mergeBase: null, compared });
+  const normal = { outcome: 'normal', reason: '', mergeBase: compared.mergeBase, compared };
+  if (compared.names === null) {
+    return wait(`changed files cannot be completely listed; protected-paths-mode is ${mode}`);
+  }
+  if (!compared.mergeBase) {
+    return wait(`the comparison reported no merge base, so the changed files cannot be re-verified; protected-paths-mode is ${mode}`);
+  }
+  const match = firstProtectedMatch(compared.names, globs);
+  if (!match) return normal;
+  const refusal = `protected path '${match}' changed; protected-paths-mode is ${mode}`;
+  if (mode === 'manual') return wait(refusal);
+  const blocker = await allowlistBlocker({
+    github, owner, repo, pr, totalCommits: compared.totalCommits, allowed: getProtectedPathsAllowed(env),
+  });
+  return blocker ? wait(`${refusal} and ${blocker}`) : normal;
 }
 
 // Stamps the threshold an approval relied on (0 = no Copilot review; N = the
@@ -458,6 +563,40 @@ function filesMatchPaths(filenames, globs) {
   if (!filenames || !filenames.length || !globs.length) return false;
   const res = globs.map(globToRegExp);
   return filenames.every((f) => res.some((re) => re.test(f)));
+}
+
+// protected-paths: globs whose change stops auto-approval unless the mode
+// lets the PR through. Empty means the feature is off.
+function getProtectedPaths(env = process.env) {
+  return String(env.AUTO_APPROVE_PROTECTED_PATHS || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+// An empty mode is what a caller passes for an unset variable, so it means the
+// default, manual. An unrecognised mode also means manual: a typo must never
+// turn the protection off.
+const PROTECTED_PATHS_MODES = new Set(['approve', 'manual', 'allowlist']);
+function getProtectedPathsMode(env = process.env, warn = () => {}) {
+  const mode = String(env.AUTO_APPROVE_PROTECTED_PATHS_MODE || '').trim().toLowerCase();
+  if (!mode) return 'manual';
+  if (PROTECTED_PATHS_MODES.has(mode)) return mode;
+  warn(`pr-auto-approve: unknown protected-paths-mode '${mode}', using manual`);
+  return 'manual';
+}
+
+// Logins compare case-insensitively, as GitHub's do. A leading @ is kept, so
+// it matches no login rather than being guessed away.
+function getProtectedPathsAllowed(env = process.env) {
+  return new Set(String(env.AUTO_APPROVE_PROTECTED_PATHS_ALLOWED || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+}
+
+// The first changed file matching any glob, or null. Unlike filesMatchPaths,
+// one match is enough.
+function firstProtectedMatch(filenames, globs) {
+  if (!filenames || !globs.length) return null;
+  const res = globs.map(globToRegExp);
+  return filenames.find((f) => res.some((re) => re.test(f))) || null;
 }
 
 function getSandboxRepos() {
@@ -1033,15 +1172,22 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     if (typeof core.setFailed === 'function') core.setFailed(reason);
     return setDecision('error', reason);
   };
-  const withdrawStampedApprovals = async (isStale, message, { unstamped = false } = {}) => {
+  // `unfound` names, for the listing failure, the approval that cannot be found.
+  const withdrawStampedApprovals = async (isStale, message, {
+    unstamped = false,
+    unfound = 'an earlier approval stamped with a relaxed rounds-by-type threshold',
+  } = {}) => {
     try {
       reviews = await loadReviews();
     } catch (err) {
       return failClosed(
-        'could not list the PR\'s reviews, so an earlier approval stamped with a relaxed ' +
-          `rounds-by-type threshold cannot be found and withdrawn: ${err.status || ''} ${err.message || err}`.trim(),
+        `could not list the PR's reviews, so ${unfound} cannot be found and withdrawn: ` +
+          `${err.status || ''} ${err.message || err}`.trim(),
       );
     }
+    // Every selected approval is tried before a failure is reported: one that
+    // cannot be dismissed must not leave the others standing.
+    let firstFailure = null;
     for (const r of reviews) {
       const stamped = stampedThreshold(r);
       const isBotApproval = r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED';
@@ -1053,13 +1199,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         });
         withdrew = true;
       } catch (err) {
-        return failClosed(
-          `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim(),
-        );
+        firstFailure = firstFailure ||
+          `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
       }
     }
     if (withdrew) reviews = null;
-    return null;
+    return firstFailure ? failClosed(firstFailure) : null;
   };
 
   // A promotion's or release PR's approval rests on gates that a later head or
@@ -1156,9 +1301,39 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       releaseConfig = proof.config;
     }
   } else {
+    // protected-paths, before anything else that reads the PR's contents: CI,
+    // the Copilot waits and reviewDecision all return early, so a refusal placed
+    // after them could leave a bot approval standing. Not applied to promotion
+    // and release PRs above: those carry changes already gated one PR at a time
+    // into their head branch. Any bot approval, stamped or not, is withdrawn on
+    // a refusal; human approvals are not ours to touch.
+    const withdrawForProtection = (message) => withdrawStampedApprovals(() => true, message, {
+      unstamped: true, unfound: 'a bot approval on a protected path',
+    });
+    let protection;
+    try {
+      protection = await evaluateProtectedPaths({ github, owner, repo, pr, warn });
+    } catch (err) {
+      if (BOT_LOGIN) {
+        const detail = [err.status, err.message || err].filter(Boolean).join(' ');
+        const failed = await withdrawForProtection(
+          `Withdrawn: the changed files of ${pr.head.sha.slice(0, 8)} could not be checked against protected-paths (${detail}).`,
+        );
+        if (failed) return failed;
+      }
+      throw err;
+    }
+    if (protection.outcome === 'wait') {
+      if (BOT_LOGIN) {
+        const failed = await withdrawForProtection(`Withdrawn: ${protection.reason}.`);
+        if (failed) return failed;
+      }
+      return setDecision('skip', protection.reason);
+    }
     try {
       gate = await applyPathGate({
         github, owner, repo, baseRef: pr.base.ref, headSha: pr.head.sha, title: pr.title,
+        compared: protection.compared,
       });
     } catch (err) {
       if (BOT_LOGIN) {
@@ -1172,6 +1347,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       }
       throw err;
     }
+    // A pass rests on the comparison (no protected file, or every party
+    // allowed), so mergeBaseMoved re-verifies it around the approval. Both come
+    // from the same comparison, so they agree when both are set.
+    gate.mergeBase = protection.mergeBase || gate.mergeBase;
   }
   const { threshold, type: commitType } = gate;
   if (gate.note) {
@@ -1668,6 +1847,10 @@ module.exports.resolveThreshold = resolveThreshold;
 module.exports.getOptionalPaths = getOptionalPaths;
 module.exports.filesMatchPaths = filesMatchPaths;
 module.exports.changedFileNames = changedFileNames;
+module.exports.getProtectedPaths = getProtectedPaths;
+module.exports.getProtectedPathsMode = getProtectedPathsMode;
+module.exports.getProtectedPathsAllowed = getProtectedPathsAllowed;
+module.exports.firstProtectedMatch = firstProtectedMatch;
 module.exports.requestCopilotReview = requestCopilotReview;
 module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
 module.exports.getErrorRetries = getErrorRetries;

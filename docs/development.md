@@ -30,7 +30,7 @@ strspc-pr-review/
 │   ├── pr-auto-approve/
 │   │   ├── decide.js                 # all approval rules
 │   │   ├── decide.test.js            # unit tests (Node native test runner)
-│   │   ├── docs.test.js              # guards docs/ and the README against drifting from action.yml
+│   │   ├── docs.test.js              # checks the docs/inputs.md tables and a few README claims against action.yml
 │   │   ├── e2e.test.js               # checks the e2e scenario manifests cover every input and rule
 │   │   ├── e2e-lib.test.js           # unit tests for the e2e harness's shell helpers
 │   │   ├── oracle.test.js            # checks the real-Copilot oracle agrees with decide.js

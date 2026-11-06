@@ -45,8 +45,14 @@ function makeFakeGithub({
   reviewDecision = null,
   graphqlImpl,
   changedFiles = ['README.md'],
+  // Commits on the comparison, for the protected-paths allowlist. The fake
+  // pages them as the compare endpoint does.
+  commits = [],
+  totalCommits = commits.length,
+  // Replaces the whole compare response (or throws); `calls.compare` still records.
+  compareImpl,
 } = {}) {
-  const calls = { createReview: [], graphql: [], compare: [] };
+  const calls = { createReview: [], graphql: [], compare: [], dismiss: [] };
 
   const paginate = async (fn, params, mapper) => {
     const pages = await fn(params);
@@ -70,7 +76,17 @@ function makeFakeGithub({
         // 300: one object, not a paginated list.
         compareCommitsWithBasehead: async (args) => {
           calls.compare.push(args);
-          return { data: { merge_base_commit: { sha: 'mb000001' }, files: changedFiles.map((filename) => ({ filename })) } };
+          if (compareImpl) return compareImpl(args, calls.compare.length);
+          const perPage = args.per_page || 250;
+          const page = args.page || 1;
+          return {
+            data: {
+              merge_base_commit: { sha: 'mb000001' },
+              files: changedFiles.map((filename) => ({ filename })),
+              total_commits: totalCommits,
+              commits: commits.slice((page - 1) * perPage, page * perPage),
+            },
+          };
         },
       },
       pulls: {
@@ -105,6 +121,10 @@ function makeFakeGithub({
           calls.createReview.push(args);
           if (createReviewImpl) return createReviewImpl(args);
           return { data: { id: 999, state: 'APPROVED' } };
+        },
+        dismissReview: async (args) => {
+          calls.dismiss.push(args);
+          return { data: {} };
         },
       },
     },
@@ -179,7 +199,7 @@ test('skip: no pull_request payload', async () => {
 
 // Would be approved if the gate let it through: a clean Copilot review on green
 // CI. Without one, the tests below would skip for the wrong reason and pass.
-function makeApprovableGithub() {
+function makeApprovableGithub(opts = {}) {
   return makeFakeGithub({
     reviews: [{
       id: 1,
@@ -189,6 +209,7 @@ function makeApprovableGithub() {
       user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' },
     }],
     reviewComments: { 1: [] },
+    ...opts,
   });
 }
 
@@ -4667,4 +4688,513 @@ test('an approval call that failed, when the reviews cannot be listed, says so',
   const result = await decide({ github, core: makeCore(), context: makeContext() });
   assert.equal(result.decision, 'skip');
   assert.equal(result.reason, 'approval API call failed: 502 Server Error; could not list the reviews to check whether it was saved: 502 Bad Gateway');
+});
+
+// -- Protected paths ------------------------------------------------------
+
+// Sets each variable for the duration of fn, restoring the previous value.
+async function withEnv(vars, fn) {
+  const original = {};
+  for (const [k, v] of Object.entries(vars)) {
+    original[k] = process.env[k];
+    process.env[k] = v;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(original)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('getProtectedPaths trims and drops empty globs', () => {
+  assert.deepEqual(decide.getProtectedPaths({ AUTO_APPROVE_PROTECTED_PATHS: ' rules/** , ,.strspc/**,' }), ['rules/**', '.strspc/**']);
+  assert.deepEqual(decide.getProtectedPaths({}), []);
+});
+
+test('getProtectedPathsMode: empty means manual without a warning', () => {
+  const warned = [];
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: '' }, (m) => warned.push(m)), 'manual');
+  assert.equal(decide.getProtectedPathsMode({}, (m) => warned.push(m)), 'manual');
+  assert.equal(warned.length, 0);
+});
+
+test('getProtectedPathsMode: an unknown mode means manual with a warning', () => {
+  const warned = [];
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: 'yolo' }, (m) => warned.push(m)), 'manual');
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /yolo/);
+});
+
+test('getProtectedPathsMode: spacing and case do not change the mode', () => {
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: ' Allowlist ' }), 'allowlist');
+  assert.equal(decide.getProtectedPathsMode({ AUTO_APPROVE_PROTECTED_PATHS_MODE: 'APPROVE' }), 'approve');
+});
+
+test('getProtectedPathsAllowed: spacing and case are forgiven, @ is not', () => {
+  assert.deepEqual([...decide.getProtectedPathsAllowed({ AUTO_APPROVE_PROTECTED_PATHS_ALLOWED: ' Alice, ,bob,@carol' })], ['alice', 'bob', '@carol']);
+});
+
+test('firstProtectedMatch returns the first match, or null', () => {
+  const globs = ['rules/**', '.strspc/**'];
+  assert.equal(decide.firstProtectedMatch(['src/a.js', 'rules/APPROVE.json'], globs), 'rules/APPROVE.json');
+  assert.equal(decide.firstProtectedMatch(['.strspc/config.yaml'], globs), '.strspc/config.yaml');
+  assert.equal(decide.firstProtectedMatch(['rulesets/a.json', 'src/rules/a.json'], globs), null);
+  assert.equal(decide.firstProtectedMatch([], globs), null);
+  assert.equal(decide.firstProtectedMatch(['rules/a.json'], []), null);
+});
+
+const PROTECTED = { AUTO_APPROVE_PROTECTED_PATHS: 'rules/**,.strspc/**' };
+const MANUAL = { ...PROTECTED, AUTO_APPROVE_PROTECTED_PATHS_MODE: 'manual' };
+const MANUAL_REFUSAL = "protected path 'rules/APPROVE.json' changed; protected-paths-mode is manual";
+const CANNOT_LIST = (mode = 'manual') => `changed files cannot be completely listed; protected-paths-mode is ${mode}`;
+const NO_MERGE_BASE = (mode = 'manual') =>
+  `the comparison reported no merge base, so the changed files cannot be re-verified; protected-paths-mode is ${mode}`;
+const REWRITTEN = 'base develop was rewritten (merge base mb000001 -> mb000002) during evaluation; the next run re-evaluates the diff';
+
+// A compare response with these files, whose merge base is bases[n - 1] on the
+// nth call (the last one repeating).
+function compareSequence(files, bases = ['mb000001'], extra = {}) {
+  return (_, n) => ({
+    data: {
+      merge_base_commit: { sha: bases[Math.min(n, bases.length) - 1] },
+      files: files.map((f) => (typeof f === 'string' ? { filename: f } : f)),
+      ...extra,
+    },
+  });
+}
+
+const forbidden = () => Object.assign(new Error('Resource not accessible by integration'), {
+  status: 403,
+  request: { method: 'GET', url: 'https://api.github.com/repos/axeptio/test-only-repo/compare/heads%2Fdevelop...deadbeef' },
+});
+
+// Two bot approvals, one stamped and one not, plus two that are not ours to touch.
+const BOT_AND_HUMAN_APPROVALS = [
+  { id: 70, state: 'APPROVED', submitted_at: '2026-04-15T07:00:00Z', user: { login: 'axeptio-bot' },
+    body: 'Auto-approved: copilot-clean.' },
+  { id: 71, state: 'APPROVED', submitted_at: '2026-04-15T08:00:00Z', user: { login: 'axeptio-bot' },
+    body: 'Auto-approved: copilot-optional.\n\n<!-- pr-auto-approve:threshold=0 -->' },
+  { id: 72, state: 'DISMISSED', submitted_at: '2026-04-15T09:00:00Z', user: { login: 'axeptio-bot' },
+    body: 'Auto-approved: copilot-clean.' },
+  { id: 73, state: 'APPROVED', submitted_at: '2026-04-15T10:00:00Z', user: { login: 'someone-else' } },
+];
+
+async function runProtected(env, opts = {}, contextOpts = {}) {
+  return withEnv(env, async () => {
+    const core = makeCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github, calls } = makeApprovableGithub(opts);
+    if (opts.patch) opts.patch(github);
+    const result = await decide({ github, core, context: makeContext(contextOpts) });
+    return { result, calls, core, failures, github };
+  });
+}
+
+test('protected paths: unset makes no comparison', async () => {
+  const { result, calls } = await runProtected({}, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.decision, 'approved', result.reason);
+  assert.equal(calls.compare.length, 0);
+});
+
+test('protected paths: approve makes no comparison', async () => {
+  const { result, calls } = await runProtected(
+    { ...PROTECTED, AUTO_APPROVE_PROTECTED_PATHS_MODE: 'approve' }, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.decision, 'approved', result.reason);
+  assert.equal(calls.compare.length, 0);
+});
+
+test('protected paths: manual refuses a matching file', async () => {
+  const { result, calls } = await runProtected(MANUAL, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: an empty mode behaves as manual', async () => {
+  const { result, core } = await runProtected(
+    { ...PROTECTED, AUTO_APPROVE_PROTECTED_PATHS_MODE: '' }, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(core.warnings.length, 0);
+});
+
+test('protected paths: an unknown mode behaves as manual and warns', async () => {
+  const { result, core } = await runProtected(
+    { ...PROTECTED, AUTO_APPROVE_PROTECTED_PATHS_MODE: 'yolo' }, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(core.warnings.length, 1);
+  assert.match(core.warnings[0], /yolo/);
+});
+
+test('protected paths: a file outside the globs gets normal rules', async () => {
+  const { result } = await runProtected(MANUAL, { changedFiles: ['src/a.js'] });
+  assert.equal(result.decision, 'approved', result.reason);
+});
+
+test('protected paths: an empty file list is not a match', async () => {
+  const { result } = await runProtected(MANUAL, { changedFiles: [] });
+  assert.equal(result.decision, 'approved', result.reason);
+});
+
+test('protected paths: a rename out of a protected path matches', async () => {
+  const { result } = await runProtected(MANUAL, {
+    compareImpl: compareSequence([{ filename: 'src/a.js', previous_filename: 'rules/old.json' }]),
+  });
+  assert.equal(result.reason, "protected path 'rules/old.json' changed; protected-paths-mode is manual");
+});
+
+test('protected paths: a rename into a protected path matches', async () => {
+  const { result } = await runProtected(MANUAL, {
+    compareImpl: compareSequence([{ filename: 'rules/new.json', previous_filename: 'src/a.js' }]),
+  });
+  assert.equal(result.reason, "protected path 'rules/new.json' changed; protected-paths-mode is manual");
+});
+
+test('protected paths: a 300-file list waits', async () => {
+  const files = Array.from({ length: 300 }, (_, i) => `src/${i}.js`);
+  const { result } = await runProtected(MANUAL, { changedFiles: files });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, CANNOT_LIST());
+});
+
+test('protected paths: a response with no files waits', async () => {
+  const { result } = await runProtected(MANUAL, {
+    compareImpl: () => ({ data: { merge_base_commit: { sha: 'mb000001' } } }),
+  });
+  assert.equal(result.reason, CANNOT_LIST());
+});
+
+test('protected paths: no merge base waits', async () => {
+  const { result } = await runProtected(MANUAL, {
+    compareImpl: () => ({ data: { files: [{ filename: 'src/a.js' }] } }),
+  });
+  assert.equal(result.reason, NO_MERGE_BASE());
+});
+
+test('protected paths: a refusal beats 3-rounds', async () => {
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { result, calls } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-1${id}T10:00:00Z`, user: cp })),
+    reviewComments: { 1: [{ id: 10 }], 2: [{ id: 11 }], 3: [{ id: 12 }] },
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: a refusal beats rounds-by-type 0', async () => {
+  const { result, calls } = await runProtected(
+    { ...MANUAL, AUTO_APPROVE_ROUNDS_BY_TYPE: 'chore:0', AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: 'rules/**' },
+    { changedFiles: ['rules/APPROVE.json'], reviews: [], getPrImpl: getPrWithTitle('chore: x') },
+    { prOverrides: { title: 'chore: x' } },
+  );
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: a base rewritten before approving does not approve a no-match', async () => {
+  const { result, calls } = await runProtected(MANUAL, {
+    compareImpl: compareSequence(['src/a.js'], ['mb000001', 'mb000002']),
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, REWRITTEN);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: a base rewritten while approving withdraws a no-match approval', async () => {
+  const { result, calls } = await runProtected(MANUAL, {
+    compareImpl: compareSequence(['src/a.js'], ['mb000001', 'mb000001', 'mb000002']),
+  });
+  assert.equal(calls.createReview.length, 1);
+  assert.equal(calls.dismiss[0].review_id, 999);
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /while approving; approval withdrawn$/);
+});
+
+test('protected paths: a relaxed type reuses the comparison', async () => {
+  const { result, calls } = await runProtected(
+    { ...MANUAL, AUTO_APPROVE_ROUNDS_BY_TYPE: 'docs:0' },
+    { changedFiles: ['README.md'], reviews: [], getPrImpl: getPrWithTitle('docs: x') },
+    { prOverrides: { title: 'docs: x' } },
+  );
+  assert.equal(result.decision, 'approved', result.reason);
+  // One shared listing, then the two re-verifications around the approval.
+  assert.equal(calls.compare.length, 3);
+});
+
+// -- Withdrawal
+
+test('protected paths: a refusal withdraws stamped and unstamped bot approvals only', async () => {
+  const { result, calls } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'], reviews: BOT_AND_HUMAN_APPROVALS,
+  });
+  assert.deepEqual(calls.dismiss.map((d) => d.review_id), [70, 71]);
+  assert.equal(calls.dismiss[0].message, `Withdrawn: ${MANUAL_REFUSAL}.`);
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+});
+
+test('protected paths: normal rules leave a bot approval alone', async () => {
+  const { calls } = await runProtected(MANUAL, {
+    changedFiles: ['src/a.js'], reviews: [...BOT_AND_HUMAN_APPROVALS.slice(0, 1)],
+  });
+  assert.equal(calls.dismiss.length, 0);
+});
+
+test('protected paths: a failed comparison withdraws and then reports', async () => {
+  const { result, calls } = await runProtected(MANUAL, {
+    reviews: BOT_AND_HUMAN_APPROVALS,
+    compareImpl: () => { throw forbidden(); },
+  });
+  assert.deepEqual(calls.dismiss.map((d) => d.review_id), [70, 71]);
+  assert.equal(
+    calls.dismiss[0].message,
+    'Withdrawn: the changed files of deadbeef could not be checked against protected-paths (403 Resource not accessible by integration).',
+  );
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^evaluation failed: 403 GET /);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: a failed review listing fails the job', async () => {
+  const { result, calls, failures } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'],
+    patch: (github) => {
+      github.rest.pulls.listReviews = async () => { throw Object.assign(new Error('boom'), { status: 500 }); };
+    },
+  });
+  assert.equal(result.decision, 'error');
+  assert.equal(
+    result.reason,
+    "could not list the PR's reviews, so a bot approval on a protected path cannot be found and withdrawn: 500 boom",
+  );
+  assert.equal(failures.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('protected paths: a failed dismissal fails the job', async () => {
+  const { result, failures } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'],
+    reviews: BOT_AND_HUMAN_APPROVALS.slice(0, 1),
+    patch: (github) => {
+      github.rest.pulls.dismissReview = async () => { throw Object.assign(new Error('boom'), { status: 500 }); };
+    },
+  });
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /^could not withdraw the stale approval \(review 70\): 500 boom$/);
+  assert.equal(failures.length, 1);
+});
+
+test('protected paths: a failed dismissal still tries every other bot approval', async () => {
+  const attempted = [];
+  const { result, failures } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'],
+    reviews: BOT_AND_HUMAN_APPROVALS,
+    patch: (github) => {
+      github.rest.pulls.dismissReview = async (a) => {
+        attempted.push(a.review_id);
+        if (a.review_id === 70) throw Object.assign(new Error('boom'), { status: 500 });
+        return { data: {} };
+      };
+    },
+  });
+  assert.deepEqual(attempted, [70, 71]);
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /^could not withdraw the stale approval \(review 70\): 500 boom$/);
+  assert.equal(failures.length, 1);
+});
+
+test('protected paths: a refused dismissal falls back to the workflow token', async () => {
+  await withEnv(MANUAL, async () => {
+    const { github, calls } = makeApprovableGithub({
+      changedFiles: ['rules/APPROVE.json'], reviews: BOT_AND_HUMAN_APPROVALS.slice(0, 1),
+    });
+    const botGithub = { rest: { pulls: {
+      ...github.rest.pulls,
+      dismissReview: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }); },
+    } } };
+    const result = await decide({ github, botGithub, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'skip');
+    assert.equal(result.reason, MANUAL_REFUSAL);
+    assert.equal(calls.dismiss.length, 1);
+  });
+});
+
+// -- allowlist
+
+const ALLOWLIST = (allowed) => ({
+  ...PROTECTED, AUTO_APPROVE_PROTECTED_PATHS_MODE: 'allowlist', AUTO_APPROVE_PROTECTED_PATHS_ALLOWED: allowed,
+});
+const commit = (sha, author, committer = author) => ({
+  sha, author: author && { login: author }, committer: committer && { login: committer },
+});
+const ALLOWLIST_REFUSAL = "protected path 'rules/APPROVE.json' changed; protected-paths-mode is allowlist and ";
+const commitPages = (calls) => calls.compare.filter((c) => c.per_page === 100);
+
+async function runAllowlist(allowed, opts = {}, contextOpts = {}) {
+  return runProtected(ALLOWLIST(allowed), { changedFiles: ['rules/APPROVE.json'], ...opts }, contextOpts);
+}
+
+test('allowlist: every party allowed gets normal rules', async () => {
+  const { result } = await runAllowlist('someone,alice', { commits: [commit('a1', 'alice')] });
+  assert.equal(result.decision, 'approved', result.reason);
+});
+
+test('allowlist: a PR author not allowed waits', async () => {
+  const { result } = await runAllowlist('alice', { commits: [commit('a1', 'alice')] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'someone' is not on protected-paths-allowed`);
+});
+
+test('allowlist: a commit author not allowed waits', async () => {
+  const { result } = await runAllowlist('someone', { commits: [commit('a1', 'bob', 'someone')] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'bob' is not on protected-paths-allowed`);
+});
+
+test('allowlist: a committer not allowed waits', async () => {
+  const { result } = await runAllowlist('someone,alice', { commits: [commit('a1', 'alice', 'bob')] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'bob' is not on protected-paths-allowed`);
+});
+
+test('allowlist: a null author waits', async () => {
+  const { result } = await runAllowlist('someone', { commits: [commit('abcdef012', null, 'someone')] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}commit abcdef01 has an author or committer with no GitHub account`);
+});
+
+test('allowlist: a null committer waits', async () => {
+  const { result } = await runAllowlist('someone', { commits: [commit('abcdef012', 'someone', null)] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}commit abcdef01 has an author or committer with no GitHub account`);
+});
+
+test('allowlist: a web-flow committer is ignored', async () => {
+  const { result } = await runAllowlist('someone,alice', { commits: [commit('a1', 'alice', 'web-flow')] });
+  assert.equal(result.decision, 'approved', result.reason);
+});
+
+test('allowlist: a web-flow author is a party', async () => {
+  const { result } = await runAllowlist('someone', { commits: [commit('a1', 'web-flow', 'someone')] });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'web-flow' is not on protected-paths-allowed`);
+});
+
+test('allowlist: logins compare case-insensitively', async () => {
+  const { result } = await runAllowlist('SOMEONE,ALICE', { commits: [commit('a1', 'Alice')] });
+  assert.equal(result.decision, 'approved', result.reason);
+});
+
+test('allowlist: an @ in the list does not match', async () => {
+  const { result } = await runAllowlist('@someone');
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'someone' is not on protected-paths-allowed`);
+});
+
+test('allowlist: an empty list allows nobody', async () => {
+  const { result } = await runAllowlist('');
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}party 'someone' is not on protected-paths-allowed`);
+});
+
+test('allowlist: a PR with no author account waits', async () => {
+  const { result } = await runAllowlist('someone', {}, { prOverrides: { user: null } });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the PR has no author account`);
+});
+
+test('allowlist: over 250 commits waits without paging', async () => {
+  const { result, calls } = await runAllowlist('someone', { totalCommits: 251 });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the PR has 251 commits, more than the 250 that can be checked`);
+  assert.equal(commitPages(calls).length, 0);
+});
+
+test('allowlist: 250 commits are read across pages', async () => {
+  const commits = Array.from({ length: 250 }, (_, i) => commit(`c${i}`, 'someone'));
+  const { result, calls } = await runAllowlist('someone', { commits });
+  assert.equal(result.decision, 'approved', result.reason);
+  assert.deepEqual(commitPages(calls).map((c) => c.page), [1, 2, 3]);
+});
+
+test('allowlist: a short commit list waits', async () => {
+  const commits = [1, 2, 3].map((i) => commit(`c${i}`, 'someone'));
+  const { result } = await runAllowlist('someone', { commits, totalCommits: 5 });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison returned 3 of 5 commits`);
+});
+
+test('allowlist: repeated commits across pages do not stand in for unread ones', async () => {
+  // A page that ignores `page` answers the same commit every time.
+  const { result } = await runAllowlist('someone', {
+    compareImpl: (args) => ({
+      data: {
+        merge_base_commit: { sha: 'mb000001' },
+        files: [{ filename: 'rules/APPROVE.json' }],
+        total_commits: 2,
+        commits: args.per_page === 100 ? [commit('a1', 'someone')] : [],
+      },
+    }),
+  });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison returned 1 of 2 commits`);
+});
+
+test('allowlist: a comparison with no commits waits', async () => {
+  const { result } = await runAllowlist('someone', { totalCommits: 0 });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison reported no commits`);
+});
+
+test('allowlist: a file outside the globs reads no commits', async () => {
+  const { result, calls } = await runAllowlist('alice', { changedFiles: ['src/a.js'] });
+  assert.equal(result.decision, 'approved', result.reason);
+  assert.equal(commitPages(calls).length, 0);
+});
+
+test('allowlist: a 300-file list waits with every party allowed', async () => {
+  const files = Array.from({ length: 300 }, (_, i) => `rules/${i}.json`);
+  const { result } = await runAllowlist('someone', { changedFiles: files });
+  assert.equal(result.reason, CANNOT_LIST('allowlist'));
+});
+
+test('allowlist: no merge base waits with every party allowed', async () => {
+  const { result } = await runAllowlist('someone', {
+    compareImpl: () => ({ data: { files: [{ filename: 'rules/APPROVE.json' }], total_commits: 0, commits: [] } }),
+  });
+  assert.equal(result.reason, NO_MERGE_BASE('allowlist'));
+});
+
+test('allowlist: a failed comparison reports with every party allowed', async () => {
+  const { result, calls } = await runAllowlist('someone', { compareImpl: () => { throw forbidden(); } });
+  assert.match(result.reason, /^evaluation failed: 403/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('allowlist: a failed commit page withdraws and then reports', async () => {
+  const listing = compareSequence(['rules/APPROVE.json'], ['mb000001'], { total_commits: 1, commits: [] });
+  const { result, calls } = await runAllowlist('someone', {
+    reviews: BOT_AND_HUMAN_APPROVALS.slice(0, 1),
+    compareImpl: (args, n) => { if (args.per_page === 100) throw forbidden(); return listing(args, n); },
+  });
+  assert.equal(calls.dismiss.length, 1);
+  assert.match(result.reason, /^evaluation failed:/);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('allowlist: a base rewritten before approving does not approve', async () => {
+  const { result, calls } = await runAllowlist('someone', {
+    compareImpl: (args, n) => ({
+      data: {
+        merge_base_commit: { sha: n === 1 ? 'mb000001' : 'mb000002' },
+        files: [{ filename: 'rules/APPROVE.json' }],
+        total_commits: 1,
+        commits: args.per_page === 100 ? [commit('a1', 'someone')] : [],
+      },
+    }),
+  });
+  assert.equal(result.reason, REWRITTEN);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('allowlist: a pass still needs the normal rules', async () => {
+  const { result } = await runAllowlist('someone', {
+    commits: [commit('a1', 'someone')],
+    checkRuns: [{ ...DEFAULT_CHECK_RUNS[0], conclusion: 'failure' }],
+  });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^failing check: /);
 });

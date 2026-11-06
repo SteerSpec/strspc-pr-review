@@ -75,6 +75,7 @@ variable, see [Organization-wide configuration](docs/usage.md#organization-wide-
 | Write the caller workflow and set org-wide variables | [Usage](docs/usage.md) |
 | Look up an input, its default or an output | [Inputs and outputs](docs/inputs.md) |
 | Ask for fewer review rounds on docs or chores | [Per-type rounds](docs/per-type-rounds.md) |
+| Hold changes to policy files for a human | [Protected paths](docs/protected-paths.md) |
 | Find out why a PR wasn't approved | [Troubleshooting](docs/troubleshooting.md) |
 | Set up or debug with Claude Code | [Claude Code skills](docs/skills.md) |
 | Decide where not to use it | [Responsible use](docs/responsible-use.md) |

@@ -67,6 +67,9 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_THRESHOLD` | `rounds-threshold` |
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE` | `rounds-by-type` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS` | `protected-paths` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_MODE` | `protected-paths-mode` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_ALLOWED` | `protected-paths-allowed` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON` | `copilot-clean-on` |
 | `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` | `promotion-branches` |
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |

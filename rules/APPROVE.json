@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.44",
-    "timestamp": "2026-11-05T13:51:18Z",
-    "hash": "blake3:e81e87c6a3a9d7955d7a82f65211b71fbe8a940bbc7ac3e53574d0f4bf517bce"
+    "version": "0.1.46",
+    "timestamp": "2026-11-06T15:55:41Z",
+    "hash": "blake3:25c4ea962ef4ea7276a7bed73b81e54b558ec4e1fa7d038968977aad88f252c7"
   },
   "rules": [
     {
@@ -306,6 +306,24 @@
       "body": "The action MUST NOT re-request a Copilot review after an errored one while a Copilot review request is still pending on the pull request.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-05",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-034",
+      "revision": 0,
+      "state": "D",
+      "body": "When protected-paths is set and protected-paths-mode is not approve, the action MUST NOT approve a pull request other than a promotion or release pull request when its changed files cannot be completely listed, or when it changes a file matching protected-paths and protected-paths-mode is not allowlist with every party to the pull request on protected-paths-allowed.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-06",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-035",
+      "revision": 0,
+      "state": "D",
+      "body": "When the action declines a pull request under protected-paths, it MUST withdraw every approval by bot-login on that pull request.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-06",
       "supersedes": null
     }
   ],

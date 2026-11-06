@@ -130,15 +130,24 @@ request as it does for `applyPathGate`.
 
 ## Rules
 
-Add one rule to the `APPROVE` entity through `strspc rule add`, Draft, revision 0, one sentence:
+Add two rules to the `APPROVE` entity through `strspc rule add`, Draft, revision 0. One rule can't
+carry both MUST NOT and MUST (lint RL027), so the refusal and the withdrawal are split:
 
-> Unless protected-paths-mode is approve, the action MUST NOT approve a pull request whose changed
-> files cannot be completely listed, or one that changes a file matching protected-paths unless
-> protected-paths-mode is allowlist and every party to the pull request is on
-> protected-paths-allowed, and MUST withdraw any bot approval from such a pull request.
+> APPROVE-034: When protected-paths is set and protected-paths-mode is not approve, the action MUST
+> NOT approve a pull request other than a promotion or release pull request when its changed files
+> cannot be completely listed, or when it changes a file matching protected-paths and
+> protected-paths-mode is not allowlist with every party to the pull request on
+> protected-paths-allowed.
 
-The rule must be added once. If its text changes before the PR merges, rebuild it so it reaches the PR
-at revision 0. Never hand-edit the JSON. APPROVE-019 is not touched.
+> APPROVE-035: When the action declines a pull request under protected-paths, it MUST withdraw every
+> approval by bot-login on that pull request.
+
+Each rule must be added once. If its text changes before the PR merges, rebuild it so it reaches the
+PR at revision 0. Never hand-edit the JSON. APPROVE-019 is not touched.
+
+Promotion and release PRs are not gated (a decision taken while building it): they carry changes
+already gated one PR at a time into their head branch, and gating them would refuse every promotion
+that carries a protected change.
 
 ## Documentation
 

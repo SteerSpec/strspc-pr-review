@@ -387,18 +387,23 @@ git commit -m "feat: add the protected-paths inputs and docs"
 **Files:**
 - Modify: `rules/APPROVE.json`, through the CLI only
 
-- [ ] **Step 1: Add the rule once**
+- [ ] **Step 1: Add the two rules once**
+
+The spec's Rules section holds the text. One rule can't carry both MUST NOT and MUST (lint RL027),
+so the refusal and the withdrawal are separate rules:
 
 ```bash
-strspc rule add APPROVE --dir rules --added-by "@pleberre" --body "Unless protected-paths-mode is approve, the action MUST NOT approve a pull request whose changed files cannot be completely listed, or one that changes a file matching protected-paths unless protected-paths-mode is allowlist and every party to the pull request is on protected-paths-allowed, and MUST withdraw any bot approval from such a pull request."
+strspc rule add APPROVE --dir rules --added-by github:pleberre --body "<APPROVE-034 text from the spec>"
+strspc rule add APPROVE --dir rules --added-by github:pleberre --body "<APPROVE-035 text from the spec>"
 ```
 
-Expected: `APPROVE-021`, Draft. If the text must change before merge, remove the commit and add it again, so it reaches the PR at revision 0.
+Expected: `APPROVE-034` and `APPROVE-035`, Draft. If a text must change before merge, restore
+`rules/APPROVE.json` from the base and add both again, so they reach the PR at revision 0.
 
-- [ ] **Step 2: Verify it**
+- [ ] **Step 2: Verify them**
 
-Run: `strspc lint rules/`, then `strspc diff --base origin/develop rules/`, then `git grep -n -A6 '"id": "APPROVE-021"' -- rules/APPROVE.json`
-Expected: both CLI commands exit 0, and the rule shows revision 0. APPROVE-019 is unchanged.
+Run: `strspc realm validate rules --recursive --strict`, then `git diff origin/develop -- rules/APPROVE.json`
+Expected: validation reports no errors or warnings, both rules show revision 0, and APPROVE-019 is unchanged.
 
 - [ ] **Step 3: Commit**
 
@@ -413,7 +418,7 @@ git commit -m "chore(rules): add the protected-paths rule"
 
 - [ ] **Step 1: Update and run every gate**
 
-Run: `git fetch origin`, `git rebase origin/develop`, `npm run test:coverage`, `npm run lint`, `strspc lint rules/`, `strspc diff --base origin/develop rules/`
+Run: `git fetch origin`, `git rebase origin/develop`, `npm run test:coverage`, `npm run lint`, `strspc realm validate rules --recursive --strict`
 Expected: each exits 0.
 
 - [ ] **Step 2: Push**

@@ -35,8 +35,7 @@ merges. For where to keep human review, see [Responsible use](docs/responsible-u
 
 There's nothing to install: the action runs on `github-script` (Node) inside the Action itself.
 
-Two tokens do different jobs, the bot PAT for the approval and the workflow's `GITHUB_TOKEN` for every
-read. Keep `checks: read` in your caller's job permissions. See [Tokens](docs/usage.md#tokens).
+Which token does what, and the permissions the caller needs: [Tokens](docs/usage.md#tokens).
 
 ### Quick start
 

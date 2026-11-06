@@ -4,23 +4,23 @@ When the action approves a pull request, when it skips, and why. Back to the [RE
 
 ## Why
 
-Requiring an approving review on every PR is good policy, but a lot of PRs have nobody meaningful to
-ask. Think of a Dependabot bump, a one-line docs fix in an internal tool, or any PR in a repository
-with one maintainer, who can't approve their own work because GitHub blocks self-approval. The rule
-is doing its job, while the review is a click nobody reads, or a PR that waits days for one.
+Requiring an approving review on every PR is good policy, but some PRs have no one to ask. Think of a
+Dependabot bump, a one-line docs fix in an internal tool, or any PR in a repository with one
+maintainer, who can't approve their own work because GitHub blocks self-approval. The rule is doing its
+job, while the review is a click that adds no information, or a PR that waits for a reviewer who
+doesn't exist.
 
 This action fills that slot with something that looked at the diff. It earns its place on:
 
 | Where | Why |
 | ----- | --- |
-| **Bot PRs** | Dependabot, Renovate and release automation are high volume and low judgement, and most likely to make a required review feel like a tax |
+| **Bot PRs** | Dependabot, Renovate and release automation arrive in volume and rarely need a judgement call, so a required review adds delay and little else |
 | **Solo-maintained repos** | A ruleset requires a review nobody is available to give |
 | **Internal repos** | The review requirement is org policy rather than a second pair of eyes |
 
-It doesn't belong on anything that matters. It rubber-stamps *Copilot's* verdict, or mechanical proof
-that a promotion or release PR holds nothing new to review, and neither is a reviewer for those. Keep
-`CODEOWNERS` and required human reviewers on sensitive paths: the bot's approval fills a slot, and it
-shouldn't be your only gate.
+It doesn't belong on anything that matters. It approves on *Copilot's* verdict, or on the promotion and
+release gates below, and neither is a human reviewer. See [Responsible use](responsible-use.md) for
+where to keep human review.
 
 ## How it works
 
@@ -88,8 +88,10 @@ instead, as long as every other check above still passes.
 
 The risk is that `No open issues` covers published threads only. The sentence under the verdict can
 still name a finding, and the action doesn't read that sentence. In a hand-classified sample of 352
-pull requests from 13 SteerSpec repositories (October 2026, described in
-[#138](https://github.com/SteerSpec/strspc-pr-review/commit/a8162a16d7b075704cd4198d2b05222d60cf5e30)), 25 of the 70 such reviews that this
+pull requests from public and non-public SteerSpec repositories (the 40 most recently updated per
+repository, October 2026, described in
+[#138](https://github.com/SteerSpec/strspc-pr-review/pull/138),
+[merge commit](https://github.com/SteerSpec/strspc-pr-review/commit/a8162a16d7b075704cd4198d2b05222d60cf5e30)), 25 of the 70 such reviews that this
 setting would newly pass named a concrete defect, finding or required change in that sentence.
 
 ### Promotion PRs
@@ -114,8 +116,8 @@ A standing approval names the commit that merged, was submitted before the merge
 someone with push access, while no reviewer still requested changes. A bot approval counts, because
 it means that PR passed these rules. An approval given after a PR merged doesn't.
 
-Expect some promotions to skip at first. Replayed over 24 promotions across 6 SteerSpec repositories on
-2026-10-31 (see the comment in
+Expect some promotions to skip at first. Replayed over 24 promotions across public and non-public SteerSpec
+repositories on 2026-10-31 (see the comment in
 [`promotion.js` at v1.10.3](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.3/scripts/pr-auto-approve/promotion.js)),
 17 pass, and the other 7 each hold a PR that merged with no standing approval. A person reviews those
 and approves the promotion.

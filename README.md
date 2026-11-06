@@ -19,10 +19,9 @@
 It approves without a human click. It skips when the review is stale, when Copilot hid findings from the
 inline comments, when a check fails, or when the commit changed.
 
-It approves on Copilot's verdict, or on mechanical proof that a promotion or
-release PR holds nothing new to review, and neither is a human reviewer. It never merges. Keep
-`CODEOWNERS` and required human reviewers on sensitive paths: the bot's approval fills a review slot and
-shouldn't be your only gate. See [Responsible use](docs/responsible-use.md).
+It approves on Copilot's verdict, or, for promotion and release PRs, when its gates find no commit or
+file that wasn't already reviewed or owned by release-please. Neither is a human reviewer. It never
+merges. For where to keep human review, see [Responsible use](docs/responsible-use.md).
 
 ## Install
 

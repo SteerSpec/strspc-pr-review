@@ -4,8 +4,8 @@ Back to the [README](../README.md).
 
 ## Responsible use
 
-This action rubber-stamps **Copilot's** verdict, or mechanical proof that a promotion or release PR
-holds nothing new to review, and it isn't a substitute for human judgment where that matters.
+This action approves on **Copilot's** verdict, or on the promotion and release gates described in
+[How it works](how-it-works.md). It isn't a substitute for human judgment where that matters.
 
 - **Keep required human reviewers** (branch protection, `CODEOWNERS`) on sensitive paths. The bot's
   approval fills a review slot but shouldn't be your only gate.

@@ -8,7 +8,7 @@ Node 22 (`.nvmrc`).
 
 ```bash
 npm install
-npm test               # 419 unit tests; oracle.test.js needs jq
+npm test               # 419 unit tests (test declarations); oracle.test.js needs jq
 npm run test:coverage  # same tests + coverage gate (80% line / 70% branch)
 npm run lint           # actionlint (workflows) + shellcheck (e2e scripts) + issue-form schema
 ```

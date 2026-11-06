@@ -36,7 +36,7 @@ Types at or above the default are never gated and never list the PR's files. A P
 files can't prove it's docs-only, because the comparison's file list stops there, and gets the
 default rules.
 
-The file list is safe against races:
+The file list is read so that a force-push during the run doesn't change it:
 
 - It's listed for **exactly the head SHA under evaluation**, through a `heads/<base>...<sha>` commit
   comparison rather than the PR's live file list. A force-push during the run can't swap the diff

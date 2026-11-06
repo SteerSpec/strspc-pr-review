@@ -34,8 +34,8 @@ inputs:
       `pull-requests: write` and `contents: read` from it and nothing else; the
       shipped template grants all three. `contents: read` is for the commit
       comparison that lists a PR's changed files when rounds-by-type relaxes
-      its type (the list is pinned to the evaluated head SHA that way), and for
-      the branch, commit and config lookups of promotion-branches and
+      its type or protected-paths is set (the list is pinned to the evaluated
+      head SHA that way), and for the branch, commit and config lookups of promotion-branches and
       release-branches. Override only if you have a reason to read as someone else.
   base-branch:
     required: false
@@ -83,6 +83,32 @@ inputs:
       rounds-threshold; a 0 is always gated, so 'default:0' falls back to
       rounds-threshold for code) and the reason says so. The title is
       author-controlled, so this stops a code change from borrowing a relaxed type.
+  protected-paths:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated globs, e.g. 'rules/**,.strspc/**'. A PR changing any file
+      that matches one (a rename counts by its old and new name) is handled by
+      protected-paths-mode, before every other rule, the rounds threshold and
+      rounds-by-type 0 included. Promotion and release PRs are not gated. Empty
+      (default) turns the feature off and makes no extra API call.
+  protected-paths-mode:
+    required: false
+    default: 'manual'
+    description: >-
+      What happens to a PR matching protected-paths. 'manual': it waits for a
+      human. 'allowlist': it gets the normal rules only if its author and every
+      commit's author and committer are on protected-paths-allowed, and waits
+      otherwise. 'approve': the normal rules, with no file listing. A PR that
+      waits has any bot approval withdrawn; a PR whose files cannot be
+      completely listed waits in manual and allowlist. An empty or unknown
+      value means 'manual'.
+  protected-paths-allowed:
+    required: false
+    default: ''
+    description: >-
+      Comma-separated GitHub logins, without '@', compared case-insensitively.
+      Used only by protected-paths-mode 'allowlist'. Empty allows nobody.
   copilot-clean-on:
     required: false
     default: 'verdict'
@@ -279,6 +305,9 @@ runs:
         AUTO_APPROVE_ROUNDS_THRESHOLD: ${{ inputs.rounds-threshold }}
         AUTO_APPROVE_ROUNDS_BY_TYPE: ${{ inputs.rounds-by-type }}
         AUTO_APPROVE_COPILOT_OPTIONAL_PATHS: ${{ inputs.copilot-optional-paths }}
+        AUTO_APPROVE_PROTECTED_PATHS: ${{ inputs.protected-paths }}
+        AUTO_APPROVE_PROTECTED_PATHS_MODE: ${{ inputs.protected-paths-mode }}
+        AUTO_APPROVE_PROTECTED_PATHS_ALLOWED: ${{ inputs.protected-paths-allowed }}
         AUTO_APPROVE_COPILOT_CLEAN_ON: ${{ inputs.copilot-clean-on }}
         AUTO_APPROVE_PROMOTION_BRANCHES: ${{ inputs.promotion-branches }}
         AUTO_APPROVE_RELEASE_BRANCHES: ${{ inputs.release-branches }}

@@ -295,6 +295,9 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_THRESHOLD` | `rounds-threshold` |
 | `STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE` | `rounds-by-type` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_OPTIONAL_PATHS` | `copilot-optional-paths` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS` | `protected-paths` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_MODE` | `protected-paths-mode` |
+| `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_ALLOWED` | `protected-paths-allowed` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_CLEAN_ON` | `copilot-clean-on` |
 | `STRSPC_PR_AUTO_APPROVE_PROMOTION_BRANCHES` | `promotion-branches` |
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |
@@ -476,6 +479,9 @@ requirement: everything they do is documented on this page.
 | `rounds-threshold` | `3` | Copilot review rounds before approving regardless of inline comments |
 | `rounds-by-type` | `''` | Rounds per Conventional Commit type, read from the PR title, such as `docs:1,chore:0,fix:3,default:3`. `0` means Copilot isn't required for that type (approve on green CI). A type below the default applies only when every changed file matches `copilot-optional-paths`. Empty uses `rounds-threshold` for all PRs. See [Per-type rounds](#per-type-rounds) |
 | `copilot-optional-paths` | `**/*.md,docs/**/*.md` | Globs. A type mapped below the default (`0` included) applies only when every changed file matches, otherwise the PR uses the default (`default` entry, else `rounds-threshold`). Stops a code change from borrowing a relaxed title |
+| `protected-paths` | `''` | Comma-separated globs, such as `rules/**,.strspc/**`. A PR changing a matching file is handled by `protected-paths-mode` before every other rule. Empty turns this off. See [Protected paths](#protected-paths) |
+| `protected-paths-mode` | `manual` | `manual` waits for a human, `allowlist` applies the normal rules only when every party is on `protected-paths-allowed`, `approve` always applies them. An empty or unknown value means `manual` |
+| `protected-paths-allowed` | `''` | Comma-separated logins, without `@`, for `allowlist`. Empty allows nobody |
 | `copilot-clean-on` | `verdict` | Which verdicts in Copilot's review overview can pass as clean. `verdict` passes only `Approval recommended`. `no-open-issues` also passes `Needs a closer look` when the body states `No open issues`. An unrecognised value reads as `verdict` and logs a warning. See [Passing Needs a closer look](#passing-needs-a-closer-look) |
 | `promotion-branches` | `''` | Comma-separated `head:base` pairs approved without a Copilot review, such as `develop:main`. Each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Promotion PRs](#promotion-prs) |
 | `release-branches` | `''` | Comma-separated `source:base` pairs whose release-please PRs are approved without a Copilot review, such as `develop:main`, or a bare base for a repo with no source branch. Needs `release-author`, and each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Release PRs](#release-prs) |
@@ -574,6 +580,49 @@ retitle that raises the required rounds above the stamp withdraws it too.
   earlier bot approval stamped with a relaxed threshold is withdrawn before the run reports the
   failure.
 
+## Protected paths
+
+Some files decide a repository's own policy, such as the rules `strspc check` enforces. A PR that
+changes them shouldn't be approved just because Copilot found nothing to say. List them in
+`protected-paths` and pick what happens in `protected-paths-mode`:
+
+```yaml
+protected-paths: 'rules/**,.strspc/**'
+protected-paths-mode: 'manual'
+```
+
+| Mode | Every party allowed | Any party not allowed |
+| ---- | ------------------- | --------------------- |
+| `approve` | Normal rules | Normal rules |
+| `manual` (default) | Wait for a human | Wait for a human |
+| `allowlist` | Normal rules | Wait for a human |
+
+Set them through `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS`, `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_MODE`
+and `STRSPC_PR_AUTO_APPROVE_PROTECTED_PATHS_ALLOWED`.
+
+- **A refusal comes first.** It beats the rounds threshold and `rounds-by-type`, `0` included.
+- **Waiting withdraws.** Any bot approval of the PR is withdrawn, stamped or not. Human approvals are
+  left alone.
+- **Not knowing means waiting.** A PR of 300 or more files, or a comparison with no merge base, waits in
+  `manual` and `allowlist`, because its file list can't be shown to be complete.
+- **Being allowed skips nothing.** An allowed PR still needs green CI and a clean Copilot review, or
+  enough rounds.
+- **Promotion and release PRs aren't gated.** They carry changes already gated one PR at a time into
+  their head branch.
+
+The parties are the PR author and every commit's author and committer, matched by login without `@`
+and ignoring case. A commit with no linked GitHub account isn't allowed, and `web-flow` as committer
+(GitHub signing a web or merge commit) isn't counted. A PR of more than 250 commits waits.
+
+Know the limits:
+
+- **Agents that commit as your account count as you.** Allowing that account allows every agent using
+  it. To tell agents apart, have each commit under its own account or GitHub App.
+- **This covers accidents, not someone deliberately bypassing it.** Commit identity can be faked, and a
+  PR can edit its own caller workflow.
+- **A caller without the new `with:` lines never passes these inputs, and nothing reports it.** An
+  organization variable can look active while protecting nothing, so sync each caller to the template.
+
 ## Troubleshooting
 
 Not approving? Every run logs a `reason`, also available as the `reason` output.
@@ -630,7 +679,7 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `head moved from … during evaluation`<br>`PR base changed from … during evaluation`<br>`PR title changed during evaluation…` | The PR's head, base branch or title changed while the run evaluated it, so nothing was approved under the stale inputs. The next run (push, retarget or `edited` event) re-evaluates. Expected and rare |
 | `PR converted to draft during evaluation` | The PR became a draft during the run, so no approval was posted. Mark it ready for review, and the template re-evaluates on `ready_for_review` |
 | `PR head, base, title or draft state changed while approving; approval withdrawn` | The same race, landing between the final re-read and the approval. The approval was posted and immediately dismissed, along with any second bot approval of the same head that a retried approval request left, and the next run re-evaluates |
-| `base <branch> was rewritten (merge base … -> …) during evaluation`<br>`… while approving; approval withdrawn` | The base branch was force-pushed while the run evaluated a relaxed type, so the diff the path gate judged is no longer the PR's diff. Nothing is approved, or the approval is dismissed, and the next run re-evaluates. A base that merely moved on through unrelated merges keeps its merge base and doesn't trigger this |
+| `base <branch> was rewritten (merge base … -> …) during evaluation`<br>`… while approving; approval withdrawn` | The base branch was force-pushed while the run evaluated a relaxed type or a protected-paths pass, so the diff the gate judged is no longer the PR's diff. Nothing is approved, or the approval is dismissed, and the next run re-evaluates. A base that merely moved on through unrelated merges keeps its merge base and doesn't trigger this |
 
 ### Relaxed types
 
@@ -639,6 +688,17 @@ Not approving? Every run logs a `reason`, also available as the `reason` output.
 | `…; type '<type>' is relaxed to N round(s) but the PR touches files outside copilot-optional-paths, so the default M applies` | The title's type is below the default in `rounds-by-type`, but the diff reaches outside `copilot-optional-paths`, so the default rules apply. The text before `;` is the ordinary reason under those rules. Expected for a code change with a relaxed title, otherwise widen the globs |
 | `evaluation failed: 403 … /compare/…`<br>`evaluation failed: 404 … /compare/…` | The changed-files listing for a relaxed type failed. A `403` means the **read** token lacks `contents: read`, so restore it in the caller's job permissions. A `404` means the evaluated head SHA is no longer on the PR after a force-push, and the next run re-evaluates the new head. Either way any earlier bot approval stamped with a relaxed threshold is **withdrawn first** (`Withdrawn: the changed files of … could not be listed …`) |
 | `could not list the PR's reviews, so an earlier approval stamped with a relaxed rounds-by-type threshold cannot be found and withdrawn: …` | The job fails on purpose (`decision=error`): a skip would leave such an approval standing unseen. The action already retries a 5xx or a dropped connection 3 times (1 s, 4 s and 9 s apart), so this means the outage outlasted those retries or a rate limit hit. Re-run the job once GitHub recovers. A persistent `403` means the **read** token can't read pull requests |
+
+### Protected paths
+
+| `reason` | Cause and fix |
+| -------- | ------------- |
+| `protected path '<path>' changed; protected-paths-mode is manual` | The PR touches a file in `protected-paths`. Have a human review and approve it. Any bot approval was withdrawn |
+| `protected path '<path>' changed; protected-paths-mode is allowlist and party '<login>' is not on protected-paths-allowed`<br>`… and commit … has an author or committer with no GitHub account`<br>`… and the PR has no author account` | Someone not on `protected-paths-allowed` wrote or committed part of the PR, or a commit isn't linked to a GitHub account. Have a human approve it, or add the login if it should be trusted |
+| `… and the PR has N commits, more than the 250 that can be checked`<br>`… and the comparison returned M of N commits` | Not every commit could be read, so not every party is known. Have a human approve it |
+| `changed files cannot be completely listed; protected-paths-mode is …`<br>`the comparison reported no merge base, so the changed files cannot be re-verified; …` | The PR changes 300 files or more, or GitHub's comparison came back incomplete, so it can't be shown to avoid protected paths. Have a human approve it |
+| `evaluation failed: 403 … /compare/…` with `protected-paths` set | The file listing failed. Any bot approval was withdrawn first (`Withdrawn: the changed files of … could not be checked against protected-paths …`). A `403` means the **read** token lacks `contents: read` |
+| `could not list the PR's reviews, so a bot approval on a protected path cannot be found and withdrawn: …` | The job fails on purpose (`decision=error`), since an approval may still stand. Re-run the job once GitHub recovers |
 
 ### Tokens and configuration
 

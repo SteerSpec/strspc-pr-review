@@ -133,6 +133,15 @@ scenario_ci_fail_withdraws() {
   expect_outcome "$PR_NUM" "$since"
 }
 
+# Needs the `protected` profile. A clean review would approve the PR, so only the
+# protected-paths gate can refuse it.
+scenario_protected_path_manual() {
+  open_pr protected-path-manual "e2e: protected path" "" "rules/e2e-marker.json"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+}
+
 # 'mai' passes the caller's contains() pre-filter for 'main', so the run reaches
 # the action, whose exact match must refuse it. No CI runs on 'mai', and none is
 # needed: the base gate comes first.

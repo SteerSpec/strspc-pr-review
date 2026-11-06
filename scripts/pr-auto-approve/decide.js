@@ -18,6 +18,10 @@
 //                               base, whose release-please PRs take the release
 //                               path; see release.js
 //   AUTO_APPROVE_RELEASE_AUTHOR — login that must have authored a release PR
+//   AUTO_APPROVE_PROTECTED_PATHS — comma-separated globs whose change stops
+//                               auto-approval (default: off); see evaluateProtectedPaths
+//   AUTO_APPROVE_PROTECTED_PATHS_MODE — approve, manual (default) or allowlist
+//   AUTO_APPROVE_PROTECTED_PATHS_ALLOWED — comma-separated logins for allowlist
 //
 // Usage (from actions/github-script):
 //   const decide = require('./scripts/pr-auto-approve/decide.js');

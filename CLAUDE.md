@@ -139,7 +139,7 @@ never checks out PR code.
 - Conventional Commits (`@commitlint/config-conventional`), enforced by the husky `commit-msg`
   hook, and for PR titles by the `commits` CI job (120 characters at most). Use `docs:`/`chore:` for
   non-code changes so release-please does not cut a release for them.
-- Docs are tested against the code: `docs.test.js` fails if `README.md`'s Inputs/Outputs tables
+- Docs are tested against the code: `docs.test.js` fails if the Inputs/Outputs tables in `docs/inputs.md`
   drift from `action.yml`; `skills.test.js` only checks that every input named in a
   `skills/*/SKILL.md` YAML snippet exists in `action.yml` (it does not cover outputs or require
   every input to be documented). When you change an input or output, update all three in the

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.3](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.2...v1.10.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* read a pending Copilot review request from GraphQL, not REST ([#183](https://github.com/SteerSpec/strspc-pr-review/issues/183)) ([5407418](https://github.com/SteerSpec/strspc-pr-review/commit/5407418c9c2857d36bff9698d8898c39c7c2492e))
+* withdraw the bot approval when a check fails on the approved head ([#179](https://github.com/SteerSpec/strspc-pr-review/issues/179)) ([26c9d88](https://github.com/SteerSpec/strspc-pr-review/commit/26c9d887e6467345c804e60f3b30f88cebeafad8))
+
 ## [1.10.2](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.1...v1.10.2) (2026-11-05)
 
 

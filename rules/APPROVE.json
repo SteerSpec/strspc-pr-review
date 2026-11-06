@@ -7,8 +7,8 @@
   },
   "rule_set": {
     "version": "0.1.46",
-    "timestamp": "2026-11-06T15:51:47Z",
-    "hash": "blake3:92e39fed43804e577522e341d112cd00442f23018802bbabe9e178d7bbeba529"
+    "timestamp": "2026-11-06T15:55:41Z",
+    "hash": "blake3:25c4ea962ef4ea7276a7bed73b81e54b558ec4e1fa7d038968977aad88f252c7"
   },
   "rules": [
     {
@@ -312,7 +312,7 @@
       "id": "APPROVE-034",
       "revision": 0,
       "state": "D",
-      "body": "Unless protected-paths-mode is approve, the action MUST NOT approve a pull request other than a promotion or release pull request when its changed files cannot be completely listed, or when it changes a file matching protected-paths and protected-paths-mode is not allowlist with every party to the pull request on protected-paths-allowed.",
+      "body": "When protected-paths is set and protected-paths-mode is not approve, the action MUST NOT approve a pull request other than a promotion or release pull request when its changed files cannot be completely listed, or when it changes a file matching protected-paths and protected-paths-mode is not allowlist with every party to the pull request on protected-paths-allowed.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-06",
       "supersedes": null

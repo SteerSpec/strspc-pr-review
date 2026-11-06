@@ -5100,6 +5100,26 @@ test('allowlist: a short commit list waits', async () => {
   assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison returned 3 of 5 commits`);
 });
 
+test('allowlist: repeated commits across pages do not stand in for unread ones', async () => {
+  // A page that ignores `page` answers the same commit every time.
+  const { result } = await runAllowlist('someone', {
+    compareImpl: (args) => ({
+      data: {
+        merge_base_commit: { sha: 'mb000001' },
+        files: [{ filename: 'rules/APPROVE.json' }],
+        total_commits: 2,
+        commits: args.per_page === 100 ? [commit('a1', 'someone')] : [],
+      },
+    }),
+  });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison returned 1 of 2 commits`);
+});
+
+test('allowlist: a comparison with no commits waits', async () => {
+  const { result } = await runAllowlist('someone', { totalCommits: 0 });
+  assert.equal(result.reason, `${ALLOWLIST_REFUSAL}the comparison reported no commits`);
+});
+
 test('allowlist: a file outside the globs reads no commits', async () => {
   const { result, calls } = await runAllowlist('alice', { changedFiles: ['src/a.js'] });
   assert.equal(result.decision, 'approved', result.reason);

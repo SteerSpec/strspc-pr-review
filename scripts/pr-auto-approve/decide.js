@@ -451,18 +451,22 @@ function commitParties(commits) {
 // The comparison's commits, page by page. Same SHA-addressed comparison as the
 // file list, so the commits are the evaluated head's; pulls.listCommits would
 // describe whatever the head is when it is called. The response is one object
-// per page, so github.paginate does not apply.
+// per page, so github.paginate does not apply. Commits are kept once per SHA:
+// a page repeated by the API must not stand in for one that was never read.
+// A page adding nothing new ends the loop.
 async function listCompareCommits({ github, owner, repo, baseRef, headSha, totalCommits }) {
-  const commits = [];
-  for (let page = 1; commits.length < totalCommits; page++) {
+  const bySha = new Map();
+  for (let page = 1; bySha.size < totalCommits; page++) {
     const { data } = await github.rest.repos.compareCommitsWithBasehead({
       owner, repo, basehead: `heads/${baseRef}...${headSha}`, per_page: 100, page,
     });
-    const batch = Array.isArray(data.commits) ? data.commits : [];
-    if (batch.length === 0) break;
-    commits.push(...batch);
+    const before = bySha.size;
+    for (const c of Array.isArray(data.commits) ? data.commits : []) {
+      if (c && c.sha && !bySha.has(c.sha)) bySha.set(c.sha, c);
+    }
+    if (bySha.size === before) break;
   }
-  return commits;
+  return [...bySha.values()];
 }
 
 // Why the parties of an allowlist PR do not all pass, or '' when they do. The
@@ -473,6 +477,8 @@ async function allowlistBlocker({ github, owner, repo, pr, totalCommits, allowed
   const notAllowed = (login) => `party '${login}' is not on protected-paths-allowed`;
   if (!allowed.has(author.toLowerCase())) return notAllowed(author);
   if (typeof totalCommits !== 'number') return 'the comparison did not report how many commits the PR has';
+  // A PR that changes a file has a commit; none means the response is wrong.
+  if (totalCommits < 1) return 'the comparison reported no commits';
   if (totalCommits > MAX_COMPARED_COMMITS) {
     return `the PR has ${totalCommits} commits, more than the ${MAX_COMPARED_COMMITS} that can be checked`;
   }

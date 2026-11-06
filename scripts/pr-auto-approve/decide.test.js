@@ -4990,6 +4990,25 @@ test('protected paths: a failed dismissal fails the job', async () => {
   assert.equal(failures.length, 1);
 });
 
+test('protected paths: a failed dismissal still tries every other bot approval', async () => {
+  const attempted = [];
+  const { result, failures } = await runProtected(MANUAL, {
+    changedFiles: ['rules/APPROVE.json'],
+    reviews: BOT_AND_HUMAN_APPROVALS,
+    patch: (github) => {
+      github.rest.pulls.dismissReview = async (a) => {
+        attempted.push(a.review_id);
+        if (a.review_id === 70) throw Object.assign(new Error('boom'), { status: 500 });
+        return { data: {} };
+      };
+    },
+  });
+  assert.deepEqual(attempted, [70, 71]);
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /^could not withdraw the stale approval \(review 70\): 500 boom$/);
+  assert.equal(failures.length, 1);
+});
+
 test('protected paths: a refused dismissal falls back to the workflow token', async () => {
   await withEnv(MANUAL, async () => {
     const { github, calls } = makeApprovableGithub({

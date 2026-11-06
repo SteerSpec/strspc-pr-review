@@ -1185,6 +1185,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
           `${err.status || ''} ${err.message || err}`.trim(),
       );
     }
+    // Every selected approval is tried before a failure is reported: one that
+    // cannot be dismissed must not leave the others standing.
+    let firstFailure = null;
     for (const r of reviews) {
       const stamped = stampedThreshold(r);
       const isBotApproval = r.user && r.user.login === BOT_LOGIN && r.state === 'APPROVED';
@@ -1196,13 +1199,12 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         });
         withdrew = true;
       } catch (err) {
-        return failClosed(
-          `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim(),
-        );
+        firstFailure = firstFailure ||
+          `could not withdraw the stale approval (review ${r.id}): ${err.status || ''} ${err.message || err}`.trim();
       }
     }
     if (withdrew) reviews = null;
-    return null;
+    return firstFailure ? failClosed(firstFailure) : null;
   };
 
   // A promotion's or release PR's approval rests on gates that a later head or

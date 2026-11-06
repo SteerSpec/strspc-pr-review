@@ -16,10 +16,10 @@
 
 ## What it will and won't do
 
-It needs no human click for the rubber stamp, and it is specific about when it **won't** approve: stale
-reviews, findings Copilot hid from the inline comments, a failing check, a changed commit.
+It approves without a human click. It skips when the review is stale, when Copilot hid findings from the
+inline comments, when a check fails, or when the commit changed.
 
-What it does is limited. It approves on Copilot's verdict, or on mechanical proof that a promotion or
+It approves on Copilot's verdict, or on mechanical proof that a promotion or
 release PR holds nothing new to review, and neither is a human reviewer. It never merges. Keep
 `CODEOWNERS` and required human reviewers on sensitive paths: the bot's approval fills a review slot and
 shouldn't be your only gate. See [Responsible use](docs/responsible-use.md).
@@ -36,16 +36,8 @@ shouldn't be your only gate. See [Responsible use](docs/responsible-use.md).
 
 There's nothing to install: the action runs on `github-script` (Node) inside the Action itself.
 
-Two tokens do different jobs, and the split matters:
-
-| Token | Used for | Needs |
-| ----- | -------- | ----- |
-| `bot-github-token` | Posting the approval, and dismissing the bot's own approval | `Pull requests: write` |
-| [`github-token`](docs/inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, and `pull-requests: write` for the review request and the dismissal fallback |
-
-Listing check runs needs the **`Checks`** permission, and fine-grained PATs can't be granted it. A PAT
-doing the reading works on public repositories, where check runs are readable without it, and fails
-with `403` **forever** on private ones. Keep `checks: read` in your caller's job permissions.
+Two tokens do different jobs, the bot PAT for the approval and the workflow's `GITHUB_TOKEN` for every
+read. Keep `checks: read` in your caller's job permissions. See [Tokens](docs/usage.md#tokens).
 
 ### Quick start
 

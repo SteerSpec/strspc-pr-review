@@ -40,6 +40,19 @@ jobs:
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
 
+### Tokens
+
+Two tokens do different jobs, and the split matters:
+
+| Token | Used for | Needs |
+| ----- | -------- | ----- |
+| `bot-github-token` | Posting the approval, and dismissing the bot's own approval | `Pull requests: write` |
+| [`github-token`](inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, and `pull-requests: write` for the review request and the dismissal fallback |
+
+Listing check runs needs the **`Checks`** permission, and fine-grained PATs can't be granted it. A PAT
+doing the reading works on public repositories, where check runs are readable without it, and fails
+with `403` on private ones, on every run. Keep `checks: read` in your caller's job permissions.
+
 ### Organization-wide configuration
 
 The template reads every setting from an Actions variable named `STRSPC_PR_AUTO_APPROVE_<INPUT>`. Set
@@ -173,8 +186,8 @@ finishes rather than skipping with `check still running`:
           wait-for-copilot-seconds: '600'   # or set STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS
 ```
 
-In SteerSpec's repositories Copilot now posts its review without registering a check run on the head
-SHA (see the `wait-for-copilot-seconds` description in
+At v1.10.2, the action's authors observed that Copilot posts its review without registering a check run
+on the head SHA in SteerSpec's repositories (see the `wait-for-copilot-seconds` description in
 [`action.yml` at v1.10.2](https://github.com/SteerSpec/strspc-pr-review/blob/v1.10.2/action.yml)). The
 same budget therefore also polls the PR's reviews until Copilot has reviewed the current head, or enough
 rounds exist for `rounds-threshold`. A run that starts seconds before the review lands waits for it

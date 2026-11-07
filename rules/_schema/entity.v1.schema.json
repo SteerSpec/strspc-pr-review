@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://steerspec.dev/schemas/entity/v1.json",
-  "x-steerspec-core-version": "1.20.0",
+  "x-steerspec-core-version": "1.21.0",
   "title": "SteerSpec Entity File Schema",
   "description": "Full schema for SteerSpec entity files. Generated from core rule JSON files by tools/build-schema.py. Do not edit manually.",
   "type": "object",
@@ -75,6 +75,14 @@
                 "minLength": 1
               },
               "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "realm": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+              },
+              "profile": {
                 "type": "string",
                 "minLength": 1
               }
@@ -180,6 +188,19 @@
                 "type": "null"
               }
             ]
+          },
+          "clause": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profiles": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "additionalProperties": false

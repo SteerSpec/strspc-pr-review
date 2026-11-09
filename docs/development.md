@@ -59,6 +59,7 @@ strspc-pr-review/
         ├── e2e-copilot.yml           # real-Copilot e2e tier, on promotions into main
         ├── pr-auto-approve.yml       # reusable workflow, deprecated, kept for compatibility
         ├── test-pr-auto-approve.yml  # CI: tests, actionlint, shellcheck, issue forms, PR title
+        ├── token-check.yml           # dispatch: fingerprints and probes the e2e tokens
         ├── release-please.yml        # semver tagging on main
         └── sync-marketplace-pin.yml  # moves the skills pin in SteerSpec/.claude on release
 ```

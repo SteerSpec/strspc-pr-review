@@ -28,7 +28,19 @@ shift
 (($# > 0)) || { echo "usage: token-check.sh <owner/repo> <ENV_NAME>..." >&2; exit 2; }
 API="${GITHUB_API_URL:-https://api.github.com}"
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# A probe review still standing when the script ends, by cancellation or any
+# other exit, is deleted here, so a cancelled run leaves nothing on the PR.
+PROBE_TOKEN="" PROBE_PATH=""
+# shellcheck disable=SC2329  # invoked by the trap
+cleanup() {
+  if [[ -n "$PROBE_PATH" ]]; then
+    call "$PROBE_TOKEN" DELETE "$PROBE_PATH" >/dev/null || true
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # One request with the token in a curl config on stdin, never in argv.
 # Prints the status; the body lands in $TMP/body, the headers in $TMP/headers.
@@ -104,7 +116,9 @@ for name in "$@"; do
     s=$(call "$value" POST "/repos/$REPO/pulls/$open/reviews" '{"body":"token-check probe, deleted at once"}')
     if [[ "$s" == 200 ]]; then
       id=$(jq -r .id "$TMP/body")
-      d=$(call "$value" DELETE "/repos/$REPO/pulls/$open/reviews/$id")
+      PROBE_TOKEN="$value" PROBE_PATH="/repos/$REPO/pulls/$open/reviews/$id"
+      d=$(call "$value" DELETE "$PROBE_PATH")
+      PROBE_TOKEN="" PROBE_PATH=""
       if [[ "$d" == 2?? ]]; then
         write="ok (pending review on #$open created and deleted)"
       else

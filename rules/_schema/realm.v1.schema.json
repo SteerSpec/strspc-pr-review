@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://steerspec.dev/schemas/realm/v1.json",
-  "x-steerspec-core-version": "1.23.0",
+  "x-steerspec-core-version": "1.24.0",
   "title": "SteerSpec Realm Manifest Schema",
   "description": "Schema for realm.json manifest files. Hand-maintained axiom.",
   "type": "object",

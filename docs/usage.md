@@ -182,8 +182,8 @@ unchanged fork-PR approval tier. One of the two runs is
 [public](https://github.com/SteerSpec/strspc-pr-review/actions/runs/30169448476).
 
 So the wait has to happen inside a run that a non-gated actor started. Set
-`wait-for-copilot-seconds`, and the run triggered by **CI completing** polls until Copilot's check
-finishes rather than skipping with `check still running`:
+`wait-for-copilot-seconds`, and a run started by a non-gated actor, such as **CI completing**, polls
+until Copilot's check finishes rather than skipping with `check still running`:
 
 ```yaml
       - uses: SteerSpec/strspc-pr-review@v1
@@ -200,6 +200,14 @@ same budget therefore also polls the PR's reviews until Copilot has reviewed the
 rounds exist for `rounds-threshold`. A run that starts seconds before the review lands waits for it
 instead of skipping with `no Copilot review yet`. After a wait the check runs are fetched again and the
 CI gates re-applied, so a rerun or a late check still blocks.
+
+The run that waits is not only the one started by CI completing. Any run that finds Copilot's check
+pending waits, and it also waits through every other check still running, CI included, even when
+Copilot finishes first. A failed check ends the wait at once. This matters because CI's `workflow_run`
+can fail to arrive. On [#198](https://github.com/SteerSpec/strspc-pr-review/issues/198), the only run
+started when `PR title` completed, skipped while CI ran, and nothing evaluated the PR again. A later
+run, such as CI's, cancels the waiting one through the concurrency group and takes over. On a private
+repo that means a run can bill minutes from the first completed workflow until CI finishes.
 
 It's opt-in (`0` by default) because waiting consumes billable Actions minutes on private repos, and
 it's free on public ones. Use `600`. In a sample of 422 Copilot reviews on 241 PRs across public and non-public

@@ -36,7 +36,7 @@ silently hides the exact runs that do the approving. Query the workflow instead.
 |---|---|
 | `no Copilot review yet` | Copilot hasn't reviewed. Confirm automatic Copilot review is enabled |
 | `no checks on head SHA yet` | No check runs exist. Either CI hasn't started, or the repo has no PR-time CI at all |
-| `check still running: <name>` | Waiting on that check. If it's `copilot-pull-request-reviewer` and never resolves, set `wait-for-copilot-seconds` |
+| `check still running: <name>` | Waiting on that check. If it's `copilot-pull-request-reviewer` and never resolves, set `wait-for-copilot-seconds`. The run log's `not waiting:` or `gave up waiting for` line says why this run didn't wait it out |
 | `failing check: <name> (<conclusion>)` | That check didn't pass. Approval requires all green, and an earlier bot approval of the PR is withdrawn. If `<name>` is `copilot-pull-request-reviewer`, see [§2a](#2a-copilots-check-is-red-but-its-review-is-clean) — the review can be clean and the check still red |
 | `latest Copilot review requested changes` | `CHANGES_REQUESTED` always blocks, regardless of round count |
 | `latest Copilot review has N comments` | Inline comments present and round count below `rounds-threshold` |
@@ -175,8 +175,15 @@ gh run view <id> --json attempt,startedAt,updatedAt,conclusion
 `attempt: 1` with a multi-minute span between `startedAt` and `updatedAt` means it waited and
 approved unattended. `attempt: 2` means a human re-ran it — the gap isn't closed yet.
 
-On timeout the run logs `gave up waiting for copilot-pull-request-reviewer after Ns` and skips
-exactly as before.
+The check-run wait logs one line saying what it did:
+
+- `waiting up to Ns for copilot-pull-request-reviewer and N other check(s): …` means it started.
+  Once started, it waits through every pending check, CI included, even after Copilot's finishes.
+- `not waiting: <reason>` means it was passed over. The reason is a failed check, Copilot's
+  check not pending (CI's completion has to re-trigger), `wait-for-copilot-seconds is 0`, or
+  `PR needs no Copilot review`.
+- `gave up waiting for <checks> after Ns` means the budget ran out. The run then skips exactly
+  as before.
 
 ## 5. PR merged but still shows REVIEW_REQUIRED
 

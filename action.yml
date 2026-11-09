@@ -176,7 +176,8 @@ inputs:
     default: '0'
     description: >-
       Seconds to wait for Copilot's review instead of skipping immediately:
-      for its check run when that is the LAST check still running, and, once
+      while its check run is pending, for it and every other check still
+      running (CI included, even when Copilot finishes first), and, once
       every check has completed, for the review itself (Copilot no longer
       registers a check run on the head). 0 (default) keeps the previous
       behaviour. Needed because Copilot cannot re-trigger the
@@ -189,10 +190,13 @@ inputs:
       Actions minutes on private repos (it is free on public ones); 600 is a
       sensible starting point: Copilot finished more than 300s after CI on 11%
       of the reviews sampled, and more than 600s after on 3%. The wait ends as
-      soon as Copilot finishes, so a longer budget costs minutes only when the
-      review is slow or never comes.
-      The wait is skipped when any other check is still running, since CI
-      finishing re-triggers this workflow anyway.
+      soon as Copilot and the checks it waits on finish, so a longer budget
+      costs minutes only when the review or a check is slow or never comes.
+      A failed check ends the wait at once. The run that waits need not be
+      the one started by CI completing, because that workflow_run event can
+      fail to arrive (#198). So on private repos a run may bill minutes from
+      the first completed workflow until CI finishes, unless a later run
+      cancels it through the concurrency group first.
   test-copilot-logins:
     required: false
     default: ''

@@ -354,8 +354,9 @@ check_tokens() {
   log "token check: https://github.com/$REPO/actions/runs/$id"
   gh run watch "$id" -R "$REPO" --exit-status >/dev/null 2>&1
   local rc=$?
-  gh run view "$id" -R "$REPO" --log | tr -d '\r' | grep -E '^.*\t.*\t[0-9TZ:.-]+ (Tokens checked|\|)' |
-    sed -E 's/^[^\t]*\t[^\t]*\t[0-9TZ:.-]+ //'
+  # Each log line is "job<TAB>step<TAB>timestamp text"; keep the script's table.
+  gh run view "$id" -R "$REPO" --log | tr -d '\r' | sed -E 's/^.*[0-9]Z //' |
+    grep -E '^(Tokens checked|\| )'
   return "$rc"
 }
 

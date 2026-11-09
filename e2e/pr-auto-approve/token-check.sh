@@ -13,11 +13,11 @@
 #       printf %s "$TOKEN" | shasum -a 256 | cut -c1-16
 #   - GET /user: whether GitHub accepts it, as whom, and its expiry
 #   - GET the repo and its pulls: whether it reaches the repo and can read PRs
-#   - a write probe on the repo's latest PR: it starts a PENDING review, the same
-#     endpoint the approval uses, and deletes it at once. 403 means the token
-#     lacks Pull requests: write there; GitHub's x-accepted-github-permissions
-#     header then says what it wanted. A 422 also passed the permission check:
-#     GitHub only validates the request once the token may make it.
+#   - a write probe. On an open PR it starts a PENDING review, the endpoint the
+#     approval uses, and deletes it at once. With no open PR it sends a no-op
+#     PATCH of the latest PR, which needs the same Pull requests: write. On a
+#     refusal, GitHub's x-accepted-github-permissions header says what it wanted.
+#     Any answer but success fails the check, a 422 included.
 #
 # Exits 1 when any token is missing or refused. Writes the table to
 # $GITHUB_STEP_SUMMARY too when set.
@@ -85,31 +85,47 @@ for name in "$@"; do
   [[ "$s" == 200 ]] || { repo="**$s** $(message)"; failed=1; }
 
   s=$(call "$value" GET "/repos/$REPO/pulls?state=all&per_page=1")
-  pr=""
+  latest=""
   if [[ "$s" == 200 ]]; then
-    pr=$(jq -r '.[0].number // empty' "$TMP/body")
-    read="200${pr:+ (latest #$pr)}"
+    latest=$(jq -r '.[0].number // empty' "$TMP/body")
+    read="200${latest:+ (latest #$latest)}"
   else
     read="**$s** $(message)"
     failed=1
   fi
 
-  if [[ -z "$pr" ]]; then
-    write="not probed: no PR to probe"
-  else
-    s=$(call "$value" POST "/repos/$REPO/pulls/$pr/reviews" '{"body":"token-check probe, deleted at once"}')
-    case "$s" in
-      200)
-        id=$(jq -r .id "$TMP/body")
-        d=$(call "$value" DELETE "/repos/$REPO/pulls/$pr/reviews/$id")
-        write="ok (pending review created and deleted: $d)"
-        ;;
-      422) write="ok (permission passed; 422 $(message))" ;;
-      *)
-        write="**$s** $(message); wanted: $(header x-accepted-github-permissions)"
+  # The review probe needs an OPEN PR: GitHub refuses a review on a closed one
+  # with a 422, which would say nothing about the token. Without one, a no-op
+  # PATCH of the latest PR asks for the same permission and changes nothing.
+  open=""
+  s=$(call "$value" GET "/repos/$REPO/pulls?state=open&per_page=1")
+  [[ "$s" == 200 ]] && open=$(jq -r '.[0].number // empty' "$TMP/body")
+  if [[ -n "$open" ]]; then
+    s=$(call "$value" POST "/repos/$REPO/pulls/$open/reviews" '{"body":"token-check probe, deleted at once"}')
+    if [[ "$s" == 200 ]]; then
+      id=$(jq -r .id "$TMP/body")
+      d=$(call "$value" DELETE "/repos/$REPO/pulls/$open/reviews/$id")
+      if [[ "$d" == 2?? ]]; then
+        write="ok (pending review on #$open created and deleted)"
+      else
+        write="ok, but **cleanup failed**: DELETE $d $(message); remove pending review $id on #$open"
         failed=1
-        ;;
-    esac
+      fi
+    else
+      write="**$s** $(message); wanted: $(header x-accepted-github-permissions)"
+      failed=1
+    fi
+  elif [[ -n "$latest" ]]; then
+    s=$(call "$value" PATCH "/repos/$REPO/pulls/$latest" '{}')
+    if [[ "$s" == 200 ]]; then
+      write="ok (no open PR: no-op PATCH of #$latest)"
+    else
+      write="**$s** $(message); wanted: $(header x-accepted-github-permissions)"
+      failed=1
+    fi
+  else
+    write="**not probed**: the repo has no PR"
+    failed=1
   fi
   rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write |")
 done

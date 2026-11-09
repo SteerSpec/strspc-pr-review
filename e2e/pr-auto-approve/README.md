@@ -163,7 +163,8 @@ reports:
 - its kind and length, and whether it carries whitespace
 - whom GitHub takes it for, and when it expires
 - whether it reaches the sandbox and reads its PRs
-- a write probe on the endpoint the approval uses: it starts a pending review and deletes it at once
+- a write probe: a pending review on an open PR, deleted at once, on the endpoint the approval uses. With no
+  open PR, it sends a no-op `PATCH` of the latest PR instead, which needs the same permission
 
 The sandbox is public, so the reads succeed even for a token with no grant at all. Only the write probe shows
 whether the org gave the token access.

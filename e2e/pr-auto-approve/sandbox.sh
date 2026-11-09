@@ -352,8 +352,9 @@ check_tokens() {
   done
   [[ -n "${id:-}" ]] || fail "the token check did not start in $REPO"
   log "token check: https://github.com/$REPO/actions/runs/$id"
-  gh run watch "$id" -R "$REPO" --exit-status >/dev/null 2>&1
-  local rc=$?
+  # set -e would end the script on a refused token, before the table prints.
+  local rc=0
+  gh run watch "$id" -R "$REPO" --exit-status >/dev/null 2>&1 || rc=$?
   # Each log line is "job<TAB>step<TAB>timestamp text"; keep the script's table.
   gh run view "$id" -R "$REPO" --log | tr -d '\r' | sed -E 's/^.*[0-9]Z //' |
     grep -E '^(Tokens checked|\| )'

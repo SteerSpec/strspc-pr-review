@@ -117,13 +117,22 @@ for name in "$@"; do
     if [[ "$s" == 200 ]]; then
       id=$(jq -r .id "$TMP/body")
       PROBE_TOKEN="$value" PROBE_PATH="/repos/$REPO/pulls/$open/reviews/$id"
-      d=$(call "$value" DELETE "$PROBE_PATH")
-      PROBE_TOKEN="" PROBE_PATH=""
+      # Forget the probe only once it is gone: until then the EXIT trap retries it.
+      for wait in 0 2 5; do
+        sleep "$wait"
+        d=$(call "$value" DELETE "$PROBE_PATH")
+        [[ "$d" == 2?? ]] && break
+      done
       if [[ "$d" == 2?? ]]; then
+        PROBE_TOKEN="" PROBE_PATH=""
         write="ok (pending review on #$open created and deleted)"
       else
         write="ok, but **cleanup failed**: DELETE $d $(message); remove pending review $id on #$open"
         failed=1
+        # Probing another token would overwrite the only record of this review.
+        rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write |")
+        rows+=("| (stopped) | | | | | | the remaining tokens were not checked |")
+        break
       fi
     else
       write="**$s** $(message); wanted: $(header x-accepted-github-permissions)"

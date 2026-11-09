@@ -215,18 +215,19 @@ SteerSpec repositories ([#158](https://github.com/SteerSpec/strspc-pr-review/pul
 [merge commit](https://github.com/SteerSpec/strspc-pr-review/commit/a25804c7bcaca82872747e81dc2e979de85745ad),
 merged 2026-11-02), Copilot
 finished a median 111s after the last CI check, but more than 300s after it on 11% of them and more than
-600s after on 3%. The wait ends as soon as Copilot finishes, so the larger budget costs minutes only when
-the review is slow or never comes.
+600s after on 3%. The wait ends as soon as Copilot and the checks it waits on finish, so the larger
+budget costs minutes only when the review or a check is slow or never comes.
 
 No budget covers a review that starts long after CI, such as a re-requested review or one Copilot
 picks up late: the next push or CI run re-evaluates the PR.
 
-Both waits are deliberately narrow:
+Both waits share one `wait-for-copilot-seconds` budget:
 
-- The check-run wait only runs while Copilot's check is the **last** one outstanding, so an unrelated
-  slow or hung job can't consume the timeout.
-- The review wait only starts once every check has completed, and ends as soon as Copilot has
-  reviewed the current head.
+- The check-run wait starts only while Copilot's check is pending. Once started, it also waits for
+  every other pending check, so a slow or hung job can use up the budget. A failed check ends it at
+  once.
+- The review wait only starts once every check has completed, and it gets whatever budget the
+  check-run wait left. It ends as soon as Copilot has reviewed the current head.
 
 On expiry the action logs a warning and skips as before. A Copilot check that finishes red is still
 caught by the normal failing-check gate, and the gates are re-applied after the review wait.

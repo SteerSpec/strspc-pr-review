@@ -34,7 +34,7 @@ Every input of the action, its default, and its outputs. Back to the [README](..
 | ----- | ------- | ----------- |
 | `request-copilot-review` | `false` | When `true`, the action requests the Copilot review itself and skips types set to `0` in `rounds-by-type`. Turn off the ruleset's automatic Copilot review first. Needs `pull_request_target` with the `edited` type in the caller. Failures only warn |
 | `copilot-error-retries` | `0` | Times to re-request Copilot's review on the same commit when Copilot reviewed nothing because its run errored or the requester was out of quota. Such reviews never approve or count as rounds. `0` disables, and failures only warn |
-| `wait-for-copilot-seconds` | `0` | Seconds to wait for Copilot's review (its check run when it's the **last** check still running, or the review itself when no check run exists) instead of skipping. `0` disables. See [Copilot cannot re-trigger the workflow](usage.md#copilot-cannot-re-trigger-the-workflow) |
+| `wait-for-copilot-seconds` | `0` | Seconds to wait for Copilot's review instead of skipping: while its check run is pending, for that and every other running check, and otherwise for the review itself when no check run exists. A failed check ends the wait. `0` disables. See [Copilot cannot re-trigger the workflow](usage.md#copilot-cannot-re-trigger-the-workflow) |
 
 ### Tokens
 

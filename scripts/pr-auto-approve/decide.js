@@ -730,30 +730,57 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   return [...latestByKey.values()];
 }
 
-// Poll until Copilot's review check completes or the deadline passes, and
+// Poll until every check completes, one fails, or the deadline passes, and
 // return the freshest check-run list — the caller re-applies the failing and
 // pending gates to whatever comes back, so a Copilot check that ends in failure
 // is still caught.
 //
-// Deliberately narrow: it waits only while Copilot's check is the LAST one
-// outstanding. If anything else is still running, CI completing will re-trigger
-// this workflow anyway, so waiting here would burn minutes to reach the same
-// place. That also stops an unrelated slow or hung job from consuming the
-// entire timeout.
+// The wait starts only when Copilot's check is pending, but once started it
+// covers every pending check, including CI after Copilot has finished. CI's
+// completion is supposed to re-trigger this workflow, but that workflow_run
+// event can fail to arrive (strspc-pr-review#198: a PR whose only run started on
+// an early workflow, skipped while CI ran, and was never evaluated again). So
+// the earliest run waits. A later run, such as CI's, cancels it through the
+// caller's concurrency group and takes over. Cost: on private repos, a waiting
+// run bills its minutes from the first completed workflow until the checks
+// finish, a later run supersedes it, or the budget runs out. A failed check
+// ends the wait at once. Remaining gap: when Copilot registers no check run,
+// nothing starts this wait and the PR still relies on CI's event.
 async function waitForCopilotCheck({
-  github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
+  github, context, core, owner, repo, headSha, checkRuns, waitSeconds, deadline, sleep,
 }) {
-  const deadline = Date.now() + waitSeconds * 1000;
+  const names = (runs) => runs.map((cr) => cr.name).join(', ');
   let current = checkRuns;
+  let waiting = false;
   while (true) {
     // A check has already failed, so approval is impossible whatever Copilot
     // says. Return now rather than spending the timeout to reach the same skip.
-    if (current.some(isFailedCheck)) return current;
+    const failed = current.find(isFailedCheck);
+    if (failed) {
+      core.info(`pr-auto-approve: ${waiting ? 'wait ended' : 'not waiting'}: check failed: ${failed.name}`);
+      return current;
+    }
     const pending = current.filter((cr) => cr.status !== 'completed');
-    if (pending.length !== 1 || !COPILOT_CHECK_NAMES.has(pending[0].name)) return current;
+    if (pending.length === 0) return current;
+    if (!waiting) {
+      const copilot = pending.filter((cr) => COPILOT_CHECK_NAMES.has(cr.name));
+      const others = pending.filter((cr) => !COPILOT_CHECK_NAMES.has(cr.name));
+      if (copilot.length === 0) {
+        core.info(
+          `pr-auto-approve: not waiting: Copilot's check is not pending; ` +
+            `${others.length} other check(s) pending: ${names(others)}`,
+        );
+        return current;
+      }
+      core.info(
+        `pr-auto-approve: waiting up to ${waitSeconds}s for ${names(copilot)}` +
+          (others.length ? ` and ${others.length} other check(s): ${names(others)}` : ''),
+      );
+      waiting = true;
+    }
     if (Date.now() >= deadline) {
       core.warning(
-        `pr-auto-approve: gave up waiting for ${pending[0].name} after ${waitSeconds}s`,
+        `pr-auto-approve: gave up waiting for ${names(pending)} after ${waitSeconds}s`,
       );
       return current;
     }
@@ -1386,15 +1413,22 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // `action_required` pending manual approval (verified 2026-08-18: the same
   // workflow, event and actor ran clean on 2026-07-25 and is gated now). That
   // leaves this run — started by CI completing, so owned by an ungated actor —
-  // as the only place the wait can happen. Opt-in: see getCopilotWaitSeconds.
+  // as the only place the wait can happen. And because CI's own workflow_run can
+  // fail to arrive too (#198), the wait is not left to CI's run alone: whichever
+  // run first sees Copilot's check pending waits through the other checks as
+  // well. Opt-in: see getCopilotWaitSeconds.
   const waitSeconds = getCopilotWaitSeconds();
   // One budget for both waits below: the check-run wait (when Copilot still
   // registers a check) and the review wait (when it does not).
   const waitDeadline = Date.now() + waitSeconds * 1000;
   if (waitSeconds > 0 && !copilotOptional) {
     checkRuns = await waitForCopilotCheck({
-      github, context, core, owner, repo, headSha, checkRuns, waitSeconds, sleep,
+      github, context, core, owner, repo, headSha, checkRuns, waitSeconds, deadline: waitDeadline, sleep,
     });
+  } else if (checkRuns.some((cr) => cr.status !== 'completed')) {
+    core.info(
+      `pr-auto-approve: not waiting: ${copilotOptional ? 'PR needs no Copilot review' : 'wait-for-copilot-seconds is 0'}`,
+    );
   }
 
   // The CI gates, applied here and again after any review wait below: a

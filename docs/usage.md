@@ -182,8 +182,8 @@ unchanged fork-PR approval tier. One of the two runs is
 [public](https://github.com/SteerSpec/strspc-pr-review/actions/runs/30169448476).
 
 So the wait has to happen inside a run that a non-gated actor started. Set
-`wait-for-copilot-seconds`, and the run triggered by **CI completing** polls until Copilot's check
-finishes rather than skipping with `check still running`:
+`wait-for-copilot-seconds`, and a run started by a non-gated actor, such as **CI completing**, polls
+until Copilot's check finishes rather than skipping with `check still running`:
 
 ```yaml
       - uses: SteerSpec/strspc-pr-review@v1
@@ -201,24 +201,33 @@ rounds exist for `rounds-threshold`. A run that starts seconds before the review
 instead of skipping with `no Copilot review yet`. After a wait the check runs are fetched again and the
 CI gates re-applied, so a rerun or a late check still blocks.
 
+The run that waits is not only the one started by CI completing. Any run that finds Copilot's check
+pending waits, and it also waits through every other check still running, CI included, even when
+Copilot finishes first. A failed check ends the wait at once. This matters because CI's `workflow_run`
+can fail to arrive. On [#198](https://github.com/SteerSpec/strspc-pr-review/issues/198), the only run
+started when `PR title` completed, skipped while CI ran, and nothing evaluated the PR again. A later
+run, such as CI's, cancels the waiting one through the concurrency group and takes over. On a private
+repo that means a run can bill minutes from the first completed workflow until CI finishes.
+
 It's opt-in (`0` by default) because waiting consumes billable Actions minutes on private repos, and
 it's free on public ones. Use `600`. In a sample of 422 Copilot reviews on 241 PRs across public and non-public
 SteerSpec repositories ([#158](https://github.com/SteerSpec/strspc-pr-review/pull/158),
 [merge commit](https://github.com/SteerSpec/strspc-pr-review/commit/a25804c7bcaca82872747e81dc2e979de85745ad),
 merged 2026-11-02), Copilot
 finished a median 111s after the last CI check, but more than 300s after it on 11% of them and more than
-600s after on 3%. The wait ends as soon as Copilot finishes, so the larger budget costs minutes only when
-the review is slow or never comes.
+600s after on 3%. The wait ends as soon as Copilot and the checks it waits on finish, so the larger
+budget costs minutes only when the review or a check is slow or never comes.
 
 No budget covers a review that starts long after CI, such as a re-requested review or one Copilot
 picks up late: the next push or CI run re-evaluates the PR.
 
-Both waits are deliberately narrow:
+Both waits share one `wait-for-copilot-seconds` budget:
 
-- The check-run wait only runs while Copilot's check is the **last** one outstanding, so an unrelated
-  slow or hung job can't consume the timeout.
-- The review wait only starts once every check has completed, and ends as soon as Copilot has
-  reviewed the current head.
+- The check-run wait starts only while Copilot's check is pending. Once started, it also waits for
+  every other pending check, so a slow or hung job can use up the budget. A failed check ends it at
+  once.
+- The review wait only starts once every check has completed, and it gets whatever budget the
+  check-run wait left. It ends as soon as Copilot has reviewed the current head.
 
 On expiry the action logs a warning and skips as before. A Copilot check that finishes red is still
 caught by the normal failing-check gate, and the gates are re-applied after the review wait.

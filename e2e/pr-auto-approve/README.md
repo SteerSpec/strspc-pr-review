@@ -228,8 +228,9 @@ the implementation against itself. `oracle.test.js` holds the two against each o
 
 The summary table says which run approved and whether it waited for Copilot's review. That is the proof for
 `wait-for-copilot-seconds`: when Copilot reviewed after CI finished, only a run that waited could approve, so
-`real-clean` fails if the approval came without one. When Copilot was first, nothing had to wait, and the table
-says the wait was not needed. It also says when no review reached `copilot-clean`, because then the approval
+`real-clean` fails if the approval came without one. When Copilot was first, the run started by CI's completion
+usually approves without waiting, and the table says the wait was not needed. An earlier run can still have
+waited through CI (#198), but CI's run normally cancels it first. It also says when no review reached `copilot-clean`, because then the approval
 path went untested against real Copilot.
 
 The probe accepts a finding's own collapsed block nested inside a section, recognised by its severity icon.

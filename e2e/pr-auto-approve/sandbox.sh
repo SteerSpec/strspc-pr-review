@@ -7,6 +7,9 @@
 #   sandbox.sh [--real] sync <sha>   put the action at <sha> under test
 #   sandbox.sh [--real] reset        close PRs and restore the fixture files
 #   sandbox.sh [--real] status       show what is under test
+#   sandbox.sh [--real] check-tokens <sha>
+#                                    run token-check.sh at <sha> inside the testbed,
+#                                    against the bot secret its caller sees
 #
 # Without --real this is the synthetic tier's sandbox, where the harness fakes
 # Copilot. With --real it is the real-Copilot testbed: Copilot reviews every push,
@@ -307,6 +310,57 @@ ref_or_none() { # a 404's error body goes to stdout, so print only on success
   out=$(gh api "repos/$REPO/git/ref/$1" -q .object.sha 2>/dev/null) && echo "$out" || echo none
 }
 
+# Runs token-check.sh at $1 inside the testbed, so it sees the bot secret as the
+# caller does: here an org secret of the testbed's org shadows nothing, and a repo
+# secret of the same name shadows the org's. Dispatch only; it reads no PR input.
+token_check_workflow() { # sha
+  cat <<EOF
+name: Token check
+
+# Managed by SteerSpec/strspc-pr-review e2e/pr-auto-approve/sandbox.sh check-tokens.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: $ACTION_REPO
+          ref: $1
+          persist-credentials: false
+      - env:
+          $BOT_SECRET: \${{ secrets.$BOT_SECRET }}
+        run: e2e/pr-auto-approve/token-check.sh "\$GITHUB_REPOSITORY" $BOT_SECRET
+EOF
+}
+
+check_tokens() {
+  local sha="${1:?usage: sandbox.sh check-tokens <sha>}" since id
+  put .github/workflows/token-check.yml "$(token_check_workflow "$sha")"
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  gh workflow run token-check.yml -R "$REPO" --ref main >/dev/null
+  for _ in $(seq 1 30); do
+    id=$(gh run list -R "$REPO" -w token-check.yml -e workflow_dispatch -L 5 \
+      --json databaseId,createdAt --jq "[.[] | select(.createdAt >= \"$since\")][0].databaseId // empty")
+    [[ -n "$id" ]] && break
+    sleep 2
+  done
+  [[ -n "${id:-}" ]] || fail "the token check did not start in $REPO"
+  log "token check: https://github.com/$REPO/actions/runs/$id"
+  # set -e would end the script on a refused token, before the table prints.
+  local rc=0
+  gh run watch "$id" -R "$REPO" --exit-status >/dev/null 2>&1 || rc=$?
+  # Each log line is "job<TAB>step<TAB>timestamp text"; keep the script's table.
+  gh run view "$id" -R "$REPO" --log | tr -d '\r' | sed -E 's/^.*[0-9]Z //' |
+    grep -E '^(Tokens checked|\| )'
+  return "$rc"
+}
+
 status() {
   log "repo: $REPO"
   raw "$REPO" "$WORKFLOW" main | grep -E '^[[:space:]]+- uses: ' | sed 's/^ */    /'
@@ -320,5 +374,6 @@ case "${1:-}" in
   sync) sync "${2:-}" ;;
   reset) reset_prs; if $REAL; then restore_library; else restore; fi ;;
   status) status ;;
-  *) fail "usage: $0 [--real] setup|sync <sha>|reset|status" ;;
+  check-tokens) check_tokens "${2:-}" ;;
+  *) fail "usage: $0 [--real] setup|sync <sha>|reset|status|check-tokens <sha>" ;;
 esac

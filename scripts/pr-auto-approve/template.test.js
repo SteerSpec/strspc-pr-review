@@ -111,13 +111,13 @@ test('the job if: base-branch pre-filter reads the same variable as base-branch'
   assert.doesNotMatch(src, /^\s+branches:/m);
 });
 
-test('the README names every variable the template reads', () => {
-  const readme = read('README.md');
+test('docs/usage.md names every variable the template reads', () => {
+  const readme = read('docs/usage.md');
   const used = new Set(
     [...read('templates/pr-auto-approve.yml').matchAll(/vars\.(STRSPC_PR_AUTO_APPROVE_[A-Z_]+)/g)].map((m) => m[1]),
   );
   const missing = [...used].filter((v) => !readme.includes(`\`${v}\``));
-  assert.deepEqual(missing, [], `variables missing from README: ${missing.join(', ')}`);
+  assert.deepEqual(missing, [], `variables missing from docs/usage.md: ${missing.join(', ')}`);
 });
 
 // Inputs can now come from Actions variables, so an expression interpolated into

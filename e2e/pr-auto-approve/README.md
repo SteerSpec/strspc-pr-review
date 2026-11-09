@@ -155,6 +155,35 @@ Both secrets are fine-grained tokens limited to the e2e repos:
 **The sandbox's caller approves with `BOT_TOKEN_SANDBOX`, never an org secret.** It runs the commit under
 test, so a PR's action code can read that token. If it reached production, a PR could approve itself.
 
+### Checking the tokens
+
+After you rotate a token, check it before an e2e run spends two hours on the problem. For each secret, the check
+reports:
+- a SHA-256 fingerprint, never the value
+- its kind and length, and whether it carries whitespace
+- whom GitHub takes it for, and when it expires
+- whether it reaches the sandbox and reads its PRs
+- a write probe: a pending review on an open PR, deleted at once, on the endpoint the approval uses. With no
+  open PR, it sends a no-op `PATCH` of the latest PR instead, which needs the same permission
+
+The sandbox is public, so the reads succeed even for a token with no grant at all. Only the write probe shows
+whether the org gave the token access.
+
+```bash
+# the copy the sandbox's caller approves with, checked inside the sandbox (about 30s)
+e2e/pr-auto-approve/sandbox.sh check-tokens "$(git rev-parse HEAD)"
+# this repo's copies: the Token check workflow
+gh workflow run token-check.yml -R SteerSpec/strspc-pr-review
+# the fingerprint of the token you meant to store
+printf %s "$TOKEN" | shasum -a 256 | cut -c1-16
+```
+
+`check-tokens` commits a dispatch-only workflow to the sandbox's `main`, so don't run it during an e2e run.
+A write probe that fails shows GitHub's `x-accepted-github-permissions` header. `pull_requests=write` there,
+from a token whose settings page lists Pull requests: write, means the org has not approved it. Look in the
+org's **Settings → Personal access tokens** for a pending request, or for an active token whose grant does not
+include the sandbox.
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -228,8 +257,9 @@ the implementation against itself. `oracle.test.js` holds the two against each o
 
 The summary table says which run approved and whether it waited for Copilot's review. That is the proof for
 `wait-for-copilot-seconds`: when Copilot reviewed after CI finished, only a run that waited could approve, so
-`real-clean` fails if the approval came without one. When Copilot was first, nothing had to wait, and the table
-says the wait was not needed. It also says when no review reached `copilot-clean`, because then the approval
+`real-clean` fails if the approval came without one. When Copilot was first, the run started by CI's completion
+usually approves without waiting, and the table says the wait was not needed. An earlier run can still have
+waited through CI (#198), but CI's run normally cancels it first. It also says when no review reached `copilot-clean`, because then the approval
 path went untested against real Copilot.
 
 The probe accepts a finding's own collapsed block nested inside a section, recognised by its severity icon.

@@ -1,0 +1,30 @@
+name: Token check
+
+# Reports whether this repo's e2e tokens are present, which token each one is
+# (a SHA-256 fingerprint, never the value) and what each may do in the sandbox,
+# including a write probe on the endpoint the approval uses. Run it after
+# rotating a token, before an e2e run spends two hours finding out.
+#
+# This only sees THIS repo's copies. The sandbox's caller approves with the copy
+# visible to the sandbox repo (a testbed-multi-org secret), which only a workflow
+# there can read: `e2e/pr-auto-approve/sandbox.sh check-tokens <sha>` runs the
+# same script inside the sandbox.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the tokens
+        env:
+          BOT_TOKEN_SANDBOX: ${{ secrets.BOT_TOKEN_SANDBOX }}
+          E2E_ADMIN_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+        run: e2e/pr-auto-approve/token-check.sh testbed-multi-org/strspc-pr-review-sandbox BOT_TOKEN_SANDBOX E2E_ADMIN_TOKEN

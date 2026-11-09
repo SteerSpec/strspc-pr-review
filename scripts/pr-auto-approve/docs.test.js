@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Guards README.md against drifting from action.yml.
+// Guards README.md and docs/ against drifting from action.yml.
 //
 // This exists because the drift already happened and shipped: `github-token`
 // was added in v1.6.0 and went undocumented for two releases, while four other
@@ -33,18 +33,25 @@ function declared(section, next) {
   );
 }
 
+// The Inputs and Outputs tables live in docs/inputs.md; the README is a hub.
+const INPUTS_DOC = 'docs/inputs.md';
+
 // Leading-pipe rows of the table under a heading: `| \`name\` | ... |`.
+// With no `next` heading the section runs to the end of the file.
 function documented(heading, next) {
-  const src = read('README.md');
-  const start = src.indexOf(`## ${heading}`);
-  const end = src.indexOf(`## ${next}`);
-  assert.ok(start !== -1 && end > start, `README must have ## ${heading} then ## ${next}`);
+  const src = read(INPUTS_DOC);
+  const start = src.indexOf(`\n## ${heading}\n`);
+  const end = next === undefined ? src.length : src.indexOf(`\n## ${next}\n`);
+  assert.ok(
+    start !== -1 && end > start,
+    `${INPUTS_DOC} must have ## ${heading}${next === undefined ? '' : ` then ## ${next}`}`,
+  );
   return new Set(
     [...src.slice(start, end).matchAll(/^\| `([a-z0-9_-]+)`/gm)].map((m) => m[1]),
   );
 }
 
-test('every action.yml input has a row in the README Inputs table', () => {
+test('every action.yml input has a row in the docs/inputs.md Inputs table', () => {
   const missing = [...declared('inputs', 'outputs')].filter(
     (i) => !documented('Inputs', 'Outputs').has(i),
   );
@@ -53,15 +60,15 @@ test('every action.yml input has a row in the README Inputs table', () => {
 
 // The other direction matters too: a row for an input that no longer exists
 // sends people to configure something that is silently ignored.
-test('the README Inputs table names no input action.yml does not declare', () => {
+test('the docs/inputs.md Inputs table names no input action.yml does not declare', () => {
   const inputs = declared('inputs', 'outputs');
   const phantom = [...documented('Inputs', 'Outputs')].filter((i) => !inputs.has(i));
   assert.deepEqual(phantom, [], `documented but not declared: ${phantom.join(', ')}`);
 });
 
-test('every action.yml output has a row in the README Outputs table', () => {
+test('every action.yml output has a row in the docs/inputs.md Outputs table', () => {
   const missing = [...declared('outputs', 'runs')].filter(
-    (o) => !documented('Outputs', 'Troubleshooting').has(o),
+    (o) => !documented('Outputs').has(o),
   );
   assert.deepEqual(missing, [], `undocumented outputs: ${missing.join(', ')}`);
 });
@@ -75,9 +82,9 @@ test('every action.yml output has a row in the README Outputs table', () => {
 // outside what this file claims to do.
 test('Prerequisites states the permission the bot PAT actually needs', () => {
   const src = read('README.md');
-  const start = src.indexOf('## Prerequisites');
-  const end = src.indexOf('## Quick start');
-  assert.ok(start !== -1 && end > start, 'README must have ## Prerequisites then ## Quick start');
+  const start = src.indexOf('### Prerequisites');
+  const end = src.indexOf('### Quick start');
+  assert.ok(start !== -1 && end > start, 'README must have ### Prerequisites then ### Quick start');
   // Matched without the backticks: the requirement is that Prerequisites names
   // the permission, not that it is formatted as code. Requiring the markup
   // would fail a purely cosmetic edit while the meaning still held -- the same
@@ -91,16 +98,16 @@ test('Prerequisites states the permission the bot PAT actually needs', () => {
 
 // The test count in Development drifted twice in two days: 62 was stale for
 // several releases, and 87 went stale inside the very PR that corrected it.
-test('the README test count matches the suite', () => {
+test('the docs/development.md test count matches the suite', () => {
   const declared = fs
     .readdirSync(__dirname)
     .filter((f) => f.endsWith('.test.js'))
     .reduce((n, f) => n + (fs.readFileSync(path.join(__dirname, f), 'utf8').match(/^test\(/gm) || []).length, 0);
-  const stated = /(\d+) unit tests/.exec(read('README.md'));
-  assert.ok(stated, 'README Development section must state a test count');
+  const stated = /(\d+) unit tests/.exec(read('docs/development.md'));
+  assert.ok(stated, 'docs/development.md must state a test count');
   assert.equal(
     Number(stated[1]),
     declared,
-    `README says ${stated[1]} unit tests; the suite declares ${declared}`,
+    `docs/development.md says ${stated[1]} unit tests; the suite declares ${declared}`,
   );
 });

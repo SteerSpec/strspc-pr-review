@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.11.0...v1.11.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **pr-auto-approve:** keep waiting for Copilot while other checks are pending ([#199](https://github.com/SteerSpec/strspc-pr-review/issues/199)) ([ebc4769](https://github.com/SteerSpec/strspc-pr-review/commit/ebc476902486bc4c893f8fb8322a962cfab499c9))
+
 ## [1.11.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.10.3...v1.11.0) (2026-11-06)
 
 

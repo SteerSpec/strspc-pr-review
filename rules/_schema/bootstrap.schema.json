@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://steerspec.dev/schemas/entity/bootstrap.json",
-  "x-steerspec-core-version": "1.24.0",
+  "x-steerspec-core-version": "1.25.0",
   "title": "SteerSpec Entity File — Bootstrap Schema",
   "description": "Minimal structural validation for entity files. No business logic. This is the axiom.",
   "type": "object",

@@ -5546,7 +5546,7 @@ test('sweep: evaluates at most 30 PRs, and says so', async () => {
   assert.equal(gets.length, 30);
   assert.equal(gets.includes(31), false);
   assert.equal(result.reason, 'sweep: 30 PR(s) evaluated, none approved');
-  assert.ok(core.warnings.some((w) => /more than 30 PRs to evaluate; evaluating the 30 most recently opened$/.test(w)),
+  assert.ok(core.warnings.some((w) => /evaluating the 30 most recently opened PRs; any older ones are not evaluated$/.test(w)),
     core.warnings.join('\n'));
 });
 
@@ -5597,4 +5597,28 @@ test('sweep: lists the next page when the first holds too few candidates', async
   assert.ok(gets.length > 0 && gets.every((n) => n === 101), String(gets));
   assert.match(result.reason, /^sweep approved #101 /);
   assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 101 open PR(s) to evaluate'), core.lines.join('\n'));
+});
+
+test('sweep: exactly 30 candidates on one short page is no warning', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 30 }, (_, i) => openPr(i + 1));
+  const { github, gets } = makeSweepGithub(open, { reviews: [] });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.equal(gets.length, 30);
+  assert.deepEqual(core.warnings, []);
+});
+
+test('sweep: a full page that fills the cap is not followed by another', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 30 }, (_, i) => openPr(i + 1)),
+    ...Array.from({ length: 70 }, (_, i) => openPr(i + 31, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.includes(101), false);
+  assert.equal(core.warnings.length, 1);
 });

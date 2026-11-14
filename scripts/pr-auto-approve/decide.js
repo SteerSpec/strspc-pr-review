@@ -1006,6 +1006,8 @@ async function sweep({ github, botGithub = github, context, core, sleep = defaul
   const PER_PAGE = 100;
   let listed = 0;
   let candidates = [];
+  // Whether the listing stopped with pages left, so more PRs may be open.
+  let unlisted = false;
   try {
     for (let page = 1; ; page++) {
       const { data } = await github.rest.pulls.list({
@@ -1013,17 +1015,21 @@ async function sweep({ github, botGithub = github, context, core, sleep = defaul
       });
       listed += data.length;
       candidates.push(...data.filter(admit));
-      if (data.length < PER_PAGE || candidates.length > SWEEP_MAX_PRS) break;
+      if (data.length < PER_PAGE) break;
+      if (candidates.length >= SWEEP_MAX_PRS) {
+        unlisted = true;
+        break;
+      }
     }
   } catch (err) {
     core.error(`pr-auto-approve sweep: could not list the open PRs: ${err.status || ''} ${err.message || err}`);
     return finish('skip', `sweep failed: could not list the open PRs: ${err.status || ''} ${err.message || err}`
       .replace(/\s+/g, ' ').trim());
   }
-  if (candidates.length > SWEEP_MAX_PRS) {
-    // The count stops where the listing did, so it is a lower bound.
-    core.warning(`pr-auto-approve: sweep: more than ${SWEEP_MAX_PRS} PRs to evaluate; ` +
-      `evaluating the ${SWEEP_MAX_PRS} most recently opened`);
+  if (candidates.length > SWEEP_MAX_PRS || (candidates.length === SWEEP_MAX_PRS && unlisted)) {
+    // The listing stops once the cap is filled, so the total is not known.
+    core.warning(`pr-auto-approve: sweep: evaluating the ${SWEEP_MAX_PRS} most recently opened PRs; ` +
+      'any older ones are not evaluated');
     candidates = candidates.slice(0, SWEEP_MAX_PRS);
   } else {
     core.info(`pr-auto-approve: sweep: ${candidates.length} of ${listed} open PR(s) to evaluate`);

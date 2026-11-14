@@ -169,6 +169,12 @@ reports:
 The sandbox is public, so the reads succeed even for a token with no grant at all. Only the write probe shows
 whether the org gave the token access.
 
+The Token check workflow also names each token's owner: `E2E_ADMIN_TOKEN` must belong to `pleberre` and
+`BOT_TOKEN_SANDBOX` to `cnslr-bt`, and a token created under the other account fails even with every
+permission. For `E2E_ADMIN_TOKEN` it adds an Actions write probe, a dispatch of the caller on a ref that
+cannot exist: a 422 means the token may start workflows and nothing ran, a 403 names the missing
+permission.
+
 ```bash
 # the copy the sandbox's caller approves with, checked inside the sandbox (about 30s)
 e2e/pr-auto-approve/sandbox.sh check-tokens "$(git rev-parse HEAD)"

@@ -265,4 +265,5 @@ Cost: one short run per tick, about a minute billed on a private repo, or some 7
 the template's hourly cron. Each open PR adds a dozen or so API calls. GitHub runs schedules only from
 the default branch's copy of the workflow, can start them late, and disables them in a public repo
 with no activity for 60 days. To keep only the manual run, delete `schedule:`. Start one with
-`gh workflow run <caller>.yml`.
+`gh workflow run <caller>.yml`. The job `if:` admits a dispatch of the default branch only, so a sweep
+always runs the reviewed definition, never a branch's copy.

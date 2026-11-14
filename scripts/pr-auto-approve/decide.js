@@ -958,7 +958,117 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
   }
 }
 
+// Events that carry no pull request and ask for a sweep of the open ones.
+const SWEEP_EVENTS = new Set(['schedule', 'workflow_dispatch']);
+// Most PRs one sweep evaluates, most recently opened first (APPROVE-036). Each costs a dozen or so API
+// calls, and a repo with more open PRs than this has bigger problems.
+const SWEEP_MAX_PRS = 30;
+
+function isSweep(context) {
+  return SWEEP_EVENTS.has(context.eventName) && !(context.payload && context.payload.pull_request);
+}
+
 async function decide(args) {
+  return isSweep(args.context) ? sweep(args) : evaluate(args);
+}
+
+// The fallback for an event that never arrived. A PR is approved by a run that
+// one of its own events starts, and GitHub does not always deliver one: CI's
+// workflow_run can go missing (#198), and a run Copilot's review triggers is
+// held at action_required. Nothing then evaluates the PR again until someone
+// pushes. A sweep evaluates every open PR the caller's `if:` would admit, each
+// as if its own event had arrived, so the rules are the per-PR rules unchanged.
+// It never waits for Copilot: a PR still in progress has events to come.
+async function sweep({ github, botGithub = github, context, core, sleep = defaultSleep }) {
+  // An empty bot-login fails the job before any PR is read, exactly as it does
+  // on an event run (APPROVE-012).
+  if (!getBotLogin()) return evaluate({ github, botGithub, context, core, sleep });
+
+  const finish = (decision, reason, prOutputs = {}) => {
+    core.info(`pr-auto-approve sweep decision=${decision} reason=${reason}`);
+    core.setOutput('decision', decision);
+    core.setOutput('reason', reason);
+    for (const key of ['pr_url', 'pr_number', 'pr_title', 'pr_author']) {
+      core.setOutput(key, prOutputs[key] || '');
+    }
+    return { decision, reason };
+  };
+
+  const { owner, repo } = context.repo;
+  const BASE_BRANCHES = getBaseBranches();
+  let open;
+  try {
+    open = await github.paginate(github.rest.pulls.list, {
+      owner, repo, state: 'open', sort: 'created', direction: 'desc', per_page: 100,
+    });
+  } catch (err) {
+    core.error(`pr-auto-approve sweep: could not list the open PRs: ${err.status || ''} ${err.message || err}`);
+    return finish('skip', `sweep failed: could not list the open PRs: ${err.status || ''} ${err.message || err}`
+      .replace(/\s+/g, ' ').trim());
+  }
+  // The gates evaluate() would apply first, applied here so a PR that can never
+  // qualify leaves no decision line behind.
+  let candidates = open.filter((p) => !p.draft &&
+    p.base && BASE_BRANCHES.has(p.base.ref) &&
+    p.head && p.head.repo && p.head.repo.full_name === `${owner}/${repo}`);
+  core.info(`pr-auto-approve: sweep: ${candidates.length} of ${open.length} open PR(s) to evaluate`);
+  if (candidates.length > SWEEP_MAX_PRS) {
+    core.warning(
+      `pr-auto-approve: sweep: evaluating the ${SWEEP_MAX_PRS} most recently opened of ${candidates.length} PRs`,
+    );
+    candidates = candidates.slice(0, SWEEP_MAX_PRS);
+  }
+
+  const results = [];
+  for (const item of candidates) {
+    // Each PR writes its outputs into its own record; the step's outputs are the
+    // sweep's, set once at the end. Everything else (logs, summary, setFailed)
+    // goes through as it would on an event run.
+    const outputs = {};
+    const prCore = Object.assign(Object.create(core), {
+      setOutput: (key, value) => { outputs[key] = value; },
+    });
+    let result;
+    try {
+      // The PR as a pull_request event would carry it, not the list's abridged copy.
+      const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: item.number });
+      const prContext = {
+        eventName: context.eventName,
+        payload: { pull_request: pr },
+        repo: context.repo,
+        runId: context.runId,
+        job: context.job,
+      };
+      result = await evaluate({ github, botGithub, context: prContext, core: prCore, sleep, waitSeconds: 0 });
+    } catch (err) {
+      // evaluate() catches its own failures, so only the read above lands here.
+      // One unreadable PR must not stop the others.
+      const reason = `evaluation failed: ${err.status || ''} ${err.message || err}`.replace(/\s+/g, ' ').trim();
+      core.error(`pr-auto-approve pr=${item.number} decision=skip reason=${reason}`);
+      result = { decision: 'skip', reason };
+    }
+    results.push({ number: item.number, ...result, outputs });
+  }
+
+  const approved = results.filter((r) => r.decision === 'approved');
+  const errored = results.filter((r) => r.decision === 'error');
+  if (approved.length > 0) {
+    const rest = results.length - approved.length;
+    return finish(
+      'approved',
+      `sweep approved ${approved.map((r) => `#${r.number} (${r.reason})`).join(', ')}` +
+        (rest > 0 ? `; ${rest} other PR(s) not approved` : ''),
+      // The notification links one PR; the reason names them all.
+      approved[0].outputs,
+    );
+  }
+  if (errored.length > 0) {
+    return finish('error', `sweep: ${errored.map((r) => `#${r.number} (${r.reason})`).join(', ')}`, errored[0].outputs);
+  }
+  return finish('skip', `sweep: ${results.length} PR(s) evaluated, none approved`);
+}
+
+async function evaluate(args) {
   try {
     return await decideInner(args);
   } catch (err) {
@@ -1000,7 +1110,9 @@ async function decide(args) {
   }
 }
 
-async function decideInner({ github, botGithub = github, context, core, sleep = defaultSleep }) {
+async function decideInner({
+  github, botGithub = github, context, core, sleep = defaultSleep, waitSeconds: waitOverride,
+}) {
   const BOT_LOGIN = getBotLogin();
   const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
@@ -1417,7 +1529,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // fail to arrive too (#198), the wait is not left to CI's run alone: whichever
   // run first sees Copilot's check pending waits through the other checks as
   // well. Opt-in: see getCopilotWaitSeconds.
-  const waitSeconds = getCopilotWaitSeconds();
+  // A sweep passes 0: it evaluates PRs one after another, so a wait on one would
+  // hold up every PR after it.
+  const waitSeconds = waitOverride === undefined ? getCopilotWaitSeconds() : waitOverride;
   // One budget for both waits below: the check-run wait (when Copilot still
   // registers a check) and the review wait (when it does not).
   const waitDeadline = Date.now() + waitSeconds * 1000;
@@ -1426,9 +1540,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       github, context, core, owner, repo, headSha, checkRuns, waitSeconds, deadline: waitDeadline, sleep,
     });
   } else if (checkRuns.some((cr) => cr.status !== 'completed')) {
-    core.info(
-      `pr-auto-approve: not waiting: ${copilotOptional ? 'PR needs no Copilot review' : 'wait-for-copilot-seconds is 0'}`,
-    );
+    let why = 'wait-for-copilot-seconds is 0';
+    if (copilotOptional) why = 'PR needs no Copilot review';
+    else if (waitOverride !== undefined) why = 'a sweep does not wait';
+    core.info(`pr-auto-approve: not waiting: ${why}`);
   }
 
   // The CI gates, applied here and again after any review wait below: a

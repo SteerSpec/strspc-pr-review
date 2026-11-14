@@ -173,6 +173,15 @@ completed, the run waits for the review itself, since Copilot no longer register
 the head SHA. Free on public repos. On private ones the wait bills Actions minutes, possibly from
 the first completed workflow until CI finishes, which is why it defaults to `0`.
 
+### The sweep: `schedule:` and `workflow_dispatch:`
+
+Keep both triggers from the template. Each tick evaluates every open PR under the same rules, without
+waiting, so a PR whose re-trigger was lost (a missing `workflow_run`, a review run held at
+`action_required`) is approved within the hour instead of never. The job `if:` and the concurrency
+group in the template already handle both events. Keep them, including `cancel-in-progress` as an
+expression, so that a sweep never cancels a PR's own run. On private repos each tick bills about a
+minute. Change the cron, or delete `schedule:` to keep only the manual run.
+
 ### The first PR cannot approve itself
 
 Because `pull_request_target` reads the definition from the default branch, the PR that *adds* this

@@ -301,5 +301,9 @@ variable; and a whitespace-only `BASE_BRANCH` proves `main` still passes the job
 - Scenarios are sequential, because a profile changes repo variables and one sandbox serves them all.
 - `base-near-match` creates and deletes a base branch named `mai`, so that name is reserved for the
   harness: the scenario refuses to start while it exists, and `sandbox.sh reset` deletes it.
+- `sweep-approves` dispatches the caller, which sweeps every open PR in the sandbox, and changes
+  `ROUNDS_BY_TYPE` mid-scenario. Its profile is its own, so the next scenario's profile resets it.
+  `sandbox.sh sync` drops the template's `schedule:` from both testbeds' callers, so no hourly sweep
+  adds a decision a scenario did not cause.
 - `changes-requested` opens its PR as the bot, because GitHub refuses REQUEST_CHANGES from a PR's author.
 - Timeouts apply per assertion. Adjust `E2E_TIMEOUT` for slow CI environments.

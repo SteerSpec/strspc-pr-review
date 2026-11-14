@@ -383,8 +383,12 @@ runs:
           --data "$payload" \
           https://slack.com/api/chat.postMessage
 
+    # Not for a sweep: it runs on a schedule, and a PR parked for a human would
+    # post the same skip every time.
     - name: Notify Slack (skipped)
-      if: steps.evaluate.outputs.decision == 'skip' && inputs.slack-bot-token != ''
+      if: >-
+        steps.evaluate.outputs.decision == 'skip' && inputs.slack-bot-token != '' &&
+        github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
       continue-on-error: true
       shell: bash
       env:

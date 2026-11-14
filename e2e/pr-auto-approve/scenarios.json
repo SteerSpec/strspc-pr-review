@@ -29,6 +29,10 @@
       "PROTECTED_PATHS": "rules/**",
       "PROTECTED_PATHS_MODE": "manual"
     },
+    "sweep": {
+      "BASE_BRANCH": "main",
+      "ROUNDS_BY_TYPE": "default:3"
+    },
     "routes": {
       "BASE_BRANCH": "develop,main",
       "ROUNDS_BY_TYPE": "chore:0,default:3",
@@ -162,6 +166,19 @@
       "decision": "none",
       "inputs": [],
       "rules": []
+    },
+    {
+      "name": "sweep-approves",
+      "group": "core",
+      "profile": "sweep",
+      "decision": "approved",
+      "reason": "^1-rounds \\(",
+      "inputs": [
+        "rounds-by-type"
+      ],
+      "rules": [
+        "APPROVE-036"
+      ]
     },
     {
       "name": "ci-failing",

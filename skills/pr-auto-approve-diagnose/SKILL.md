@@ -185,6 +185,22 @@ The check-run wait logs one line saying what it did:
 - `gave up waiting for <checks> after Ns` means the budget ran out. The run then skips exactly
   as before.
 
+### Sweep runs
+
+A `schedule` or `workflow_dispatch` run is a sweep. It evaluates every open PR and logs:
+
+- `pr-auto-approve: sweep: N of M open PR(s) to evaluate`. Drafts, forks and other bases are not
+  counted and leave no line.
+- One `pr-auto-approve pr=<n> decision=… reason=…` line per PR, the same line an event run logs.
+  `not waiting: a sweep does not wait` means a check was still pending, and the PR's own events
+  will evaluate it.
+- `pr-auto-approve sweep decision=… reason=…` at the end, the sweep's outputs.
+
+A PR stuck unapproved with green checks and a clean review should be approved by the next sweep. If
+it isn't, its own `pr=<n>` line in the sweep's log gives the reason. If no sweep ran, check that the
+caller has the `schedule:` trigger on its default branch. GitHub disables schedules in a public repo
+with no activity for 60 days.
+
 ## 5. PR merged but still shows REVIEW_REQUIRED
 
 The bot never approved; it was merged by a bypass. Check:

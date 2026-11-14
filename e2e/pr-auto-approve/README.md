@@ -149,7 +149,7 @@ Both secrets are fine-grained tokens limited to the e2e repos:
 
 | Secret | Stored on | Owner | Permissions |
 |---|---|---|---|
-| `E2E_ADMIN_TOKEN` | `SteerSpec/strspc-pr-review` | The enterprise owner, on the sandbox and the real-Copilot testbed | Contents, Pull requests, Variables and Workflows read and write; Actions and Secrets read |
+| `E2E_ADMIN_TOKEN` | `SteerSpec/strspc-pr-review` | The enterprise owner, on the sandbox and the real-Copilot testbed | Actions, Contents, Pull requests, Variables and Workflows read and write; Secrets read. Actions write starts the caller for `sweep-approves`. |
 | `BOT_TOKEN_SANDBOX` | `SteerSpec/strspc-pr-review` and the sandbox | The approver | Contents and Pull requests read and write |
 
 **The sandbox's caller approves with `BOT_TOKEN_SANDBOX`, never an org secret.** It runs the commit under

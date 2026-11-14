@@ -42,6 +42,12 @@ Every input of the action, its default, and its outputs. Back to the [README](..
 | ----- | ------- | ----------- |
 | `github-token` | `${{ github.token }}` | Token used for every **read**: check runs, the PR, its reviews. The default is what makes this work on private repos, see [Prerequisites](../README.md#prerequisites) |
 
+### Status comment
+
+| Input | Default | Description |
+| ----- | ------- | ----------- |
+| `comment-on-skip` | `off` | `blocking` explains a skip a person must act on in one PR comment: a protected path waiting for a human, a failing check, a Copilot review that requested changes, or a promotion or release PR whose proof failed. Posted with `bot-github-token` and edited in place when the reason changes; other skips and approvals only update an existing comment. An unknown value means `off`. See [The status comment](usage.md#the-status-comment) |
+
 ### Slack
 
 | Input | Default | Description |

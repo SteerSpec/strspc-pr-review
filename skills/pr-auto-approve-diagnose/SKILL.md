@@ -201,6 +201,15 @@ it isn't, its own `pr=<n>` line in the sweep's log gives the reason. If no sweep
 caller has the `schedule:` trigger on its default branch. GitHub disables schedules in a public repo
 with no activity for 60 days.
 
+### The status comment
+
+With `comment-on-skip: blocking`, a PR waiting on a person carries one bot comment starting
+`pr-auto-approve will not approve this PR:` with the reason. The run log says
+`pr-auto-approve: status comment created on #<n>` (or `updated`, `deduplicated`). A comment that never
+appears means the skip was not one a person must act on, the caller lacks the `comment-on-skip` `with:`
+line, or the post failed: look for `could not update the status comment on #<n>`. A 403 there means
+`bot-github-token` lacks `Pull requests: write`.
+
 ## 5. PR merged but still shows REVIEW_REQUIRED
 
 The bot never approved; it was merged by a bypass. Check:

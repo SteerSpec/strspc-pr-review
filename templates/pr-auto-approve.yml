@@ -291,6 +291,11 @@ jobs:
           # ("unable to review"), e.g. 2. 0 (default) = off.
           copilot-error-retries: ${{ vars.STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES }}
 
+          # 'blocking' explains a skip a person must act on (a protected path, a
+          # failing check, requested changes) in one PR comment, edited in place
+          # as the reason changes. Default 'off'. Posted with bot-github-token.
+          comment-on-skip: ${{ vars.STRSPC_PR_AUTO_APPROVE_COMMENT_ON_SKIP }}
+
           # Optional: Slack bot token for approval/skip/error notifications.
           # Remove this line to disable Slack notifications.
           # slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}

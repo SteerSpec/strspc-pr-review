@@ -267,3 +267,28 @@ the default branch's copy of the workflow, can start them late, and disables the
 with no activity for 60 days. To keep only the manual run, delete `schedule:`. Start one with
 `gh workflow run <caller>.yml`. The job `if:` admits a dispatch of the default branch only, so a sweep
 always runs the reviewed definition, never a branch's copy.
+
+### The status comment
+
+A skip writes its reason to the run log and leaves the `auto-approve` check green, so a PR that waits
+for a person looks no different from one that is about to be approved. With `comment-on-skip: blocking`
+(the template reads `STRSPC_PR_AUTO_APPROVE_COMMENT_ON_SKIP`), the action also writes the reason into
+the PR conversation when someone has to act before it can approve:
+
+- a protected path changed and `protected-paths-mode` waits for a human,
+- a check failed,
+- Copilot's latest review requested changes,
+- a promotion or release PR failed its proof.
+
+The comment is one per PR. The action finds it again by a hidden marker and by its author, the bot, and
+edits it only when the reason changes. An edit sends no notification, so the runs that follow every
+review, check and push stay quiet. A skip that clears on its own, such as a check still running or no
+Copilot review yet, and an approval only update a comment that already exists, so the comment stays
+true once the blocker is gone and no PR gets one it never needed. Copilot's inline comments do not count
+as blocking: Copilot's own review already says so in the conversation.
+
+The bot posts it with `bot-github-token`, whose `Pull requests: write` covers PR comments. The reason
+goes in a code span, so a file or branch name cannot mention anyone or add links in the bot's voice.
+Two runs of one PR can overlap, a sweep and an event run for example, and both create a comment; the
+next run keeps the oldest and deletes the others. A failure to comment only logs a warning and never
+changes the decision.

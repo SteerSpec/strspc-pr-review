@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.46",
-    "timestamp": "2026-11-06T15:55:41Z",
-    "hash": "blake3:25c4ea962ef4ea7276a7bed73b81e54b558ec4e1fa7d038968977aad88f252c7"
+    "version": "0.1.47",
+    "timestamp": "2026-11-14T10:15:11Z",
+    "hash": "blake3:01d864db2243aed5a91d78fe004ad0c8589b7663d4761caccf88d84384bfd38f"
   },
   "rules": [
     {
@@ -324,6 +324,15 @@
       "body": "When the action declines a pull request under protected-paths, it MUST withdraw every approval by bot-login on that pull request.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-06",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-036",
+      "revision": 0,
+      "state": "D",
+      "body": "On a schedule or a manual dispatch, the action MUST evaluate the open pull requests into a configured base branch, most recently opened first and up to a stated limit, under the same rules as a run started by an event of each pull request.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-14",
       "supersedes": null
     }
   ],

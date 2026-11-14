@@ -233,6 +233,26 @@ scenario_draft() {
   expect_outcome "$PR_NUM"
 }
 
+# Needs the `sweep` profile. A PR that no event re-evaluates: the run its review
+# started skipped it, and what makes it approvable, a variable, fires no event.
+# Only the sweep can approve it, and the decision must come from the dispatched
+# run. The profile's ROUNDS_BY_TYPE is reset by the next scenario's profile.
+scenario_sweep_approves() {
+  open_pr sweep "e2e: sweep-approves"
+  wait_for_ci "$PR_NUM"
+  post_review_with_comment "$PR_NUM" "round 1"
+  wait_decision "$PR_NUM" skip "^latest Copilot review has 1 comments" "$SCENARIO_SINCE" \
+    || fail "$SCENARIO: the review's run did not skip"
+  local since
+  since=$(now_utc)
+  gh variable set STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE -R "$REPO" --body "default:1"
+  gh workflow run "$CALLER_WORKFLOW" -R "$REPO" --ref main >/dev/null
+  wait_caller_run main workflow_dispatch "$since" || fail "$SCENARIO: no dispatched run succeeded"
+  wait_decision "$PR_NUM" approved "$(scenario_field "$SCENARIO" reason)" "$since" \
+    || fail "$SCENARIO: the sweep did not approve"
+  expect_outcome "$PR_NUM" "$since"
+}
+
 # The next four need the `types` profile. They post NO Copilot review: type 0
 # means none is required.
 

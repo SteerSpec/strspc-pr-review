@@ -5321,3 +5321,304 @@ test('allowlist: a pass still needs the normal rules', async () => {
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /^failing check: /);
 });
+
+// -- Sweep ------------------------------------------------------------------
+// A schedule or workflow_dispatch run carries no PR: it evaluates every open PR
+// the caller's `if:` would admit, as if that PR's own event had arrived.
+
+function openPr(number, overrides = {}) {
+  return {
+    number,
+    draft: false,
+    title: `fix: change ${number}`,
+    user: { login: 'someone' },
+    html_url: `https://github.com/axeptio/test-only-repo/pull/${number}`,
+    head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+    base: { ref: 'develop' },
+    ...overrides,
+  };
+}
+
+function makeSweepGithub(open, { getPrImpl, listImpl, ...opts } = {}) {
+  const gets = [];
+  const made = makeApprovableGithub({
+    ...opts,
+    getPrImpl: async (n) => {
+      gets.push(n);
+      if (getPrImpl) return getPrImpl(n);
+      return { data: open.find((p) => p.number === n) };
+    },
+  });
+  made.github.rest.pulls.list = listImpl || (async () => ({ data: open }));
+  return { ...made, gets };
+}
+
+function makeSweepContext(eventName = 'schedule') {
+  return { eventName, runId: 111, job: 'auto-approve', repo: { owner: 'axeptio', repo: 'test-only-repo' }, payload: {} };
+}
+
+function sweepCore() {
+  const core = makeCore();
+  core.lines = [];
+  core.info = (m) => core.lines.push(m);
+  core.error = (m) => core.lines.push(m);
+  return core;
+}
+
+for (const eventName of ['schedule', 'workflow_dispatch']) {
+  test(`sweep (${eventName}): approves an open PR no event re-evaluated`, async () => {
+    const core = sweepCore();
+    const { github, calls } = makeSweepGithub([openPr(42)]);
+    const result = await decide({ github, context: makeSweepContext(eventName), core });
+    assert.equal(result.decision, 'approved');
+    assert.match(result.reason, /^sweep approved #42 \(copilot-clean /);
+    assert.equal(calls.createReview.length, 1);
+    assert.equal(calls.createReview[0].pull_number, 42);
+    assert.equal(core.outputs.decision, 'approved');
+    assert.equal(core.outputs.pr_number, '42');
+    assert.ok(core.lines.some((l) => /^pr-auto-approve pr=42 decision=approved /.test(l)), core.lines.join('\n'));
+  });
+}
+
+test('sweep: a PR in the event payload is evaluated alone, not swept', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42), openPr(43)]);
+  const ctx = { ...makeSweepContext('workflow_dispatch'), payload: { pull_request: openPr(42) } };
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'approved');
+  assert.doesNotMatch(result.reason, /^sweep/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('sweep: skips drafts, forks and other bases without evaluating them', async () => {
+  const core = sweepCore();
+  const { github, gets, calls } = makeSweepGithub([
+    openPr(1, { draft: true }),
+    openPr(2, { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } }),
+    openPr(3, { base: { ref: 'main' } }),
+    openPr(4, { head: { sha: 'deadbeef', repo: null } }),
+    openPr(5),
+  ]);
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(gets.filter((n) => n !== 5), []);
+  assert.equal(result.decision, 'approved');
+  assert.match(result.reason, /^sweep approved #5 /);
+  assert.equal(calls.createReview.length, 1);
+  assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 5 open PR(s) to evaluate'), core.lines.join('\n'));
+  assert.ok(!core.lines.some((l) => /^pr-auto-approve pr=[1-4] /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: never waits for Copilot, whatever wait-for-copilot-seconds says', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '600';
+  try {
+    const core = sweepCore();
+    let fetches = 0;
+    const { github } = makeSweepGithub([openPr(42)], {
+      checkRuns: [
+        DEFAULT_CHECK_RUNS[0],
+        { name: 'copilot-pull-request-reviewer', status: 'in_progress', app: { id: 1 }, started_at: '2026-04-15T10:01:00Z' },
+      ],
+    });
+    const listForRef = github.rest.checks.listForRef;
+    github.rest.checks.listForRef = async (a) => { fetches++; return listForRef(a); };
+    const sleep = async () => { throw new Error('a sweep must not sleep'); };
+    const result = await decide({ github, context: makeSweepContext(), core, sleep });
+    assert.equal(result.decision, 'skip');
+    assert.equal(fetches, 1);
+    assert.ok(core.lines.includes('pr-auto-approve: not waiting: a sweep does not wait'), core.lines.join('\n'));
+    assert.ok(core.lines.some((l) => /^pr-auto-approve pr=42 decision=skip reason=check still running/.test(l)),
+      core.lines.join('\n'));
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+  }
+});
+
+test('sweep: a PR that cannot be read does not stop the others', async () => {
+  const core = sweepCore();
+  const open = [openPr(41), openPr(42)];
+  const { github, calls } = makeSweepGithub(open, {
+    getPrImpl: async (n) => {
+      if (n === 41) throw Object.assign(new Error('Server Error'), { status: 502 });
+      return { data: open[1] };
+    },
+  });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'approved');
+  assert.equal(result.reason.startsWith('sweep approved #42 '), true, result.reason);
+  assert.match(result.reason, /; 1 other PR\(s\) not approved$/);
+  assert.equal(calls.createReview.length, 1);
+  assert.ok(core.lines.includes('pr-auto-approve pr=41 decision=skip reason=evaluation failed: 502 Server Error'),
+    core.lines.join('\n'));
+});
+
+test('sweep: nothing approved is a skip with empty PR outputs', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42), openPr(43)], { reviews: [] });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep: 2 PR(s) evaluated, none approved');
+  assert.equal(calls.createReview.length, 0);
+  assert.equal(core.outputs.pr_number, '');
+  assert.equal(core.outputs.pr_url, '');
+  assert.ok(core.lines.some((l) => /^pr-auto-approve pr=43 decision=skip /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: no open PR is a skip', async () => {
+  const core = sweepCore();
+  const { github } = makeSweepGithub([]);
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep: 0 PR(s) evaluated, none approved');
+});
+
+test('sweep: the open PRs cannot be listed: skip, never approve', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42)], {
+    listImpl: async () => { throw Object.assign(new Error('Bad credentials'), { status: 401 }); },
+  });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep failed: could not list the open PRs: 401 Bad credentials');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('sweep: an empty bot-login fails the job before any PR is read', async () => {
+  const saved = process.env.AUTO_APPROVE_BOT_LOGIN;
+  process.env.AUTO_APPROVE_BOT_LOGIN = '';
+  try {
+    const core = sweepCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github, gets } = makeSweepGithub([openPr(42)]);
+    let listed = false;
+    github.rest.pulls.list = async () => { listed = true; return { data: [] }; };
+    const result = await decide({ github, context: makeSweepContext(), core });
+    assert.equal(result.decision, 'error');
+    assert.equal(failures.length, 1);
+    assert.equal(listed, false);
+    assert.deepEqual(gets, []);
+  } finally {
+    process.env.AUTO_APPROVE_BOT_LOGIN = saved;
+  }
+});
+
+test('sweep: a PR whose evaluation fails the job still fails it, and the rest are evaluated', async () => {
+  const core = sweepCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const open = [openPr(41), openPr(42)];
+  const { github, calls } = makeSweepGithub(open);
+  // A stale relaxed-threshold approval on #41 that cannot be listed: APPROVE-014
+  // fails the job. Simulated by a listReviews that throws for #41 only.
+  const listReviews = github.rest.pulls.listReviews;
+  github.rest.pulls.listReviews = async (a) => {
+    if (a.pull_number === 41) throw Object.assign(new Error('Server Error'), { status: 500 });
+    return listReviews(a);
+  };
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(calls.createReview.length, 1);
+  assert.equal(calls.createReview[0].pull_number, 42);
+  assert.equal(result.decision, 'approved');
+  assert.equal(failures.length, 1);
+  assert.ok(core.lines.some((l) => /^pr-auto-approve pr=41 decision=error /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: an error and no approval makes the sweep an error', async () => {
+  const core = sweepCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const { github, calls } = makeSweepGithub([openPr(41)]);
+  github.rest.pulls.listReviews = async () => { throw Object.assign(new Error('Server Error'), { status: 500 }); };
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /^sweep: #41 \(could not list the PR's reviews/);
+  assert.equal(core.outputs.decision, 'error');
+  assert.equal(core.outputs.pr_number, '41');
+  assert.equal(failures.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('sweep: evaluates at most 30 PRs, and says so', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 31 }, (_, i) => openPr(i + 1));
+  const { github, gets } = makeSweepGithub(open, { reviews: [] });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(gets.length, 30);
+  assert.equal(gets.includes(31), false);
+  assert.equal(result.reason, 'sweep: 30 PR(s) evaluated, none approved');
+  assert.ok(core.warnings.some((w) => /evaluating the 30 most recently opened PRs; any older ones are not evaluated$/.test(w)),
+    core.warnings.join('\n'));
+});
+
+// The e2e sweep-approves scenario's shape: a lowered default, a code file, one
+// Copilot review with a comment. A default is not a type relaxed below it, so
+// copilot-optional-paths does not gate it.
+test('sweep: a lowered default threshold approves a code PR after one commented round', async () => {
+  await withRoundsByType('default:1', async () => {
+    const core = sweepCore();
+    const { github, calls } = makeSweepGithub([openPr(42, { title: 'e2e: sweep-approves' })], {
+      changedFiles: ['e2e-marker.txt'],
+      reviewComments: { 1: [{ id: 9, body: 'nit from e2e' }] },
+    });
+    const result = await decide({ github, context: makeSweepContext('workflow_dispatch'), core });
+    assert.equal(result.decision, 'approved', result.reason);
+    assert.match(result.reason, /^sweep approved #42 \(1-rounds \(/);
+    assert.equal(calls.createReview.length, 1);
+  });
+});
+
+function pagedList(open, pages) {
+  return async ({ page = 1, per_page: perPage = 30 }) => {
+    pages.push(page);
+    return { data: open.slice((page - 1) * perPage, page * perPage) };
+  };
+}
+
+test('sweep: stops listing once the cap is filled', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 250 }, (_, i) => openPr(i + 1));
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.length, 30);
+});
+
+test('sweep: lists the next page when the first holds too few candidates', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 100 }, (_, i) => openPr(i + 1, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { listImpl: pagedList(open, pages) });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1, 2]);
+  assert.ok(gets.length > 0 && gets.every((n) => n === 101), String(gets));
+  assert.match(result.reason, /^sweep approved #101 /);
+  assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 101 open PR(s) to evaluate'), core.lines.join('\n'));
+});
+
+test('sweep: exactly 30 candidates on one short page is no warning', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 30 }, (_, i) => openPr(i + 1));
+  const { github, gets } = makeSweepGithub(open, { reviews: [] });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.equal(gets.length, 30);
+  assert.deepEqual(core.warnings, []);
+});
+
+test('sweep: a full page that fills the cap is not followed by another', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 30 }, (_, i) => openPr(i + 1)),
+    ...Array.from({ length: 70 }, (_, i) => openPr(i + 31, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.includes(101), false);
+  assert.equal(core.warnings.length, 1);
+});

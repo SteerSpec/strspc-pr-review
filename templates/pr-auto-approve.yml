@@ -82,6 +82,23 @@ on:
   workflow_run:
     workflows: ['CI']
     types: [completed]
+  # THE SWEEP: the fallback for an event that never arrives. GitHub does not
+  # always deliver the event that should re-evaluate a PR: CI's workflow_run can
+  # go missing, and a run that Copilot's review starts is held at
+  # 'action_required'. A PR left that way waits until someone pushes. On each
+  # tick, and on a manual run from the Actions tab, the action evaluates every
+  # open PR the job if: below would admit, under the same rules, one after
+  # another and without waiting for Copilot. It posts to Slack only when it
+  # approves.
+  #
+  # Cost: one short run per tick, about a minute billed on a private repo (some
+  # 720 minutes a month at this hourly cron), plus a dozen API calls per open PR.
+  # GitHub runs schedules from the default branch's copy of this file only, can
+  # start them late, and disables them in a public repo with no activity for 60
+  # days. Delete `schedule:` to keep only the manual run.
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
 
 jobs:
   auto-approve:
@@ -92,15 +109,19 @@ jobs:
       checks: read
     # Serialize runs per PR to avoid race conditions.
     # For check_run events the PR number comes from check_run.pull_requests[0].number.
+    # Sweeps share one group of their own and are never cancelled: a sweep stopped
+    # halfway leaves the rest of its PRs for the next tick, and a sweep cannot
+    # cancel a PR's own run, which may be waiting for Copilot.
     concurrency:
       group: >-
         pr-auto-approve-${{ github.repository }}-${{
           github.event.pull_request.number ||
           github.event.check_run.pull_requests[0].number ||
           github.event.workflow_run.pull_requests[0].number ||
+          ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'sweep') ||
           github.run_id
         }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
     # Skip fork PRs and draft PRs. The fork guard is REQUIRED, not optional:
     # with pull_request_target the run would otherwise get your secrets while
     # associated with a fork. Handle both pull_request_target and
@@ -141,6 +162,15 @@ jobs:
     # the head unchanged) must reach the action so it can withdraw the approval,
     # and the action, not this filter, decides what counts as failing (a timeout
     # or a startup failure does).
+    # The schedule and workflow_dispatch branch pairs with THE SWEEP in `on:`. The
+    # action applies the base-branch, draft and fork gates to each PR itself.
+    # A schedule always runs the default branch's copy of this file, but a
+    # dispatch runs the copy on whatever ref it names, so only a dispatch of the
+    # default branch is admitted: a sweep runs the definition that was reviewed
+    # and merged, never a branch's. That stops a mistaken or stale dispatch. It
+    # is not a secret boundary on its own: whoever can push a branch can already
+    # run a workflow of their own with this repo's secrets (`on: push`), so keep
+    # the bot token's scope at Pull requests: write.
     if: >-
       (
         (
@@ -165,6 +195,11 @@ jobs:
         github.event.workflow_run.conclusion != 'skipped' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.pull_requests[0] != null
+      ) ||
+      github.event_name == 'schedule' ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       )
     steps:
       # @v1 tracks the latest v1.x release. Pin an exact @vX.Y.Z if you prefer

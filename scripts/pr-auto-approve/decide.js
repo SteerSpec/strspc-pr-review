@@ -996,27 +996,37 @@ async function sweep({ github, botGithub = github, context, core, sleep = defaul
 
   const { owner, repo } = context.repo;
   const BASE_BRANCHES = getBaseBranches();
-  let open;
+  // The gates evaluate() would apply first, applied here so a PR that can never
+  // qualify leaves no decision line behind.
+  const admit = (p) => !p.draft &&
+    p.base && BASE_BRANCHES.has(p.base.ref) &&
+    p.head && p.head.repo && p.head.repo.full_name === `${owner}/${repo}`;
+  // Page by page, and no further than the cap needs: a repo with hundreds of
+  // open PRs must not cost hundreds of list calls every tick.
+  const PER_PAGE = 100;
+  let listed = 0;
+  let candidates = [];
   try {
-    open = await github.paginate(github.rest.pulls.list, {
-      owner, repo, state: 'open', sort: 'created', direction: 'desc', per_page: 100,
-    });
+    for (let page = 1; ; page++) {
+      const { data } = await github.rest.pulls.list({
+        owner, repo, state: 'open', sort: 'created', direction: 'desc', per_page: PER_PAGE, page,
+      });
+      listed += data.length;
+      candidates.push(...data.filter(admit));
+      if (data.length < PER_PAGE || candidates.length > SWEEP_MAX_PRS) break;
+    }
   } catch (err) {
     core.error(`pr-auto-approve sweep: could not list the open PRs: ${err.status || ''} ${err.message || err}`);
     return finish('skip', `sweep failed: could not list the open PRs: ${err.status || ''} ${err.message || err}`
       .replace(/\s+/g, ' ').trim());
   }
-  // The gates evaluate() would apply first, applied here so a PR that can never
-  // qualify leaves no decision line behind.
-  let candidates = open.filter((p) => !p.draft &&
-    p.base && BASE_BRANCHES.has(p.base.ref) &&
-    p.head && p.head.repo && p.head.repo.full_name === `${owner}/${repo}`);
-  core.info(`pr-auto-approve: sweep: ${candidates.length} of ${open.length} open PR(s) to evaluate`);
   if (candidates.length > SWEEP_MAX_PRS) {
-    core.warning(
-      `pr-auto-approve: sweep: evaluating the ${SWEEP_MAX_PRS} most recently opened of ${candidates.length} PRs`,
-    );
+    // The count stops where the listing did, so it is a lower bound.
+    core.warning(`pr-auto-approve: sweep: more than ${SWEEP_MAX_PRS} PRs to evaluate; ` +
+      `evaluating the ${SWEEP_MAX_PRS} most recently opened`);
     candidates = candidates.slice(0, SWEEP_MAX_PRS);
+  } else {
+    core.info(`pr-auto-approve: sweep: ${candidates.length} of ${listed} open PR(s) to evaluate`);
   }
 
   const results = [];

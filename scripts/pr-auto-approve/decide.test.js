@@ -5546,7 +5546,8 @@ test('sweep: evaluates at most 30 PRs, and says so', async () => {
   assert.equal(gets.length, 30);
   assert.equal(gets.includes(31), false);
   assert.equal(result.reason, 'sweep: 30 PR(s) evaluated, none approved');
-  assert.ok(core.warnings.some((w) => /evaluating the 30 most recently opened of 31 PRs/.test(w)), core.warnings.join('\n'));
+  assert.ok(core.warnings.some((w) => /more than 30 PRs to evaluate; evaluating the 30 most recently opened$/.test(w)),
+    core.warnings.join('\n'));
 });
 
 // The e2e sweep-approves scenario's shape: a lowered default, a code file, one
@@ -5564,4 +5565,36 @@ test('sweep: a lowered default threshold approves a code PR after one commented 
     assert.match(result.reason, /^sweep approved #42 \(1-rounds \(/);
     assert.equal(calls.createReview.length, 1);
   });
+});
+
+function pagedList(open, pages) {
+  return async ({ page = 1, per_page: perPage = 30 }) => {
+    pages.push(page);
+    return { data: open.slice((page - 1) * perPage, page * perPage) };
+  };
+}
+
+test('sweep: stops listing once the cap is filled', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 250 }, (_, i) => openPr(i + 1));
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.length, 30);
+});
+
+test('sweep: lists the next page when the first holds too few candidates', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 100 }, (_, i) => openPr(i + 1, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { listImpl: pagedList(open, pages) });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1, 2]);
+  assert.ok(gets.length > 0 && gets.every((n) => n === 101), String(gets));
+  assert.match(result.reason, /^sweep approved #101 /);
+  assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 101 open PR(s) to evaluate'), core.lines.join('\n'));
 });

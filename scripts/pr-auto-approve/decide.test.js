@@ -4343,6 +4343,38 @@ test("a sibling run's in-progress auto-approve check is not treated as CI", asyn
   assert.equal(calls.createReview.length, 1);
 });
 
+test("APPROVE-038: an in-progress strspc-pr-approval check is not treated as CI", async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'in_progress', conclusion: null,
+        details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'approved');
+  assert.equal(calls.createReview.length, 1);
+});
+
+test("APPROVE-038: a failed strspc-pr-approval check still counts", async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'completed', conclusion: 'failure',
+        details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.notEqual(result.decision, 'approved');
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('a rounds-rule approval is stamped with the threshold it relied on', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };

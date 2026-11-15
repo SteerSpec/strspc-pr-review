@@ -703,7 +703,10 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // cancelled by the concurrency group, say) report a check with the job's name
   // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
   // e.g. a type-0 PR, which posts no review to wake the workflow again.
-  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
+  // strspc-pr-approval's job (its caller's job id) is the same case: it starts
+  // on the same events and gates approval rather than testing the code, so a
+  // run of it still in flight is no CI to wait for (APPROVE-038).
+  const selfJobNames = new Set(['auto-approve', 'strspc-pr-approval', context.job].filter(Boolean));
   const notSelf = validCheckRuns.filter(
     (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) &&
       // Only an UNFINISHED sibling is ignored: a completed (say failing) check that

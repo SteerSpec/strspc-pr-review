@@ -5622,3 +5622,231 @@ test('sweep: a full page that fills the cap is not followed by another', async (
   assert.equal(gets.includes(101), false);
   assert.equal(core.warnings.length, 1);
 });
+
+// -- Status comment (comment-on-skip, APPROVE-037) ----------------------------
+
+const STATUS_ON = { AUTO_APPROVE_COMMENT_ON_SKIP: 'blocking' };
+
+// Adds the issue-comment endpoints to a fake, holding `existing` comments.
+function withIssueComments(github, existing = [], { createImpl } = {}) {
+  const comments = existing.map((c) => ({ ...c }));
+  const calls = { list: 0, create: [], update: [], delete: [] };
+  let nextId = 900;
+  github.rest.issues = {
+    listComments: async ({ issue_number }) => {
+      calls.list++;
+      return { data: comments.filter((c) => (c.issue ?? 42) === issue_number).map((c) => ({ ...c })) };
+    },
+    createComment: async (args) => {
+      calls.create.push(args);
+      if (createImpl) return createImpl(args);
+      comments.push({ id: nextId++, issue: args.issue_number, body: args.body, user: { login: 'axeptio-bot' } });
+      return { data: {} };
+    },
+    updateComment: async (args) => {
+      calls.update.push(args);
+      const c = comments.find((x) => x.id === args.comment_id);
+      if (c) c.body = args.body;
+      return { data: {} };
+    },
+    deleteComment: async (args) => {
+      calls.delete.push(args);
+      comments.splice(comments.findIndex((x) => x.id === args.comment_id), 1);
+      return { data: {} };
+    },
+  };
+  return { comments, calls };
+}
+
+async function runStatus(env, opts = {}, existing = [], issueOpts = {}) {
+  return withEnv(env, async () => {
+    const core = makeCore();
+    const lines = [];
+    core.info = (m) => lines.push(m);
+    const { github, calls } = makeApprovableGithub(opts);
+    const issues = withIssueComments(github, existing, issueOpts);
+    const result = await decide({ github, core, context: makeContext(opts.contextOpts) });
+    return { result, calls, core, issues, lines };
+  });
+}
+
+const BLOCKING_PROTECTED = { ...STATUS_ON, ...MANUAL };
+
+test('comment-on-skip: parsed case-insensitively, anything else means off with a warning', () => {
+  const warned = [];
+  const w = (m) => warned.push(m);
+  assert.equal(decide.getCommentOnSkip({}, w), 'off');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: ' ' }, w), 'off');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: ' Blocking ' }, w), 'blocking');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: 'off' }, w), 'off');
+  assert.deepEqual(warned, []);
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: 'always' }, w), 'off');
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /comment-on-skip 'always' is not one of off, blocking/);
+});
+
+test('codeSpan: the fence outgrows any backtick run, so nothing escapes the span', () => {
+  assert.equal(decide.codeSpan('plain'), '` plain `');
+  assert.equal(decide.codeSpan('a `b` c'), '`` a `b` c ``');
+  assert.equal(decide.codeSpan('x ``` y'), '```` x ``` y ````');
+  assert.equal(decide.codeSpan('line one\n\nline two'), '` line one line two `');
+  const long = decide.codeSpan('z'.repeat(800));
+  assert.ok(long.length < 520 && long.includes('…'), long.length);
+});
+
+test('status comment: off (the default) makes no comment call', async () => {
+  const { result, issues } = await runStatus(MANUAL, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(issues.calls.list, 0);
+  assert.equal(issues.calls.create.length, 0);
+});
+
+test('status comment: a blocking skip creates one comment, the reason in a code span', async () => {
+  const { result, issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(issues.calls.create.length, 1);
+  const { body, issue_number } = issues.calls.create[0];
+  assert.equal(issue_number, 42);
+  assert.ok(body.startsWith(decide.STATUS_MARKER), body);
+  assert.ok(body.includes(`will not approve this PR:** \` ${MANUAL_REFUSAL} \``), body);
+  assert.match(body, /needs a person/);
+  assert.ok(lines.includes('pr-auto-approve: status comment created on #42'), lines.join('\n'));
+});
+
+test('status comment: the same reason again leaves the comment untouched', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] },
+    [{ id: 5, body, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.create.length, 0);
+  assert.equal(issues.calls.update.length, 0);
+  assert.ok(!lines.some((l) => /status comment/.test(l)), lines.join('\n'));
+});
+
+test('status comment: a skip that clears on its own updates an existing comment but creates none', async () => {
+  const running = [{ name: 'ci', status: 'in_progress', conclusion: null }];
+  const none = await runStatus(STATUS_ON, { checkRuns: running });
+  assert.match(none.result.reason, /check still running: ci/);
+  assert.equal(none.issues.calls.list, 1);
+  assert.equal(none.issues.calls.create.length, 0);
+
+  const old = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues } = await runStatus(STATUS_ON, { checkRuns: running }, [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.update.length, 1);
+  assert.equal(issues.calls.update[0].comment_id, 5);
+  assert.match(issues.calls.update[0].body, /has not approved this PR yet:\*\* ` check still running: ci `/);
+});
+
+test('status comment: an approval rewrites an existing comment and creates none', async () => {
+  const fresh = await runStatus(STATUS_ON);
+  assert.equal(fresh.result.decision, 'approved', fresh.result.reason);
+  assert.equal(fresh.issues.calls.create.length, 0);
+
+  const old = decide.statusCommentBody('blocking', 'skip', 'failing check: ci (failure)');
+  const { result, issues } = await runStatus(STATUS_ON, {}, [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.equal(result.decision, 'approved');
+  assert.equal(issues.calls.update.length, 1);
+  assert.match(issues.calls.update[0].body, /\*\*pr-auto-approve approved this PR:\*\* ` copilot-clean/);
+});
+
+test('status comment: a failing check and a Copilot CHANGES_REQUESTED are blocking', async () => {
+  const failing = await runStatus(STATUS_ON, { checkRuns: [{ name: 'ci', status: 'completed', conclusion: 'failure' }] });
+  assert.equal(failing.result.reason, 'failing check: ci (failure)');
+  assert.equal(failing.issues.calls.create.length, 1);
+
+  const changes = await runStatus(STATUS_ON, {
+    reviews: [{ id: 1, state: 'CHANGES_REQUESTED', commit_id: 'deadbeef', submitted_at: '2026-04-16T10:00:00Z',
+      user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' } }],
+  });
+  assert.equal(changes.result.reason, 'latest Copilot review requested changes');
+  assert.equal(changes.issues.calls.create.length, 1);
+});
+
+test('status comment: Copilot inline comments are not blocking (its review already says so)', async () => {
+  const { result, issues } = await runStatus(STATUS_ON, { reviewComments: { 1: [{ id: 1 }] } });
+  assert.match(result.reason, /latest Copilot review has 1 comments/);
+  assert.equal(issues.calls.create.length, 0);
+});
+
+test('status comment: only the bot\'s own comment with the marker counts', async () => {
+  const forged = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [
+    { id: 3, body: forged, user: { login: 'someone-else' } },
+    { id: 4, body: `quoting it: ${forged}`, user: { login: 'axeptio-bot' } },
+  ]);
+  assert.equal(issues.calls.update.length, 0);
+  assert.equal(issues.calls.delete.length, 0);
+  assert.equal(issues.calls.create.length, 1);
+});
+
+test('status comment: duplicates from overlapping runs collapse to the oldest', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [
+    { id: 8, body, user: { login: 'Axeptio-Bot' } },
+    { id: 6, body: decide.statusCommentBody('waiting', 'skip', 'no Copilot review yet'), user: { login: 'axeptio-bot' } },
+  ]);
+  assert.deepEqual(issues.calls.delete.map((d) => d.comment_id), [8]);
+  assert.deepEqual(issues.calls.update.map((u) => u.comment_id), [6]);
+  assert.deepEqual(issues.comments.map((c) => c.id), [6]);
+  assert.ok(lines.includes('pr-auto-approve: status comment updated on #42'), lines.join('\n'));
+});
+
+test('status comment: a failure only warns and never changes the decision', async () => {
+  const { result, core } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [], {
+    createImpl: () => { throw Object.assign(new Error('Resource not accessible by personal access token'), { status: 403 }); },
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.ok(core.warnings.some((w) => /could not update the status comment on #42: 403 Resource not accessible/.test(w)),
+    core.warnings.join('\n'));
+});
+
+test('status comment: a PR the action does not manage gets no comment call', async () => {
+  for (const prOverrides of [
+    { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } },
+    { base: { ref: 'feature/x' } },
+    { user: { login: 'axeptio-bot' } },
+  ]) {
+    const { issues, result } = await runStatus(STATUS_ON, { contextOpts: { prOverrides, repo: 'prod-repo' } });
+    assert.equal(result.decision, 'skip', JSON.stringify(prOverrides));
+    assert.equal(issues.calls.list, 0, result.reason);
+  }
+});
+
+test('status comment: posted with the bot token, not the read token', async () => {
+  await withEnv(BLOCKING_PROTECTED, async () => {
+    const { github } = makeApprovableGithub({ changedFiles: ['rules/APPROVE.json'] });
+    const { github: botGithub } = makeApprovableGithub();
+    const read = withIssueComments(github);
+    const bot = withIssueComments(botGithub);
+    await decide({ github, botGithub, core: makeCore(), context: makeContext() });
+    assert.equal(read.calls.list + read.calls.create.length, 0);
+    assert.equal(bot.calls.create.length, 1);
+  });
+});
+
+test('status comment: an already-approved PR rewrites an existing comment as approved', async () => {
+  const old = decide.statusCommentBody('blocking', 'skip', 'failing check: ci (failure)');
+  const { result, issues } = await runStatus(STATUS_ON, { reviewDecision: 'APPROVED' },
+    [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.match(result.reason, /PR already approved/);
+  assert.equal(issues.calls.update.length, 1);
+  assert.match(issues.calls.update[0].body, /\*\*This PR is approved:\*\* ` PR already approved/);
+});
+
+test('status comment: GitHub\'s line endings and trailing newline do not count as a change', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL).replace(/\n/g, '\r\n').trim();
+  const { issues } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] },
+    [{ id: 5, body, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.update.length, 0);
+});
+
+test('status comment: a sweep comments on each PR it evaluates', async () => {
+  await withEnv(BLOCKING_PROTECTED, async () => {
+    const { github } = makeSweepGithub([openPr(42), openPr(43)], { changedFiles: ['rules/APPROVE.json'] });
+    const issues = withIssueComments(github);
+    const result = await decide({ github, context: makeSweepContext(), core: sweepCore() });
+    assert.equal(result.decision, 'skip');
+    assert.deepEqual(issues.calls.create.map((c) => c.issue_number), [42, 43]);
+  });
+});

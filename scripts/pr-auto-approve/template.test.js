@@ -149,3 +149,8 @@ test('no action.yml script body interpolates an expression', () => {
 test('no deprecated reusable workflow script body interpolates an expression', () => {
   assertNoScriptExpressions('.github/workflows/pr-auto-approve.yml');
 });
+
+test('comment-on-skip reaches the evaluate step', () => {
+  const step = read('action.yml').split('- name: Evaluate and approve')[1].split('- name: ')[0];
+  assert.match(step, /AUTO_APPROVE_COMMENT_ON_SKIP: \$\{\{ inputs\.comment-on-skip \}\}/);
+});

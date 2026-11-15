@@ -61,7 +61,7 @@ The template reads each input from an Actions variable named `STRSPC_PR_AUTO_APP
 (`..._BOT_LOGIN`, `..._BASE_BRANCH`, `..._ROUNDS_THRESHOLD`, `..._ROUNDS_BY_TYPE`,
 `..._COPILOT_OPTIONAL_PATHS`, `..._PROTECTED_PATHS`, `..._PROTECTED_PATHS_MODE`, `..._PROTECTED_PATHS_ALLOWED`,
 `..._COPILOT_CLEAN_ON`, `..._PROMOTION_BRANCHES`, `..._RELEASE_BRANCHES`, `..._RELEASE_AUTHOR`, `..._ALLOW_NO_CHECKS`, `..._REQUEST_COPILOT_REVIEW`,
-`..._WAIT_FOR_COPILOT_SECONDS`, `..._COPILOT_ERROR_RETRIES`, `..._SLACK_CHANNEL`). Set the org-wide policy once, then override
+`..._WAIT_FOR_COPILOT_SECONDS`, `..._COPILOT_ERROR_RETRIES`, `..._COMMENT_ON_SKIP`, `..._SLACK_CHANNEL`). Set the org-wide policy once, then override
 it only in a repo that differs. The `..._PROTECTED_PATHS*` variables do nothing until the repo's
 caller has the template's `protected-paths` `with:` lines, and nothing reports that, so sync the caller
 first:
@@ -181,6 +181,14 @@ waiting, so a PR whose re-trigger was lost (a missing `workflow_run`, a review r
 group in the template already handle both events. Keep them, including `cancel-in-progress` as an
 expression, so that a sweep never cancels a PR's own run. On private repos each tick bills about a
 minute. Change the cron, or delete `schedule:` to keep only the manual run.
+
+### Explain skips in the PR: `comment-on-skip`
+
+A skip leaves the `auto-approve` check green, so a PR parked for a human (a protected path, a failing
+check, requested changes) looks like one about to be approved. Set
+`STRSPC_PR_AUTO_APPROVE_COMMENT_ON_SKIP` to `blocking` to have the bot say why in one PR comment, edited
+in place as the reason changes. It uses `bot-github-token`; its `Pull requests: write` is enough. The
+caller needs the template's `comment-on-skip` `with:` line, or the variable does nothing.
 
 ### The first PR cannot approve itself
 

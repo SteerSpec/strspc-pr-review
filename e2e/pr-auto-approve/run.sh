@@ -142,6 +142,37 @@ scenario_protected_path_manual() {
   expect_outcome "$PR_NUM"
 }
 
+# The bot's status comments on PR $1, oldest first, as "id updated_at body-head" lines.
+status_comments() {
+  gh api "repos/$REPO/issues/$1/comments?per_page=100" --jq \
+    "[.[] | select(.user.login == \"$APPROVER_LOGIN\" and (.body | startswith(\"<!-- pr-auto-approve:status -->\")))]
+     | sort_by(.id) | .[] | \"\\(.id) \\(.updated_at) \\(.body | split(\"\\n\")[1])\""
+}
+
+# A blocking skip leaves one comment, and a second run with the same reason
+# leaves it exactly as it was: no second comment, no edit.
+scenario_status_comment() {
+  local first="" deadline since now
+  open_pr status-comment "e2e: status comment" "" "rules/e2e-marker.json"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    first=$(status_comments "$PR_NUM" | head -1) || first=""
+    [[ -n "$first" ]] && break
+    sleep "$POLL_INTERVAL"
+  done
+  [[ -n "$first" ]] || fail "$SCENARIO: no status comment from $APPROVER_LOGIN"
+  [[ "$first" == *"will not approve this PR:"*"protected path"* ]] || fail "$SCENARIO: unexpected comment: $first"
+  since=$(now_utc)
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  wait_decision "$PR_NUM" skip "$(scenario_field "$SCENARIO" reason)" "$since" \
+    || fail "$SCENARIO: the second review's run did not skip"
+  now=$(status_comments "$PR_NUM") || fail "$SCENARIO: could not list the comments"
+  [[ "$now" == "$first" ]] || fail "$SCENARIO: the comment changed or multiplied: was '$first', now '$now'"
+}
+
 # 'mai' passes the caller's contains() pre-filter for 'main', so the run reaches
 # the action, whose exact match must refuse it. No CI runs on 'mai', and none is
 # needed: the base gate comes first.

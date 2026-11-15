@@ -628,3 +628,19 @@ test('requestCopilotReview: unset, a promotion gets its request as before', asyn
   assert.equal(out, 'requested');
   assert.equal(repo.calls.reviewers.length, 1);
 });
+
+// -- Status comment (APPROVE-037) --------------------------------------------
+
+test('decide: a promotion whose proof fails is a blocking skip for the status comment', async () => {
+  const repo = makeRepo({ associated: { [HEAD]: [source(12)] } });
+  const created = [];
+  repo.github.rest.issues = {
+    listComments: async () => ({ data: [] }),
+    createComment: async (args) => { created.push(args); return { data: {} }; },
+  };
+  const out = await run({ repo, env: { AUTO_APPROVE_COMMENT_ON_SKIP: 'blocking' } });
+  assert.equal(out.decision, 'skip');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].issue_number, 171);
+  assert.match(created[0].body, /will not approve this PR:/);
+});

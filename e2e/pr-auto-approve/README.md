@@ -305,5 +305,8 @@ variable; and a whitespace-only `BASE_BRANCH` proves `main` still passes the job
   `ROUNDS_BY_TYPE` mid-scenario. Its profile is its own, so the next scenario's profile resets it.
   `sandbox.sh sync` drops the template's `schedule:` from both testbeds' callers, so no hourly sweep
   adds a decision a scenario did not cause.
+- `status-comment` lists the PR's comments and keeps those from `E2E_APPROVER_LOGIN` that carry the
+  status marker: it passes only when there is one, and a second review with the same reason leaves its id
+  and `updated_at` unchanged. The comment is posted with `BOT_TOKEN_SANDBOX`.
 - `changes-requested` opens its PR as the bot, because GitHub refuses REQUEST_CHANGES from a PR's author.
 - Timeouts apply per assertion. Adjust `E2E_TIMEOUT` for slow CI environments.

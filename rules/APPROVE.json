@@ -7,8 +7,8 @@
   },
   "rule_set": {
     "version": "0.1.49",
-    "timestamp": "2026-11-15T17:45:07Z",
-    "hash": "blake3:8a1b3050c137bace8ded18df3efc89287e0ce5faf30a82e61571f2804ba7f13c"
+    "timestamp": "2026-11-15T18:06:51Z",
+    "hash": "blake3:173fd9ada72970ed0de8bf05092df2bddf9a527d10dc6483713d806efff0b78a"
   },
   "rules": [
     {
@@ -348,7 +348,7 @@
       "id": "APPROVE-038",
       "revision": 0,
       "state": "D",
-      "body": "The action MUST NOT wait on an unfinished run of its own job or of the strspc-pr-approval job, since both gate approval rather than test the code, while counting a finished run of either name like any other check.",
+      "body": "The action MUST NOT wait on an unfinished run of its own job, or on an unfinished strspc-pr-approval run that GitHub Actions started for pull_request_target, pull_request_review, check_run or workflow_run, since both gate approval rather than test the code, while counting a finished run of either like any other check.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-15",
       "supersedes": null

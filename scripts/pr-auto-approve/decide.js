@@ -681,23 +681,38 @@ const isFailedCheck = (cr) =>
 // strspc-pr-approval's job (its caller's job id) starts on the same events as
 // this one and gates approval rather than testing the code, so a run of it
 // still in flight is no CI to wait for (APPROVE-038). A name alone does not
-// identify it, since a repository may have CI named the same: it must be a
-// GitHub Actions run started by an event an approver listens to. CI runs on
-// pull_request, push or merge_group. pull_request_review runs the PR's own
-// definition, but a PR author already controls the PR's CI and gains nothing.
-// The lookup needs `actions: read`; without it, or on any failure, the check
-// counts as pending, which is the behaviour before this rule.
+// identify it, since a repository may have CI named the same. An unfinished run
+// counts as the companion only when GitHub Actions ran it from the companion's
+// caller workflow file (the `companion-workflow` input, default
+// .github/workflows/pr-approval.yml) for an event an approver listens to. CI
+// runs on pull_request, push or merge_group. companion-workflow 'off' turns the
+// exemption off. The lookup needs `actions: read`; without it, or on any
+// failure, the check counts as pending, which is the behaviour before this rule.
 const COMPANION_JOBS = ['strspc-pr-approval'];
 const COMPANION_EVENTS = new Set(['pull_request_target', 'pull_request_review', 'check_run', 'workflow_run']);
+const DEFAULT_COMPANION_WORKFLOW = '.github/workflows/pr-approval.yml';
 const RUN_ID_RE = /\/actions\/runs\/(\d+)(?:\/|$)/;
 
-async function isCompanionRun({ github, owner, repo, cr, cache }) {
+// Empty means the default, since the template passes an unset repo variable as
+// ''. 'off' (any case) turns the exemption off and returns ''.
+function getCompanionWorkflow(env = process.env) {
+  const raw = String(env.AUTO_APPROVE_COMPANION_WORKFLOW || '').trim();
+  if (!raw) return DEFAULT_COMPANION_WORKFLOW;
+  return raw.toLowerCase() === 'off' ? '' : raw;
+}
+
+// A run's path can carry the ref it ran at (`<file>@refs/heads/main`).
+const workflowFile = (path) => String(path || '').split('@')[0];
+
+async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflow }) {
+  if (!companionWorkflow) return false;
   if (!cr.app || cr.app.slug !== 'github-actions') return false;
   const m = RUN_ID_RE.exec(cr.details_url || '');
   if (!m) return false;
   if (!cache.has(m[1])) {
     cache.set(m[1], github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(m[1]) })
-      .then(({ data }) => COMPANION_EVENTS.has(data.event), () => false));
+      .then(({ data }) => COMPANION_EVENTS.has(data.event) && workflowFile(data.path) === companionWorkflow,
+        () => false));
   }
   return cache.get(m[1]);
 }
@@ -733,6 +748,7 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   const companionJobNames = new Set(COMPANION_JOBS);
   const selfJobNames = new Set(['auto-approve', context.job].filter((n) => n && !companionJobNames.has(n)));
   const runEvents = new Map();
+  const companionWorkflow = getCompanionWorkflow();
   const notSelf = [];
   for (const cr of validCheckRuns) {
     if (cr.details_url && selfRunRe.test(cr.details_url)) continue;
@@ -741,7 +757,7 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
     if (cr.status !== 'completed') {
       if (selfJobNames.has(cr.name)) continue;
       if (companionJobNames.has(cr.name) &&
-        await isCompanionRun({ github, owner, repo, cr, cache: runEvents })) continue;
+        await isCompanionRun({ github, owner, repo, cr, cache: runEvents, companionWorkflow })) continue;
     }
     notSelf.push(cr);
   }
@@ -2174,3 +2190,5 @@ module.exports.getCommentOnSkip = getCommentOnSkip;
 module.exports.statusCommentBody = statusCommentBody;
 module.exports.codeSpan = codeSpan;
 module.exports.STATUS_MARKER = STATUS_MARKER;
+module.exports.getCompanionWorkflow = getCompanionWorkflow;
+module.exports.DEFAULT_COMPANION_WORKFLOW = DEFAULT_COMPANION_WORKFLOW;

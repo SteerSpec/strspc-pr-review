@@ -272,6 +272,11 @@ jobs:
           # PRs that skip CI via path filters). Default 'false'.
           allow-no-checks: ${{ vars.STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS }}
 
+          # strspc-pr-approval's caller file. Its unfinished check is not waited
+          # for only when it runs from this file (APPROVE-038). Empty means
+          # .github/workflows/pr-approval.yml; 'off' always waits for it.
+          companion-workflow: ${{ vars.STRSPC_PR_AUTO_APPROVE_COMPANION_WORKFLOW }}
+
           # 'true' to have the action request the Copilot review, so types set to
           # 0 above are skipped. Disable the ruleset's automatic review first.
           request-copilot-review: ${{ vars.STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW }}

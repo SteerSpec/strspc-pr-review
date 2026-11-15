@@ -79,6 +79,7 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR` | `release-author` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
+| `STRSPC_PR_AUTO_APPROVE_COMPANION_WORKFLOW` | `companion-workflow` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES` | `copilot-error-retries` |

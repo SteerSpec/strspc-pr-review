@@ -4345,7 +4345,8 @@ test("a sibling run's in-progress auto-approve check is not treated as CI", asyn
 
 // A strspc-pr-approval check as GitHub Actions posts it, from run 999, plus a
 // fake getWorkflowRun answering with `event` for that run (or failing).
-function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, status = 'in_progress' }) {
+function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, status = 'in_progress',
+  path = '.github/workflows/pr-approval.yml' }) {
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
   const fake = makeFakeGithub({
     checkRuns: [
@@ -4360,7 +4361,7 @@ function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, sta
     getWorkflowRun: async ({ run_id }) => {
       fake.lookups.push(run_id);
       if (!event) throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 });
-      return { data: { id: run_id, event } };
+      return { data: { id: run_id, event, path } };
     },
   };
   return fake;
@@ -4409,6 +4410,41 @@ test("APPROVE-038: a caller job named strspc-pr-approval does not skip the run l
       assert.equal(calls.createReview.length, 0, event);
     }
   }
+});
+
+test("APPROVE-038: only a run of the companion-workflow file is the companion", async () => {
+  const run = async (opts, env = {}) => withEnv(env, async () => {
+    const { github, calls, lookups } = companionCase({ event: 'pull_request_target', ...opts });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    return { decision: result.decision, reason: result.reason, approvals: calls.createReview.length, lookups: lookups.length };
+  });
+  // The default file, with or without the ref suffix a run's path can carry.
+  assert.equal((await run({})).decision, 'approved');
+  assert.equal((await run({ path: '.github/workflows/pr-approval.yml@refs/heads/main' })).decision, 'approved');
+  // Another workflow with a job of that name is CI and is waited for.
+  const other = await run({ path: '.github/workflows/ci.yml' });
+  assert.equal(other.decision, 'skip');
+  assert.match(other.reason, /check still running: strspc-pr-approval/);
+  assert.equal(other.approvals, 0);
+  // A configured file replaces the default.
+  const custom = { AUTO_APPROVE_COMPANION_WORKFLOW: ' .github/workflows/approval.yml ' };
+  assert.equal((await run({ path: '.github/workflows/approval.yml' }, custom)).decision, 'approved');
+  assert.equal((await run({}, custom)).decision, 'skip');
+  // Empty, as an unset repo variable arrives, is the default.
+  assert.equal((await run({}, { AUTO_APPROVE_COMPANION_WORKFLOW: '' })).decision, 'approved');
+  // 'off' turns the exemption off, without a lookup.
+  const off = await run({}, { AUTO_APPROVE_COMPANION_WORKFLOW: 'off' });
+  assert.equal(off.decision, 'skip');
+  assert.equal(off.lookups, 0);
+});
+
+test("getCompanionWorkflow: unset or blank is the default, off is off, a value is trimmed", () => {
+  const { getCompanionWorkflow, DEFAULT_COMPANION_WORKFLOW } = decide;
+  assert.equal(DEFAULT_COMPANION_WORKFLOW, '.github/workflows/pr-approval.yml');
+  assert.equal(getCompanionWorkflow({}), DEFAULT_COMPANION_WORKFLOW);
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: '  ' }), DEFAULT_COMPANION_WORKFLOW);
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: ' OFF ' }), '');
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: ' .github/workflows/x.yml ' }), '.github/workflows/x.yml');
 });
 
 test("APPROVE-038: a failed strspc-pr-approval check still counts", async () => {

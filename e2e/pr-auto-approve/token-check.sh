@@ -3,7 +3,12 @@
 #
 # Checks the tokens a workflow was given, without printing them, against a repo.
 #
-#   token-check.sh <owner/repo> <ENV_NAME>...
+#   token-check.sh <owner/repo> <ENV_NAME>[@login][+actions]...
+#
+# @login fails the check unless GET /user names that account: a token created
+# under the wrong account passes every permission probe and still breaks the
+# suite (the e2e harness posts its reviews as the admin token's owner, and the
+# bot cannot approve a PR it opened). +actions adds an Actions write probe.
 #
 # For each named environment variable it reports:
 #   - present, length, kind (prefix) and whether the value carries whitespace,
@@ -18,14 +23,23 @@
 #     PATCH of the latest PR, which needs the same Pull requests: write. On a
 #     refusal, GitHub's x-accepted-github-permissions header says what it wanted.
 #     Any answer but success fails the check, a 422 included.
+#   - with +actions, an Actions write probe: a workflow_dispatch of
+#     $TOKEN_CHECK_WORKFLOW (default pr-auto-approve.yml) on a ref that does not
+#     exist. GitHub checks the permission first, so its "No ref found" 422
+#     means the token may start workflows and nothing ran; a 403 means it may
+#     not. Any other 422 fails: it says nothing about the permission.
 #
 # Exits 1 when any token is missing or refused. Writes the table to
 # $GITHUB_STEP_SUMMARY too when set.
 set -uo pipefail
 
-REPO="${1:?usage: token-check.sh <owner/repo> <ENV_NAME>...}"
+USAGE="usage: token-check.sh <owner/repo> <ENV_NAME>[@login][+actions]..."
+REPO="${1:?$USAGE}"
 shift
-(($# > 0)) || { echo "usage: token-check.sh <owner/repo> <ENV_NAME>..." >&2; exit 2; }
+(($# > 0)) || { echo "$USAGE" >&2; exit 2; }
+WORKFLOW="${TOKEN_CHECK_WORKFLOW:-pr-auto-approve.yml}"
+# A ref no branch or tag can have: git refuses '..' in a ref name.
+NO_REF="token-check..no-such-ref"
 API="${GITHUB_API_URL:-https://api.github.com}"
 TMP=$(mktemp -d)
 # A probe review still standing when the script ends, by cancellation or any
@@ -67,10 +81,15 @@ kind() {
 
 failed=0
 rows=()
-for name in "$@"; do
+for spec in "$@"; do
+  actions=""
+  [[ "$spec" == *+actions ]] && { actions=1; spec="${spec%+actions}"; }
+  name="${spec%%@*}" want=""
+  [[ "$spec" == *@* ]] && want="${spec#*@}"
+  [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "bad spec '$spec'; $USAGE" >&2; exit 2; }
   value="${!name:-}"
   if [[ -z "$value" ]]; then
-    rows+=("| \`$name\` | **missing** | | | | | |")
+    rows+=("| \`$name\` | **missing** | | | | | | |")
     failed=1
     continue
   fi
@@ -83,11 +102,16 @@ for name in "$@"; do
 
   s=$(call "$value" GET /user)
   if [[ "$s" == 200 ]]; then
-    user="$(jq -r .login "$TMP/body"), expires $(header github-authentication-token-expiration)"
+    login=$(jq -r .login "$TMP/body")
+    user="$login, expires $(header github-authentication-token-expiration)"
     user="${user%, expires }"
+    if [[ -n "$want" && "${login,,}" != "${want,,}" ]]; then
+      user="**$login, not $want**"
+      failed=1
+    fi
   else
     user="**$s** $(message)"
-    rows+=("| \`$name\` | \`$fp\` | $shape | $user | | | |")
+    rows+=("| \`$name\` | \`$fp\` | $shape | $user | | | | |")
     failed=1
     continue
   fi
@@ -130,8 +154,8 @@ for name in "$@"; do
         write="ok, but **cleanup failed**: DELETE $d $(message); remove pending review $id on #$open"
         failed=1
         # Probing another token would overwrite the only record of this review.
-        rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write |")
-        rows+=("| (stopped) | | | | | | the remaining tokens were not checked |")
+        rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write | |")
+        rows+=("| (stopped) | | | | | | the remaining tokens were not checked | |")
         break
       fi
     else
@@ -150,14 +174,28 @@ for name in "$@"; do
     write="**not probed**: the repo has no PR"
     failed=1
   fi
-  rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write |")
+
+  act=""
+  if [[ -n "$actions" ]]; then
+    s=$(call "$value" POST "/repos/$REPO/actions/workflows/$WORKFLOW/dispatches" "$(jq -nc --arg r "$NO_REF" '{ref: $r}')")
+    # Only the ref's own refusal proves the permission: a malformed body is a 422 too.
+    [[ "$s" == 422 && "$(message)" != "No ref found for: $NO_REF" ]] && s="422-other"
+    case "$s" in
+      422) act="ok (dispatch of $WORKFLOW refused only for its ref)" ;;
+      422-other) act="**422** $(message)"; failed=1 ;;
+      403) act="**403** $(message); wanted: $(header x-accepted-github-permissions)"; failed=1 ;;
+      404) act="**404** $(message): no $WORKFLOW, or no access"; failed=1 ;;
+      *) act="**$s** $(message)"; failed=1 ;;
+    esac
+  fi
+  rows+=("| \`$name\` | \`$fp\` | $shape | $user | $repo | $read | $write | $act |")
 done
 
 {
   echo "Tokens checked against \`$REPO\`:"
   echo
-  echo "| Secret | SHA-256 (16) | Shape | GET /user | GET repo | Read PRs | Write probe |"
-  echo "|---|---|---|---|---|---|---|"
+  echo "| Secret | SHA-256 (16) | Shape | GET /user | GET repo | Read PRs | Write probe | Actions write |"
+  echo "|---|---|---|---|---|---|---|---|"
   printf '%s\n' "${rows[@]}"
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 exit "$failed"

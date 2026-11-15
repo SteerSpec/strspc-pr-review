@@ -27,4 +27,9 @@ jobs:
         env:
           BOT_TOKEN_SANDBOX: ${{ secrets.BOT_TOKEN_SANDBOX }}
           E2E_ADMIN_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
-        run: e2e/pr-auto-approve/token-check.sh testbed-multi-org/strspc-pr-review-sandbox BOT_TOKEN_SANDBOX E2E_ADMIN_TOKEN
+        # The logins are e2e.yml's E2E_APPROVER_LOGIN and E2E_REVIEWER_LOGIN. The
+        # admin token also starts the caller (sweep-approves), so it needs Actions
+        # write; the bot's must not be asked for it.
+        run: >-
+          e2e/pr-auto-approve/token-check.sh testbed-multi-org/strspc-pr-review-sandbox
+          BOT_TOKEN_SANDBOX@cnslr-bt E2E_ADMIN_TOKEN@pleberre+actions

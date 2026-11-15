@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.48",
-    "timestamp": "2026-11-14T20:00:20Z",
-    "hash": "blake3:cbc5c0e41f2e8abecdd4d4fc5550da6473721bb86fd417151d0b9414f5a3f413"
+    "version": "0.1.49",
+    "timestamp": "2026-11-15T17:45:07Z",
+    "hash": "blake3:8a1b3050c137bace8ded18df3efc89287e0ce5faf30a82e61571f2804ba7f13c"
   },
   "rules": [
     {
@@ -342,6 +342,15 @@
       "body": "When configured to, the action MUST explain in one comment on the pull request, edited in place, a skip that a person must act on before it can approve, without letting a failure to comment change its decision.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-14",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-038",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT wait on an unfinished run of its own job or of the strspc-pr-approval job, since both gate approval rather than test the code, while counting a finished run of either name like any other check.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-15",
       "supersedes": null
     }
   ],

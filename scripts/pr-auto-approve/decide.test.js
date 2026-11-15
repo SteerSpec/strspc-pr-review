@@ -4343,20 +4343,58 @@ test("a sibling run's in-progress auto-approve check is not treated as CI", asyn
   assert.equal(calls.createReview.length, 1);
 });
 
-test("APPROVE-038: an in-progress strspc-pr-approval check is not treated as CI", async () => {
-  const core = makeCore();
+// A strspc-pr-approval check as GitHub Actions posts it, from run 999, plus a
+// fake getWorkflowRun answering with `event` for that run (or failing).
+function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, status = 'in_progress' }) {
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
-  const { github, calls } = makeFakeGithub({
+  const fake = makeFakeGithub({
     checkRuns: [
       ...DEFAULT_CHECK_RUNS,
-      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'in_progress', conclusion: null,
-        details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status, conclusion: null, app,
+        started_at: '2026-04-15T11:00:00Z', details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
     ],
     reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
   });
-  const result = await decide({ github, core, context: makeContext() });
-  assert.equal(result.decision, 'approved');
-  assert.equal(calls.createReview.length, 1);
+  fake.lookups = [];
+  fake.github.rest.actions = {
+    getWorkflowRun: async ({ run_id }) => {
+      fake.lookups.push(run_id);
+      if (!event) throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 });
+      return { data: { id: run_id, event } };
+    },
+  };
+  return fake;
+}
+
+test("APPROVE-038: an in-progress strspc-pr-approval check run by an approver event is not treated as CI", async () => {
+  for (const event of ['pull_request_target', 'pull_request_review', 'check_run', 'workflow_run']) {
+    const { github, calls, lookups } = companionCase({ event });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'approved', event);
+    assert.equal(calls.createReview.length, 1, event);
+    assert.ok(lookups.length >= 1 && lookups.every((id) => id === 999), event);
+  }
+});
+
+test("APPROVE-038: a CI job named strspc-pr-approval is still waited for", async () => {
+  for (const event of ['pull_request', 'push', 'merge_group']) {
+    const { github, calls } = companionCase({ event });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'skip', event);
+    assert.match(result.reason, /check still running/, event);
+    assert.equal(calls.createReview.length, 0, event);
+  }
+});
+
+test("APPROVE-038: an unproven strspc-pr-approval check stays pending (no actions: read, not Actions)", async () => {
+  for (const c of [{ event: null }, { event: 'workflow_run', app: { id: 2, slug: 'other-ci' } }]) {
+    const { github, calls, lookups } = companionCase(c);
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /check still running/);
+    assert.equal(calls.createReview.length, 0);
+    if (c.app) assert.equal(lookups.length, 0);
+  }
 });
 
 test("APPROVE-038: a failed strspc-pr-approval check still counts", async () => {

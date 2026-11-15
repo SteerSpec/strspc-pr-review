@@ -678,6 +678,30 @@ const CHECK_OK_CONCLUSIONS = ['success', 'neutral', 'skipped', 'cancelled', 'sta
 const isFailedCheck = (cr) =>
   cr.status === 'completed' && !CHECK_OK_CONCLUSIONS.includes(cr.conclusion);
 
+// strspc-pr-approval's job (its caller's job id) starts on the same events as
+// this one and gates approval rather than testing the code, so a run of it
+// still in flight is no CI to wait for (APPROVE-038). A name alone does not
+// identify it, since a repository may have CI named the same: it must be a
+// GitHub Actions run started by an event an approver listens to. CI runs on
+// pull_request, push or merge_group. pull_request_review runs the PR's own
+// definition, but a PR author already controls the PR's CI and gains nothing.
+// The lookup needs `actions: read`; without it, or on any failure, the check
+// counts as pending, which is the behaviour before this rule.
+const COMPANION_JOBS = ['strspc-pr-approval'];
+const COMPANION_EVENTS = new Set(['pull_request_target', 'pull_request_review', 'check_run', 'workflow_run']);
+const RUN_ID_RE = /\/actions\/runs\/(\d+)(?:\/|$)/;
+
+async function isCompanionRun({ github, owner, repo, cr, cache }) {
+  if (!cr.app || cr.app.slug !== 'github-actions') return false;
+  const m = RUN_ID_RE.exec(cr.details_url || '');
+  if (!m) return false;
+  if (!cache.has(m[1])) {
+    cache.set(m[1], github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(m[1]) })
+      .then(({ data }) => COMPANION_EVENTS.has(data.event), () => false));
+  }
+  return cache.get(m[1]);
+}
+
 // Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
 // (name, app.id) keeping the latest attempt. Prevents the self-pending trap
 // (this job waiting on its own check) and rerun staleness.
@@ -703,16 +727,21 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // cancelled by the concurrency group, say) report a check with the job's name
   // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
   // e.g. a type-0 PR, which posts no review to wake the workflow again.
-  // strspc-pr-approval's job (its caller's job id) is the same case: it starts
-  // on the same events and gates approval rather than testing the code, so a
-  // run of it still in flight is no CI to wait for (APPROVE-038).
-  const selfJobNames = new Set(['auto-approve', 'strspc-pr-approval', context.job].filter(Boolean));
-  const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) &&
-      // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
-      // happens to share the name is still a real result and keeps counting.
-      !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
-  );
+  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
+  const companionJobNames = new Set(COMPANION_JOBS.filter((n) => !selfJobNames.has(n)));
+  const runEvents = new Map();
+  const notSelf = [];
+  for (const cr of validCheckRuns) {
+    if (cr.details_url && selfRunRe.test(cr.details_url)) continue;
+    // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
+    // happens to share the name is still a real result and keeps counting.
+    if (cr.status !== 'completed') {
+      if (selfJobNames.has(cr.name)) continue;
+      if (companionJobNames.has(cr.name) &&
+        await isCompanionRun({ github, owner, repo, cr, cache: runEvents })) continue;
+    }
+    notSelf.push(cr);
+  }
   // Dedupe by (name, app.id) keeping the most-recently-started run. A run with
   // no timestamp has not started yet, so it is the newest, not the oldest:
   // scoring it 0 would let an older green run hide a queued rerun.

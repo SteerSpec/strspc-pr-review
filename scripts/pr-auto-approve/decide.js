@@ -727,8 +727,11 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // cancelled by the concurrency group, say) report a check with the job's name
   // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
   // e.g. a type-0 PR, which posts no review to wake the workflow again.
-  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
-  const companionJobNames = new Set(COMPANION_JOBS.filter((n) => !selfJobNames.has(n)));
+  // A companion name stays out of the self set even when this caller's job is
+  // named the same: by name alone, its unfinished CI namesakes would skip the
+  // run lookup. This run's own check is still dropped by its URL above.
+  const companionJobNames = new Set(COMPANION_JOBS);
+  const selfJobNames = new Set(['auto-approve', context.job].filter((n) => n && !companionJobNames.has(n)));
   const runEvents = new Map();
   const notSelf = [];
   for (const cr of validCheckRuns) {

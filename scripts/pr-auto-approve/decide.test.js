@@ -4397,6 +4397,20 @@ test("APPROVE-038: an unproven strspc-pr-approval check stays pending (no action
   }
 });
 
+test("APPROVE-038: a caller job named strspc-pr-approval does not skip the run lookup", async () => {
+  for (const [event, decision] of [['pull_request', 'skip'], ['workflow_run', 'approved']]) {
+    const { github, calls, lookups } = companionCase({ event });
+    const context = { ...makeContext(), job: 'strspc-pr-approval' };
+    const result = await decide({ github, core: makeCore(), context });
+    assert.equal(result.decision, decision, event);
+    assert.ok(lookups.length >= 1, event);
+    if (decision === 'skip') {
+      assert.match(result.reason, /check still running: strspc-pr-approval/, event);
+      assert.equal(calls.createReview.length, 0, event);
+    }
+  }
+});
+
 test("APPROVE-038: a failed strspc-pr-approval check still counts", async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };

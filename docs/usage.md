@@ -31,6 +31,7 @@ jobs:
       pull-requests: write
       contents: read
       checks: read
+      actions: read
     # concurrency and if: omitted here, keep them from the template
     steps:
       - uses: SteerSpec/strspc-pr-review@v1
@@ -50,7 +51,7 @@ Two tokens do different jobs, and the split matters:
 | Token | Used for | Needs |
 | ----- | -------- | ----- |
 | `bot-github-token` | Posting the approval, and dismissing the bot's own approval | `Pull requests: write` |
-| [`github-token`](inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, and `pull-requests: write` for the review request and the dismissal fallback |
+| [`github-token`](inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, `actions: read` (to tell strspc-pr-approval's job from CI, APPROVE-038), and `pull-requests: write` for the review request and the dismissal fallback |
 
 Listing check runs needs the **`Checks`** permission, and fine-grained PATs can't be granted it. A PAT
 doing the reading works on public repositories, where check runs are readable without it, and fails
@@ -78,6 +79,7 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR` | `release-author` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
+| `STRSPC_PR_AUTO_APPROVE_COMPANION_WORKFLOW` | `companion-workflow` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES` | `copilot-error-retries` |

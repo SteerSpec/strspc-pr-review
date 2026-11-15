@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.48",
-    "timestamp": "2026-11-14T20:00:20Z",
-    "hash": "blake3:cbc5c0e41f2e8abecdd4d4fc5550da6473721bb86fd417151d0b9414f5a3f413"
+    "version": "0.1.49",
+    "timestamp": "2026-11-15T18:27:21Z",
+    "hash": "blake3:495211162c610dd010423c92e0ec75324c6f2d119ac765acf41496a9bbea4b7c"
   },
   "rules": [
     {
@@ -342,6 +342,15 @@
       "body": "When configured to, the action MUST explain in one comment on the pull request, edited in place, a skip that a person must act on before it can approve, without letting a failure to comment change its decision.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-14",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-038",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT wait on an unfinished run of its own job, or on an unfinished strspc-pr-approval run that GitHub Actions started from the configured companion workflow file for pull_request_target, pull_request_review, check_run or workflow_run, since both gate approval rather than test the code, while counting a finished run of either like any other check.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-15",
       "supersedes": null
     }
   ],

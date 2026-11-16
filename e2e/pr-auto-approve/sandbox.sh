@@ -14,7 +14,7 @@
 # Without --real this is the synthetic tier's sandbox, where the harness fakes
 # Copilot. With --real it is the real-Copilot testbed: Copilot reviews every push,
 # and the caller is the template as a production repo would copy it, with only
-# the pin and the secret changed.
+# the pin and the secret changed, and no hourly sweep (see render_caller).
 #
 # Everything is idempotent, so CI can run `sync` before each suite and a failed
 # run leaves nothing for the next one to trip on.
@@ -141,6 +141,11 @@ render_caller() {
     -v sha="$1" -v repo="$ACTION_REPO" -v reviewer="$REVIEWER_LOGIN" -v sandbox="$REPO" \
     -v secret="$BOT_SECRET" -v real="$REAL" '
     $0 == "      - uses: " repo "@v1" { print "      - uses: " repo "@" sha; used = 1; next }
+    # No hourly sweep in a testbed: one landing mid-scenario would add a decision the
+    # scenario did not cause. sweep-approves dispatches its own (workflow_dispatch).
+    $0 == "  schedule:" { unscheduled = 1; next }
+    unscheduled == 1 && /^    / { next }
+    { unscheduled = 0 }
     # The commit under test runs with this token, and it can be any PR'"'"'s code. So it
     # must be the testbed-only repo secret, never the org'"'"'s BOT_GITHUB_TOKEN.
     /^          bot-github-token: / { if (sub(/BOT_GITHUB_TOKEN/, secret)) scoped = 1 }

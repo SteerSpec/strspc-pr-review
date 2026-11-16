@@ -27,6 +27,7 @@ Every input of the action, its default, and its outputs. Back to the [README](..
 | `release-branches` | `''` | Comma-separated `source:base` pairs whose release-please PRs are approved without a Copilot review, such as `develop:main`, or a bare base for a repo with no source branch. Needs `release-author`, and each base must also be in `base-branch`. A malformed entry is ignored with a warning. Empty turns this off. See [Release PRs](how-it-works.md#release-prs) |
 | `release-author` | `''` | Login that must have authored a release PR and all its commits, such as `my-release-app[bot]`. Without it, `release-branches` refuses every release PR |
 | `allow-no-checks` | `false` | When `true`, skip the "all checks must pass" gate when no external CI check runs exist for the head SHA, such as docs-only PRs |
+| `companion-workflow` | `.github/workflows/pr-approval.yml` | strspc-pr-approval's caller file. An unfinished `strspc-pr-approval` check is not waited for only when GitHub Actions ran it from this file for an approver event (APPROVE-038); reading the run needs `actions: read`. Empty means the default; `off` = always waited for |
 
 ### Copilot
 
@@ -41,6 +42,12 @@ Every input of the action, its default, and its outputs. Back to the [README](..
 | Input | Default | Description |
 | ----- | ------- | ----------- |
 | `github-token` | `${{ github.token }}` | Token used for every **read**: check runs, the PR, its reviews. The default is what makes this work on private repos, see [Prerequisites](../README.md#prerequisites) |
+
+### Status comment
+
+| Input | Default | Description |
+| ----- | ------- | ----------- |
+| `comment-on-skip` | `off` | `blocking` explains a skip a person must act on in one PR comment: a protected path waiting for a human, a failing check, a Copilot review that requested changes, or a promotion or release PR whose proof failed. Posted with `bot-github-token` and edited in place when the reason changes; other skips and approvals only update an existing comment. An unknown value means `off`. See [The status comment](usage.md#the-status-comment) |
 
 ### Slack
 

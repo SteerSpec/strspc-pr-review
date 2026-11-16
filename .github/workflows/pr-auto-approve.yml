@@ -85,6 +85,7 @@ permissions:
   pull-requests: write
   contents: read
   checks: read
+  actions: read
 
 concurrency:
   # Serialize runs per PR. For check_run events the PR number comes from

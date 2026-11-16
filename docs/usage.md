@@ -20,6 +20,9 @@ on:
   workflow_run:          # required if your CI is GitHub Actions
     workflows: ['CI']
     types: [completed]
+  schedule:              # the sweep, see below
+    - cron: '23 * * * *'
+  workflow_dispatch:     # a sweep on demand
 
 jobs:
   auto-approve:
@@ -28,6 +31,7 @@ jobs:
       pull-requests: write
       contents: read
       checks: read
+      actions: read
     # concurrency and if: omitted here, keep them from the template
     steps:
       - uses: SteerSpec/strspc-pr-review@v1
@@ -47,7 +51,7 @@ Two tokens do different jobs, and the split matters:
 | Token | Used for | Needs |
 | ----- | -------- | ----- |
 | `bot-github-token` | Posting the approval, and dismissing the bot's own approval | `Pull requests: write` |
-| [`github-token`](inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, and `pull-requests: write` for the review request and the dismissal fallback |
+| [`github-token`](inputs.md#tokens), default `GITHUB_TOKEN` | Every read: check runs, the PR, its reviews, changed files | `checks: read`, `contents: read`, `actions: read` (to tell strspc-pr-approval's job from CI, APPROVE-038), and `pull-requests: write` for the review request and the dismissal fallback |
 
 Listing check runs needs the **`Checks`** permission, and fine-grained PATs can't be granted it. A PAT
 doing the reading works on public repositories, where check runs are readable without it, and fails
@@ -75,6 +79,7 @@ repository variable of the same name.
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_BRANCHES` | `release-branches` |
 | `STRSPC_PR_AUTO_APPROVE_RELEASE_AUTHOR` | `release-author` |
 | `STRSPC_PR_AUTO_APPROVE_ALLOW_NO_CHECKS` | `allow-no-checks` |
+| `STRSPC_PR_AUTO_APPROVE_COMPANION_WORKFLOW` | `companion-workflow` |
 | `STRSPC_PR_AUTO_APPROVE_REQUEST_COPILOT_REVIEW` | `request-copilot-review` |
 | `STRSPC_PR_AUTO_APPROVE_WAIT_FOR_COPILOT_SECONDS` | `wait-for-copilot-seconds` |
 | `STRSPC_PR_AUTO_APPROVE_COPILOT_ERROR_RETRIES` | `copilot-error-retries` |
@@ -219,7 +224,7 @@ finished a median 111s after the last CI check, but more than 300s after it on 1
 budget costs minutes only when the review or a check is slow or never comes.
 
 No budget covers a review that starts long after CI, such as a re-requested review or one Copilot
-picks up late: the next push or CI run re-evaluates the PR.
+picks up late: the sweep below or the next push re-evaluates the PR.
 
 Both waits share one `wait-for-copilot-seconds` budget:
 
@@ -231,3 +236,61 @@ Both waits share one `wait-for-copilot-seconds` budget:
 
 On expiry the action logs a warning and skips as before. A Copilot check that finishes red is still
 caught by the normal failing-check gate, and the gates are re-applied after the review wait.
+
+### The sweep: a fallback for an event that never arrives
+
+Every rule above depends on an event of the PR starting a run at the right moment, and GitHub does not
+always deliver one. CI's `workflow_run` can fail to arrive (#198). A run that Copilot's review starts is
+held at `action_required`. A review that lands after every budget has run out has nothing left to wake
+the action. Each leaves the PR unapproved until someone pushes.
+
+The template's `schedule:` and `workflow_dispatch:` triggers start a sweep. A run started by either
+event carries no PR, so the action lists the open PRs and evaluates each one that the job `if:` would
+admit, meaning its base is in `base-branch`, it is not a draft, and its head is in this repository. Each
+gets the same rules as a run started by its own event. The sweep differs in four ways:
+
+- It never waits for Copilot, whatever `wait-for-copilot-seconds` says. It evaluates one PR after
+  another, and a PR still in progress has events to come.
+- It evaluates the 30 most recently opened PRs at most, and warns when there are more.
+- Its outputs sum up the sweep. `decision` is `approved` when it approved at least one PR, `reason`
+  names each approved PR with its own reason, and the `pr_*` outputs describe the first. Each PR still
+  logs its own `pr-auto-approve pr=<n> decision=…` line.
+- It notifies Slack only when it approves or fails, because a PR parked for a human would otherwise
+  post the same skip on every tick.
+
+Sweeps share one concurrency group, `pr-auto-approve-<repo>-sweep`, and are never cancelled. A sweep
+never cancels a PR's own run, which may be waiting for Copilot. If a sweep and a PR's own run
+evaluate the same head at the same moment, the worst case is two bot approvals of that head. Each
+run checks first whether the bot has already approved it.
+
+Cost: one short run per tick, about a minute billed on a private repo, or some 720 minutes a month at
+the template's hourly cron. Each open PR adds a dozen or so API calls. GitHub runs schedules only from
+the default branch's copy of the workflow, can start them late, and disables them in a public repo
+with no activity for 60 days. To keep only the manual run, delete `schedule:`. Start one with
+`gh workflow run <caller>.yml`. The job `if:` admits a dispatch of the default branch only, so a sweep
+always runs the reviewed definition, never a branch's copy.
+
+### The status comment
+
+A skip writes its reason to the run log and leaves the `auto-approve` check green, so a PR that waits
+for a person looks no different from one that is about to be approved. With `comment-on-skip: blocking`
+(the template reads `STRSPC_PR_AUTO_APPROVE_COMMENT_ON_SKIP`), the action also writes the reason into
+the PR conversation when someone has to act before it can approve:
+
+- a protected path changed and `protected-paths-mode` waits for a human,
+- a check failed,
+- Copilot's latest review requested changes,
+- a promotion or release PR failed its proof.
+
+The comment is one per PR. The action finds it again by a hidden marker and by its author, the bot, and
+edits it only when the reason changes. An edit sends no notification, so the runs that follow every
+review, check and push stay quiet. A skip that clears on its own, such as a check still running or no
+Copilot review yet, and an approval only update a comment that already exists, so the comment stays
+true once the blocker is gone and no PR gets one it never needed. Copilot's inline comments do not count
+as blocking: Copilot's own review already says so in the conversation.
+
+The bot posts it with `bot-github-token`, whose `Pull requests: write` covers PR comments. The reason
+goes in a code span, so a file or branch name cannot mention anyone or add links in the bot's voice.
+Two runs of one PR can overlap, a sweep and an event run for example, and both create a comment; the
+next run keeps the oldest and deletes the others. A failure to comment only logs a warning and never
+changes the decision.

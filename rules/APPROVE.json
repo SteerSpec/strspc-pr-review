@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.46",
-    "timestamp": "2026-11-06T15:55:41Z",
-    "hash": "blake3:25c4ea962ef4ea7276a7bed73b81e54b558ec4e1fa7d038968977aad88f252c7"
+    "version": "0.1.49",
+    "timestamp": "2026-11-15T18:27:21Z",
+    "hash": "blake3:495211162c610dd010423c92e0ec75324c6f2d119ac765acf41496a9bbea4b7c"
   },
   "rules": [
     {
@@ -324,6 +324,33 @@
       "body": "When the action declines a pull request under protected-paths, it MUST withdraw every approval by bot-login on that pull request.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-06",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-036",
+      "revision": 0,
+      "state": "D",
+      "body": "On a schedule or a manual dispatch, the action MUST evaluate the open pull requests into a configured base branch, most recently opened first and up to a stated limit, under the same rules as a run started by an event of each pull request.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-14",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-037",
+      "revision": 0,
+      "state": "D",
+      "body": "When configured to, the action MUST explain in one comment on the pull request, edited in place, a skip that a person must act on before it can approve, without letting a failure to comment change its decision.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-14",
+      "supersedes": null
+    },
+    {
+      "id": "APPROVE-038",
+      "revision": 0,
+      "state": "D",
+      "body": "The action MUST NOT wait on an unfinished run of its own job, or on an unfinished strspc-pr-approval run that GitHub Actions started from the configured companion workflow file for pull_request_target, pull_request_review, check_run or workflow_run, since both gate approval rather than test the code, while counting a finished run of either like any other check.",
+      "added_by": "github:pleberre",
+      "added_at": "2026-11-15",
       "supersedes": null
     }
   ],

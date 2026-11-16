@@ -678,6 +678,45 @@ const CHECK_OK_CONCLUSIONS = ['success', 'neutral', 'skipped', 'cancelled', 'sta
 const isFailedCheck = (cr) =>
   cr.status === 'completed' && !CHECK_OK_CONCLUSIONS.includes(cr.conclusion);
 
+// strspc-pr-approval's job (its caller's job id) starts on the same events as
+// this one and gates approval rather than testing the code, so a run of it
+// still in flight is no CI to wait for (APPROVE-038). A name alone does not
+// identify it, since a repository may have CI named the same. An unfinished run
+// counts as the companion only when GitHub Actions ran it from the companion's
+// caller workflow file (the `companion-workflow` input, default
+// .github/workflows/pr-approval.yml) for an event an approver listens to. CI
+// runs on pull_request, push or merge_group. companion-workflow 'off' turns the
+// exemption off. The lookup needs `actions: read`; without it, or on any
+// failure, the check counts as pending, which is the behaviour before this rule.
+const COMPANION_JOBS = ['strspc-pr-approval'];
+const COMPANION_EVENTS = new Set(['pull_request_target', 'pull_request_review', 'check_run', 'workflow_run']);
+const DEFAULT_COMPANION_WORKFLOW = '.github/workflows/pr-approval.yml';
+const RUN_ID_RE = /\/actions\/runs\/(\d+)(?:\/|$)/;
+
+// Empty means the default, since the template passes an unset repo variable as
+// ''. 'off' (any case) turns the exemption off and returns ''.
+function getCompanionWorkflow(env = process.env) {
+  const raw = String(env.AUTO_APPROVE_COMPANION_WORKFLOW || '').trim();
+  if (!raw) return DEFAULT_COMPANION_WORKFLOW;
+  return raw.toLowerCase() === 'off' ? '' : raw;
+}
+
+// A run's path can carry the ref it ran at (`<file>@refs/heads/main`).
+const workflowFile = (path) => String(path || '').split('@')[0];
+
+async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflow }) {
+  if (!companionWorkflow) return false;
+  if (!cr.app || cr.app.slug !== 'github-actions') return false;
+  const m = RUN_ID_RE.exec(cr.details_url || '');
+  if (!m) return false;
+  if (!cache.has(m[1])) {
+    cache.set(m[1], github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(m[1]) })
+      .then(({ data }) => COMPANION_EVENTS.has(data.event) && workflowFile(data.path) === companionWorkflow,
+        () => false));
+  }
+  return cache.get(m[1]);
+}
+
 // Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
 // (name, app.id) keeping the latest attempt. Prevents the self-pending trap
 // (this job waiting on its own check) and rerun staleness.
@@ -703,13 +742,25 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   // cancelled by the concurrency group, say) report a check with the job's name
   // and are not CI either. Waiting on one stalls a PR that nothing re-triggers,
   // e.g. a type-0 PR, which posts no review to wake the workflow again.
-  const selfJobNames = new Set(['auto-approve', context.job].filter(Boolean));
-  const notSelf = validCheckRuns.filter(
-    (cr) => !(cr.details_url && selfRunRe.test(cr.details_url)) &&
-      // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
-      // happens to share the name is still a real result and keeps counting.
-      !(selfJobNames.has(cr.name) && cr.status !== 'completed'),
-  );
+  // A companion name stays out of the self set even when this caller's job is
+  // named the same: by name alone, its unfinished CI namesakes would skip the
+  // run lookup. This run's own check is still dropped by its URL above.
+  const companionJobNames = new Set(COMPANION_JOBS);
+  const selfJobNames = new Set(['auto-approve', context.job].filter((n) => n && !companionJobNames.has(n)));
+  const runEvents = new Map();
+  const companionWorkflow = getCompanionWorkflow();
+  const notSelf = [];
+  for (const cr of validCheckRuns) {
+    if (cr.details_url && selfRunRe.test(cr.details_url)) continue;
+    // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
+    // happens to share the name is still a real result and keeps counting.
+    if (cr.status !== 'completed') {
+      if (selfJobNames.has(cr.name)) continue;
+      if (companionJobNames.has(cr.name) &&
+        await isCompanionRun({ github, owner, repo, cr, cache: runEvents, companionWorkflow })) continue;
+    }
+    notSelf.push(cr);
+  }
   // Dedupe by (name, app.id) keeping the most-recently-started run. A run with
   // no timestamp has not started yet, so it is the newest, not the oldest:
   // scoring it 0 would let an older green run hide a queued rerun.
@@ -958,9 +1009,241 @@ async function retryErroredCopilotReview({ github, context, core, prNumber, erro
   }
 }
 
+// Events that carry no pull request and ask for a sweep of the open ones.
+// The status comment (comment-on-skip, APPROVE-037). The action re-evaluates a
+// PR on every review, check and push, and a skip used to leave its reason in the
+// run log only, behind a green check. So a skip that a person must act on is
+// written into the PR conversation, once: one comment, found again by this
+// marker and its author, edited in place when the reason changes. An edit sends
+// no notification, so later runs keep it true without noise.
+const STATUS_MARKER = '<!-- pr-auto-approve:status -->';
+const COMMENT_ON_SKIP_MODES = new Set(['off', 'blocking']);
+// What a decision does to the comment. BLOCKING creates it or updates it: a
+// person must act before the action can approve. WAITING and RESOLVED only
+// update one that exists: a skip that clears on its own, or an approval. NONE
+// leaves it alone and makes no call: the PR is not one the action manages, the
+// decision is about this run rather than the PR, or the run failed.
+const COMMENT = Object.freeze({ BLOCKING: 'blocking', WAITING: 'waiting', RESOLVED: 'resolved', NONE: 'none' });
+const STATUS_REASON_MAX = 500;
+
+function getCommentOnSkip(env = process.env, warn = () => {}) {
+  const raw = (env.AUTO_APPROVE_COMMENT_ON_SKIP || '').trim().toLowerCase();
+  if (raw === '') return 'off';
+  if (COMMENT_ON_SKIP_MODES.has(raw)) return raw;
+  warn(`pr-auto-approve: comment-on-skip '${raw}' is not one of off, blocking; using off`);
+  return 'off';
+}
+
+// The reason carries file, branch and check names, which the PR's author picks.
+// In a code span they cannot mention anyone, link anywhere or add markup in the
+// bot's voice: the fence is one backtick longer than any run inside.
+function codeSpan(text) {
+  let s = String(text).replace(/\s+/g, ' ').trim();
+  if (s.length > STATUS_REASON_MAX) s = `${s.slice(0, STATUS_REASON_MAX - 1)}…`;
+  const longest = Math.max(0, ...(s.match(/`+/g) || []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  return `${fence} ${s} ${fence}`;
+}
+
+// Deterministic, with no run id or time in it, so a run that reaches the same
+// reason leaves the comment untouched.
+function statusCommentBody(kind, decision, reason) {
+  const head = {
+    [COMMENT.BLOCKING]: `**pr-auto-approve will not approve this PR:** ${codeSpan(reason)}\n\n` +
+      'It needs a person: fix what the reason names, or review and approve the PR yourself.',
+    [COMMENT.WAITING]: `**pr-auto-approve has not approved this PR yet:** ${codeSpan(reason)}\n\n` +
+      'It evaluates the PR again on its next review, check run or push.',
+    [COMMENT.RESOLVED]: decision === 'approved'
+      ? `**pr-auto-approve approved this PR:** ${codeSpan(reason)}`
+      : `**This PR is approved:** ${codeSpan(reason)}`,
+  }[kind];
+  return `${STATUS_MARKER}\n${head}\n\n<sub>This comment is edited when the reason changes.</sub>\n`;
+}
+
+// Creates, updates or leaves the comment, and returns what it did. Every call
+// goes through the bot's token, so the comment is the bot's and an edit is
+// allowed. Runs of one PR can overlap (a sweep and an event run), so two may
+// both have created one: the oldest stays and the others are deleted.
+async function syncStatusComment({ github, owner, repo, prNumber, botLogin, kind, decision, reason }) {
+  const login = botLogin.toLowerCase();
+  const comments = await github.paginate(github.rest.issues.listComments, {
+    owner, repo, issue_number: prNumber, per_page: 100,
+  });
+  const mine = comments
+    .filter((c) => c.user && String(c.user.login).toLowerCase() === login &&
+      String(c.body || '').startsWith(STATUS_MARKER))
+    .sort((a, b) => a.id - b.id);
+  const body = statusCommentBody(kind, decision, reason);
+  if (mine.length === 0) {
+    if (kind !== COMMENT.BLOCKING) return 'none';
+    await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    return 'created';
+  }
+  const [keep, ...extra] = mine;
+  for (const c of extra) {
+    await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id });
+  }
+  // Compared as GitHub may hand it back: line endings and the trailing
+  // newline are not ours to rely on, and a mismatch would edit on every run.
+  const norm = (b) => String(b || '').replace(/\r\n/g, '\n').trim();
+  if (norm(keep.body) === norm(body)) return extra.length ? 'deduplicated' : 'unchanged';
+  await github.rest.issues.updateComment({ owner, repo, comment_id: keep.id, body });
+  return 'updated';
+}
+
+const SWEEP_EVENTS = new Set(['schedule', 'workflow_dispatch']);
+// Most PRs one sweep evaluates, most recently opened first (APPROVE-036). Each costs a dozen or so API
+// calls, and a repo with more open PRs than this has bigger problems.
+const SWEEP_MAX_PRS = 30;
+
+function isSweep(context) {
+  return SWEEP_EVENTS.has(context.eventName) && !(context.payload && context.payload.pull_request);
+}
+
 async function decide(args) {
+  return isSweep(args.context) ? sweep(args) : evaluate(args);
+}
+
+// The fallback for an event that never arrived. A PR is approved by a run that
+// one of its own events starts, and GitHub does not always deliver one: CI's
+// workflow_run can go missing (#198), and a run Copilot's review triggers is
+// held at action_required. Nothing then evaluates the PR again until someone
+// pushes. A sweep evaluates every open PR the caller's `if:` would admit, each
+// as if its own event had arrived, so the rules are the per-PR rules unchanged.
+// It never waits for Copilot: a PR still in progress has events to come.
+async function sweep({ github, botGithub = github, context, core, sleep = defaultSleep }) {
+  // An empty bot-login fails the job before any PR is read, exactly as it does
+  // on an event run (APPROVE-012).
+  if (!getBotLogin()) return evaluate({ github, botGithub, context, core, sleep });
+
+  const finish = (decision, reason, prOutputs = {}) => {
+    core.info(`pr-auto-approve sweep decision=${decision} reason=${reason}`);
+    core.setOutput('decision', decision);
+    core.setOutput('reason', reason);
+    for (const key of ['pr_url', 'pr_number', 'pr_title', 'pr_author']) {
+      core.setOutput(key, prOutputs[key] || '');
+    }
+    return { decision, reason };
+  };
+
+  const { owner, repo } = context.repo;
+  const BASE_BRANCHES = getBaseBranches();
+  // The gates evaluate() would apply first, applied here so a PR that can never
+  // qualify leaves no decision line behind.
+  const admit = (p) => !p.draft &&
+    p.base && BASE_BRANCHES.has(p.base.ref) &&
+    p.head && p.head.repo && p.head.repo.full_name === `${owner}/${repo}`;
+  // Page by page, and no further than the cap needs: a repo with hundreds of
+  // open PRs must not cost hundreds of list calls every tick.
+  const PER_PAGE = 100;
+  let listed = 0;
+  let candidates = [];
+  // Whether the listing stopped with pages left, so more PRs may be open.
+  let unlisted = false;
   try {
-    return await decideInner(args);
+    for (let page = 1; ; page++) {
+      const { data } = await github.rest.pulls.list({
+        owner, repo, state: 'open', sort: 'created', direction: 'desc', per_page: PER_PAGE, page,
+      });
+      listed += data.length;
+      candidates.push(...data.filter(admit));
+      if (data.length < PER_PAGE) break;
+      if (candidates.length >= SWEEP_MAX_PRS) {
+        unlisted = true;
+        break;
+      }
+    }
+  } catch (err) {
+    core.error(`pr-auto-approve sweep: could not list the open PRs: ${err.status || ''} ${err.message || err}`);
+    return finish('skip', `sweep failed: could not list the open PRs: ${err.status || ''} ${err.message || err}`
+      .replace(/\s+/g, ' ').trim());
+  }
+  if (candidates.length > SWEEP_MAX_PRS || (candidates.length === SWEEP_MAX_PRS && unlisted)) {
+    // The listing stops once the cap is filled, so the total is not known.
+    core.warning(`pr-auto-approve: sweep: evaluating the ${SWEEP_MAX_PRS} most recently opened PRs; ` +
+      'any older ones are not evaluated');
+    candidates = candidates.slice(0, SWEEP_MAX_PRS);
+  } else {
+    core.info(`pr-auto-approve: sweep: ${candidates.length} of ${listed} open PR(s) to evaluate`);
+  }
+
+  const results = [];
+  for (const item of candidates) {
+    // Each PR writes its outputs into its own record; the step's outputs are the
+    // sweep's, set once at the end. Everything else (logs, summary, setFailed)
+    // goes through as it would on an event run.
+    const outputs = {};
+    const prCore = Object.assign(Object.create(core), {
+      setOutput: (key, value) => { outputs[key] = value; },
+    });
+    let result;
+    try {
+      // The PR as a pull_request event would carry it, not the list's abridged copy.
+      const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: item.number });
+      const prContext = {
+        eventName: context.eventName,
+        payload: { pull_request: pr },
+        repo: context.repo,
+        runId: context.runId,
+        job: context.job,
+      };
+      result = await evaluate({ github, botGithub, context: prContext, core: prCore, sleep, waitSeconds: 0 });
+    } catch (err) {
+      // evaluate() catches its own failures, so only the read above lands here.
+      // One unreadable PR must not stop the others.
+      const reason = `evaluation failed: ${err.status || ''} ${err.message || err}`.replace(/\s+/g, ' ').trim();
+      core.error(`pr-auto-approve pr=${item.number} decision=skip reason=${reason}`);
+      result = { decision: 'skip', reason };
+    }
+    results.push({ number: item.number, ...result, outputs });
+  }
+
+  const approved = results.filter((r) => r.decision === 'approved');
+  const errored = results.filter((r) => r.decision === 'error');
+  if (approved.length > 0) {
+    const rest = results.length - approved.length;
+    return finish(
+      'approved',
+      `sweep approved ${approved.map((r) => `#${r.number} (${r.reason})`).join(', ')}` +
+        (rest > 0 ? `; ${rest} other PR(s) not approved` : ''),
+      // The notification links one PR; the reason names them all.
+      approved[0].outputs,
+    );
+  }
+  if (errored.length > 0) {
+    return finish('error', `sweep: ${errored.map((r) => `#${r.number} (${r.reason})`).join(', ')}`, errored[0].outputs);
+  }
+  return finish('skip', `sweep: ${results.length} PR(s) evaluated, none approved`);
+}
+
+// Best-effort: the comment explains a decision and must never change it, so a
+// failure only warns. With comment-on-skip off it makes no call at all.
+async function updateStatusComment({ botGithub, github, context, core }, status, result) {
+  if (!status.prNumber || !status.kind || status.kind === COMMENT.NONE) return;
+  if (getCommentOnSkip(process.env, (m) => core.warning(m)) === 'off') return;
+  const { owner, repo } = context.repo;
+  try {
+    const outcome = await syncStatusComment({
+      github: botGithub || github, owner, repo, prNumber: status.prNumber, botLogin: getBotLogin(),
+      kind: status.kind, decision: result.decision, reason: result.reason,
+    });
+    if (outcome !== 'none' && outcome !== 'unchanged') {
+      core.info(`pr-auto-approve: status comment ${outcome} on #${status.prNumber}`);
+    }
+  } catch (err) {
+    core.warning(`pr-auto-approve: could not update the status comment on #${status.prNumber}: ` +
+      `${err.status || ''} ${err.message || err}`.replace(/\s+/g, ' ').trim());
+  }
+}
+
+async function evaluate(args) {
+  try {
+    // decideInner records here which PR its decision was about and what the
+    // decision does to the status comment.
+    const status = {};
+    const result = await decideInner({ ...args, status });
+    await updateStatusComment(args, status, result);
+    return result;
   } catch (err) {
     // Any unexpected API error (bad/empty token, 403, rate limit, network)
     // is converted to a clean skip so the workflow never flips a required
@@ -1000,7 +1283,9 @@ async function decide(args) {
   }
 }
 
-async function decideInner({ github, botGithub = github, context, core, sleep = defaultSleep }) {
+async function decideInner({
+  github, botGithub = github, context, core, sleep = defaultSleep, waitSeconds: waitOverride, status = {},
+}) {
   const BOT_LOGIN = getBotLogin();
   const BASE_BRANCHES = getBaseBranches();
   const SANDBOX_REPOS = getSandboxRepos();
@@ -1013,8 +1298,15 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // mapping, when the answer is the code file in the diff.
   let thresholdNote = '';
 
-  const setDecision = async (decision, bareReason) => {
+  // `comment` is what the decision does to the status comment (COMMENT). Left
+  // out, an approval resolves it, a skip about a resolved PR is WAITING, and an
+  // error leaves it alone: the job fails loudly enough.
+  const setDecision = async (decision, bareReason, comment) => {
     const reason = thresholdNote ? `${bareReason}; ${thresholdNote}` : bareReason;
+    status.prNumber = pr ? pr.number : null;
+    status.kind = comment || {
+      approved: COMMENT.RESOLVED, skip: COMMENT.WAITING,
+    }[decision] || COMMENT.NONE;
     core.info(`pr-auto-approve pr=${pr ? pr.number : 'none'} decision=${decision} reason=${reason}`);
     core.setOutput('decision', decision);
     core.setOutput('reason', reason);
@@ -1058,7 +1350,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // hard-coded in one place only): never evaluate in response to our own review.
   const triggeringReview = context.payload.review;
   if (triggeringReview && triggeringReview.user && triggeringReview.user.login === BOT_LOGIN) {
-    return setDecision('skip', 'triggered by the bot\'s own review');
+    return setDecision('skip', 'triggered by the bot\'s own review', COMMENT.NONE);
   }
 
   // pull_request_target / pull_request_review carry the PR in the payload. The
@@ -1070,6 +1362,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     return setDecision(
       'skip',
       `PR base ref '${pr.base ? pr.base.ref : ''}' not in [${[...BASE_BRANCHES].join(', ')}]`,
+      COMMENT.NONE,
     );
   }
 
@@ -1156,7 +1449,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // skips as well.
   if (pr.draft) return setDecision('skip', 'PR is draft');
   if (!pr.head || !pr.head.repo || pr.head.repo.full_name !== `${owner}/${repo}`) {
-    return setDecision('skip', 'PR head repo does not match current repo');
+    return setDecision('skip', 'PR head repo does not match current repo', COMMENT.NONE);
   }
 
   // Never self-approve — GitHub blocks it anyway, and in prod this guard
@@ -1165,7 +1458,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // harness can never reach the approval path.
   const inSandbox = SANDBOX_REPOS.has(`${owner}/${repo}`);
   if (BOT_LOGIN && pr.user && pr.user.login === BOT_LOGIN && !inSandbox) {
-    return setDecision('skip', 'PR author is the bot itself');
+    return setDecision('skip', 'PR author is the bot itself', COMMENT.NONE);
   }
 
   const loadReviews = () => github.paginate(github.rest.pulls.listReviews, {
@@ -1243,7 +1536,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
       if (failed) return failed;
     }
-    return setDecision('skip', reason);
+    return setDecision('skip', reason, COMMENT.BLOCKING);
   };
   // As with the file listing below: the top-level catch is a skip, which would
   // leave standing an approval this run could not re-prove. Returns an error
@@ -1355,7 +1648,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         const failed = await withdrawForProtection(`Withdrawn: ${protection.reason}.`);
         if (failed) return failed;
       }
-      return setDecision('skip', protection.reason);
+      return setDecision('skip', protection.reason, COMMENT.BLOCKING);
     }
     try {
       gate = await applyPathGate({
@@ -1417,7 +1710,9 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   // fail to arrive too (#198), the wait is not left to CI's run alone: whichever
   // run first sees Copilot's check pending waits through the other checks as
   // well. Opt-in: see getCopilotWaitSeconds.
-  const waitSeconds = getCopilotWaitSeconds();
+  // A sweep passes 0: it evaluates PRs one after another, so a wait on one would
+  // hold up every PR after it.
+  const waitSeconds = waitOverride === undefined ? getCopilotWaitSeconds() : waitOverride;
   // One budget for both waits below: the check-run wait (when Copilot still
   // registers a check) and the review wait (when it does not).
   const waitDeadline = Date.now() + waitSeconds * 1000;
@@ -1426,9 +1721,10 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
       github, context, core, owner, repo, headSha, checkRuns, waitSeconds, deadline: waitDeadline, sleep,
     });
   } else if (checkRuns.some((cr) => cr.status !== 'completed')) {
-    core.info(
-      `pr-auto-approve: not waiting: ${copilotOptional ? 'PR needs no Copilot review' : 'wait-for-copilot-seconds is 0'}`,
-    );
+    let why = 'wait-for-copilot-seconds is 0';
+    if (copilotOptional) why = 'PR needs no Copilot review';
+    else if (waitOverride !== undefined) why = 'a sweep does not wait';
+    core.info(`pr-auto-approve: not waiting: ${why}`);
   }
 
   // The CI gates, applied here and again after any review wait below: a
@@ -1459,7 +1755,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
         const failed = await withdrawStampedApprovals(() => true, `Withdrawn: ${reason}.`, { unstamped: true });
         if (failed) return failed;
       }
-      return setDecision('skip', reason);
+      return setDecision('skip', reason, COMMENT.BLOCKING);
     }
     const pending = runs.find((cr) => cr.status !== 'completed');
     if (pending) {
@@ -1496,7 +1792,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     );
   }
   if (reviewDecision === 'APPROVED' && !withdrew) {
-    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)');
+    return setDecision('skip', 'PR already approved (reviewDecision=APPROVED)', COMMENT.RESOLVED);
   }
 
   // Idempotency: only skip if the bot's LATEST non-dismissed review is APPROVED.
@@ -1529,7 +1825,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
     latestBotReview.state === 'APPROVED' &&
     latestBotReview.commit_id === headSha;
   if (alreadyApproved) {
-    return setDecision('skip', `bot already approved head ${headSha}`);
+    return setDecision('skip', `bot already approved head ${headSha}`, COMMENT.RESOLVED);
   }
 
   const testLogins = parseTestLogins(
@@ -1625,7 +1921,7 @@ async function decideInner({ github, botGithub = github, context, core, sleep = 
   if (latest) {
     core.info(`pr-auto-approve: latest Copilot review id=${latest.id} state=${latest.state}`);
     if (latest.state === 'CHANGES_REQUESTED') {
-      return setDecision('skip', 'latest Copilot review requested changes');
+      return setDecision('skip', 'latest Copilot review requested changes', COMMENT.BLOCKING);
     }
   }
 
@@ -1890,3 +2186,9 @@ module.exports.retryErroredCopilotReview = retryErroredCopilotReview;
 module.exports.getErrorRetries = getErrorRetries;
 module.exports.makeApiClient = makeApiClient;
 module.exports.API_RETRIES = API_RETRIES;
+module.exports.getCommentOnSkip = getCommentOnSkip;
+module.exports.statusCommentBody = statusCommentBody;
+module.exports.codeSpan = codeSpan;
+module.exports.STATUS_MARKER = STATUS_MARKER;
+module.exports.getCompanionWorkflow = getCompanionWorkflow;
+module.exports.DEFAULT_COMPANION_WORKFLOW = DEFAULT_COMPANION_WORKFLOW;

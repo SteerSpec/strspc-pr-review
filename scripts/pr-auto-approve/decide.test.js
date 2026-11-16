@@ -4343,6 +4343,126 @@ test("a sibling run's in-progress auto-approve check is not treated as CI", asyn
   assert.equal(calls.createReview.length, 1);
 });
 
+// A strspc-pr-approval check as GitHub Actions posts it, from run 999, plus a
+// fake getWorkflowRun answering with `event` for that run (or failing).
+function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, status = 'in_progress',
+  path = '.github/workflows/pr-approval.yml' }) {
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const fake = makeFakeGithub({
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status, conclusion: null, app,
+        started_at: '2026-04-15T11:00:00Z', details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+  });
+  fake.lookups = [];
+  fake.github.rest.actions = {
+    getWorkflowRun: async ({ run_id }) => {
+      fake.lookups.push(run_id);
+      if (!event) throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 });
+      return { data: { id: run_id, event, path } };
+    },
+  };
+  return fake;
+}
+
+test("APPROVE-038: an in-progress strspc-pr-approval check run by an approver event is not treated as CI", async () => {
+  for (const event of ['pull_request_target', 'pull_request_review', 'check_run', 'workflow_run']) {
+    const { github, calls, lookups } = companionCase({ event });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'approved', event);
+    assert.equal(calls.createReview.length, 1, event);
+    assert.ok(lookups.length >= 1 && lookups.every((id) => id === 999), event);
+  }
+});
+
+test("APPROVE-038: a CI job named strspc-pr-approval is still waited for", async () => {
+  for (const event of ['pull_request', 'push', 'merge_group']) {
+    const { github, calls } = companionCase({ event });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'skip', event);
+    assert.match(result.reason, /check still running/, event);
+    assert.equal(calls.createReview.length, 0, event);
+  }
+});
+
+test("APPROVE-038: an unproven strspc-pr-approval check stays pending (no actions: read, not Actions)", async () => {
+  for (const c of [{ event: null }, { event: 'workflow_run', app: { id: 2, slug: 'other-ci' } }]) {
+    const { github, calls, lookups } = companionCase(c);
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    assert.equal(result.decision, 'skip');
+    assert.match(result.reason, /check still running/);
+    assert.equal(calls.createReview.length, 0);
+    if (c.app) assert.equal(lookups.length, 0);
+  }
+});
+
+test("APPROVE-038: a caller job named strspc-pr-approval does not skip the run lookup", async () => {
+  for (const [event, decision] of [['pull_request', 'skip'], ['workflow_run', 'approved']]) {
+    const { github, calls, lookups } = companionCase({ event });
+    const context = { ...makeContext(), job: 'strspc-pr-approval' };
+    const result = await decide({ github, core: makeCore(), context });
+    assert.equal(result.decision, decision, event);
+    assert.ok(lookups.length >= 1, event);
+    if (decision === 'skip') {
+      assert.match(result.reason, /check still running: strspc-pr-approval/, event);
+      assert.equal(calls.createReview.length, 0, event);
+    }
+  }
+});
+
+test("APPROVE-038: only a run of the companion-workflow file is the companion", async () => {
+  const run = async (opts, env = {}) => withEnv(env, async () => {
+    const { github, calls, lookups } = companionCase({ event: 'pull_request_target', ...opts });
+    const result = await decide({ github, core: makeCore(), context: makeContext() });
+    return { decision: result.decision, reason: result.reason, approvals: calls.createReview.length, lookups: lookups.length };
+  });
+  // The default file, with or without the ref suffix a run's path can carry.
+  assert.equal((await run({})).decision, 'approved');
+  assert.equal((await run({ path: '.github/workflows/pr-approval.yml@refs/heads/main' })).decision, 'approved');
+  // Another workflow with a job of that name is CI and is waited for.
+  const other = await run({ path: '.github/workflows/ci.yml' });
+  assert.equal(other.decision, 'skip');
+  assert.match(other.reason, /check still running: strspc-pr-approval/);
+  assert.equal(other.approvals, 0);
+  // A configured file replaces the default.
+  const custom = { AUTO_APPROVE_COMPANION_WORKFLOW: ' .github/workflows/approval.yml ' };
+  assert.equal((await run({ path: '.github/workflows/approval.yml' }, custom)).decision, 'approved');
+  assert.equal((await run({}, custom)).decision, 'skip');
+  // Empty, as an unset repo variable arrives, is the default.
+  assert.equal((await run({}, { AUTO_APPROVE_COMPANION_WORKFLOW: '' })).decision, 'approved');
+  // 'off' turns the exemption off, without a lookup.
+  const off = await run({}, { AUTO_APPROVE_COMPANION_WORKFLOW: 'off' });
+  assert.equal(off.decision, 'skip');
+  assert.equal(off.lookups, 0);
+});
+
+test("getCompanionWorkflow: unset or blank is the default, off is off, a value is trimmed", () => {
+  const { getCompanionWorkflow, DEFAULT_COMPANION_WORKFLOW } = decide;
+  assert.equal(DEFAULT_COMPANION_WORKFLOW, '.github/workflows/pr-approval.yml');
+  assert.equal(getCompanionWorkflow({}), DEFAULT_COMPANION_WORKFLOW);
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: '  ' }), DEFAULT_COMPANION_WORKFLOW);
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: ' OFF ' }), '');
+  assert.equal(getCompanionWorkflow({ AUTO_APPROVE_COMPANION_WORKFLOW: ' .github/workflows/x.yml ' }), '.github/workflows/x.yml');
+});
+
+test("APPROVE-038: a failed strspc-pr-approval check still counts", async () => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github, calls } = makeFakeGithub({
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'completed', conclusion: 'failure',
+        details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+  });
+  const result = await decide({ github, core, context: makeContext() });
+  assert.notEqual(result.decision, 'approved');
+  assert.equal(calls.createReview.length, 0);
+});
+
 test('a rounds-rule approval is stamped with the threshold it relied on', async () => {
   const core = makeCore();
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
@@ -5320,4 +5440,533 @@ test('allowlist: a pass still needs the normal rules', async () => {
   });
   assert.equal(result.decision, 'skip');
   assert.match(result.reason, /^failing check: /);
+});
+
+// -- Sweep ------------------------------------------------------------------
+// A schedule or workflow_dispatch run carries no PR: it evaluates every open PR
+// the caller's `if:` would admit, as if that PR's own event had arrived.
+
+function openPr(number, overrides = {}) {
+  return {
+    number,
+    draft: false,
+    title: `fix: change ${number}`,
+    user: { login: 'someone' },
+    html_url: `https://github.com/axeptio/test-only-repo/pull/${number}`,
+    head: { sha: 'deadbeef', repo: { full_name: 'axeptio/test-only-repo' } },
+    base: { ref: 'develop' },
+    ...overrides,
+  };
+}
+
+function makeSweepGithub(open, { getPrImpl, listImpl, ...opts } = {}) {
+  const gets = [];
+  const made = makeApprovableGithub({
+    ...opts,
+    getPrImpl: async (n) => {
+      gets.push(n);
+      if (getPrImpl) return getPrImpl(n);
+      return { data: open.find((p) => p.number === n) };
+    },
+  });
+  made.github.rest.pulls.list = listImpl || (async () => ({ data: open }));
+  return { ...made, gets };
+}
+
+function makeSweepContext(eventName = 'schedule') {
+  return { eventName, runId: 111, job: 'auto-approve', repo: { owner: 'axeptio', repo: 'test-only-repo' }, payload: {} };
+}
+
+function sweepCore() {
+  const core = makeCore();
+  core.lines = [];
+  core.info = (m) => core.lines.push(m);
+  core.error = (m) => core.lines.push(m);
+  return core;
+}
+
+for (const eventName of ['schedule', 'workflow_dispatch']) {
+  test(`sweep (${eventName}): approves an open PR no event re-evaluated`, async () => {
+    const core = sweepCore();
+    const { github, calls } = makeSweepGithub([openPr(42)]);
+    const result = await decide({ github, context: makeSweepContext(eventName), core });
+    assert.equal(result.decision, 'approved');
+    assert.match(result.reason, /^sweep approved #42 \(copilot-clean /);
+    assert.equal(calls.createReview.length, 1);
+    assert.equal(calls.createReview[0].pull_number, 42);
+    assert.equal(core.outputs.decision, 'approved');
+    assert.equal(core.outputs.pr_number, '42');
+    assert.ok(core.lines.some((l) => /^pr-auto-approve pr=42 decision=approved /.test(l)), core.lines.join('\n'));
+  });
+}
+
+test('sweep: a PR in the event payload is evaluated alone, not swept', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42), openPr(43)]);
+  const ctx = { ...makeSweepContext('workflow_dispatch'), payload: { pull_request: openPr(42) } };
+  const result = await decide({ github, context: ctx, core });
+  assert.equal(result.decision, 'approved');
+  assert.doesNotMatch(result.reason, /^sweep/);
+  assert.equal(calls.createReview.length, 1);
+});
+
+test('sweep: skips drafts, forks and other bases without evaluating them', async () => {
+  const core = sweepCore();
+  const { github, gets, calls } = makeSweepGithub([
+    openPr(1, { draft: true }),
+    openPr(2, { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } }),
+    openPr(3, { base: { ref: 'main' } }),
+    openPr(4, { head: { sha: 'deadbeef', repo: null } }),
+    openPr(5),
+  ]);
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(gets.filter((n) => n !== 5), []);
+  assert.equal(result.decision, 'approved');
+  assert.match(result.reason, /^sweep approved #5 /);
+  assert.equal(calls.createReview.length, 1);
+  assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 5 open PR(s) to evaluate'), core.lines.join('\n'));
+  assert.ok(!core.lines.some((l) => /^pr-auto-approve pr=[1-4] /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: never waits for Copilot, whatever wait-for-copilot-seconds says', async () => {
+  process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS = '600';
+  try {
+    const core = sweepCore();
+    let fetches = 0;
+    const { github } = makeSweepGithub([openPr(42)], {
+      checkRuns: [
+        DEFAULT_CHECK_RUNS[0],
+        { name: 'copilot-pull-request-reviewer', status: 'in_progress', app: { id: 1 }, started_at: '2026-04-15T10:01:00Z' },
+      ],
+    });
+    const listForRef = github.rest.checks.listForRef;
+    github.rest.checks.listForRef = async (a) => { fetches++; return listForRef(a); };
+    const sleep = async () => { throw new Error('a sweep must not sleep'); };
+    const result = await decide({ github, context: makeSweepContext(), core, sleep });
+    assert.equal(result.decision, 'skip');
+    assert.equal(fetches, 1);
+    assert.ok(core.lines.includes('pr-auto-approve: not waiting: a sweep does not wait'), core.lines.join('\n'));
+    assert.ok(core.lines.some((l) => /^pr-auto-approve pr=42 decision=skip reason=check still running/.test(l)),
+      core.lines.join('\n'));
+  } finally {
+    delete process.env.AUTO_APPROVE_COPILOT_WAIT_SECONDS;
+  }
+});
+
+test('sweep: a PR that cannot be read does not stop the others', async () => {
+  const core = sweepCore();
+  const open = [openPr(41), openPr(42)];
+  const { github, calls } = makeSweepGithub(open, {
+    getPrImpl: async (n) => {
+      if (n === 41) throw Object.assign(new Error('Server Error'), { status: 502 });
+      return { data: open[1] };
+    },
+  });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'approved');
+  assert.equal(result.reason.startsWith('sweep approved #42 '), true, result.reason);
+  assert.match(result.reason, /; 1 other PR\(s\) not approved$/);
+  assert.equal(calls.createReview.length, 1);
+  assert.ok(core.lines.includes('pr-auto-approve pr=41 decision=skip reason=evaluation failed: 502 Server Error'),
+    core.lines.join('\n'));
+});
+
+test('sweep: nothing approved is a skip with empty PR outputs', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42), openPr(43)], { reviews: [] });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep: 2 PR(s) evaluated, none approved');
+  assert.equal(calls.createReview.length, 0);
+  assert.equal(core.outputs.pr_number, '');
+  assert.equal(core.outputs.pr_url, '');
+  assert.ok(core.lines.some((l) => /^pr-auto-approve pr=43 decision=skip /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: no open PR is a skip', async () => {
+  const core = sweepCore();
+  const { github } = makeSweepGithub([]);
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep: 0 PR(s) evaluated, none approved');
+});
+
+test('sweep: the open PRs cannot be listed: skip, never approve', async () => {
+  const core = sweepCore();
+  const { github, calls } = makeSweepGithub([openPr(42)], {
+    listImpl: async () => { throw Object.assign(new Error('Bad credentials'), { status: 401 }); },
+  });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'sweep failed: could not list the open PRs: 401 Bad credentials');
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('sweep: an empty bot-login fails the job before any PR is read', async () => {
+  const saved = process.env.AUTO_APPROVE_BOT_LOGIN;
+  process.env.AUTO_APPROVE_BOT_LOGIN = '';
+  try {
+    const core = sweepCore();
+    const failures = [];
+    core.setFailed = (m) => failures.push(m);
+    const { github, gets } = makeSweepGithub([openPr(42)]);
+    let listed = false;
+    github.rest.pulls.list = async () => { listed = true; return { data: [] }; };
+    const result = await decide({ github, context: makeSweepContext(), core });
+    assert.equal(result.decision, 'error');
+    assert.equal(failures.length, 1);
+    assert.equal(listed, false);
+    assert.deepEqual(gets, []);
+  } finally {
+    process.env.AUTO_APPROVE_BOT_LOGIN = saved;
+  }
+});
+
+test('sweep: a PR whose evaluation fails the job still fails it, and the rest are evaluated', async () => {
+  const core = sweepCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const open = [openPr(41), openPr(42)];
+  const { github, calls } = makeSweepGithub(open);
+  // A stale relaxed-threshold approval on #41 that cannot be listed: APPROVE-014
+  // fails the job. Simulated by a listReviews that throws for #41 only.
+  const listReviews = github.rest.pulls.listReviews;
+  github.rest.pulls.listReviews = async (a) => {
+    if (a.pull_number === 41) throw Object.assign(new Error('Server Error'), { status: 500 });
+    return listReviews(a);
+  };
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(calls.createReview.length, 1);
+  assert.equal(calls.createReview[0].pull_number, 42);
+  assert.equal(result.decision, 'approved');
+  assert.equal(failures.length, 1);
+  assert.ok(core.lines.some((l) => /^pr-auto-approve pr=41 decision=error /.test(l)), core.lines.join('\n'));
+});
+
+test('sweep: an error and no approval makes the sweep an error', async () => {
+  const core = sweepCore();
+  const failures = [];
+  core.setFailed = (m) => failures.push(m);
+  const { github, calls } = makeSweepGithub([openPr(41)]);
+  github.rest.pulls.listReviews = async () => { throw Object.assign(new Error('Server Error'), { status: 500 }); };
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(result.decision, 'error');
+  assert.match(result.reason, /^sweep: #41 \(could not list the PR's reviews/);
+  assert.equal(core.outputs.decision, 'error');
+  assert.equal(core.outputs.pr_number, '41');
+  assert.equal(failures.length, 1);
+  assert.equal(calls.createReview.length, 0);
+});
+
+test('sweep: evaluates at most 30 PRs, and says so', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 31 }, (_, i) => openPr(i + 1));
+  const { github, gets } = makeSweepGithub(open, { reviews: [] });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.equal(gets.length, 30);
+  assert.equal(gets.includes(31), false);
+  assert.equal(result.reason, 'sweep: 30 PR(s) evaluated, none approved');
+  assert.ok(core.warnings.some((w) => /evaluating the 30 most recently opened PRs; any older ones are not evaluated$/.test(w)),
+    core.warnings.join('\n'));
+});
+
+// The e2e sweep-approves scenario's shape: a lowered default, a code file, one
+// Copilot review with a comment. A default is not a type relaxed below it, so
+// copilot-optional-paths does not gate it.
+test('sweep: a lowered default threshold approves a code PR after one commented round', async () => {
+  await withRoundsByType('default:1', async () => {
+    const core = sweepCore();
+    const { github, calls } = makeSweepGithub([openPr(42, { title: 'e2e: sweep-approves' })], {
+      changedFiles: ['e2e-marker.txt'],
+      reviewComments: { 1: [{ id: 9, body: 'nit from e2e' }] },
+    });
+    const result = await decide({ github, context: makeSweepContext('workflow_dispatch'), core });
+    assert.equal(result.decision, 'approved', result.reason);
+    assert.match(result.reason, /^sweep approved #42 \(1-rounds \(/);
+    assert.equal(calls.createReview.length, 1);
+  });
+});
+
+function pagedList(open, pages) {
+  return async ({ page = 1, per_page: perPage = 30 }) => {
+    pages.push(page);
+    return { data: open.slice((page - 1) * perPage, page * perPage) };
+  };
+}
+
+test('sweep: stops listing once the cap is filled', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 250 }, (_, i) => openPr(i + 1));
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.length, 30);
+});
+
+test('sweep: lists the next page when the first holds too few candidates', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 100 }, (_, i) => openPr(i + 1, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { listImpl: pagedList(open, pages) });
+  const result = await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1, 2]);
+  assert.ok(gets.length > 0 && gets.every((n) => n === 101), String(gets));
+  assert.match(result.reason, /^sweep approved #101 /);
+  assert.ok(core.lines.includes('pr-auto-approve: sweep: 1 of 101 open PR(s) to evaluate'), core.lines.join('\n'));
+});
+
+test('sweep: exactly 30 candidates on one short page is no warning', async () => {
+  const core = sweepCore();
+  const open = Array.from({ length: 30 }, (_, i) => openPr(i + 1));
+  const { github, gets } = makeSweepGithub(open, { reviews: [] });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.equal(gets.length, 30);
+  assert.deepEqual(core.warnings, []);
+});
+
+test('sweep: a full page that fills the cap is not followed by another', async () => {
+  const core = sweepCore();
+  const open = [
+    ...Array.from({ length: 30 }, (_, i) => openPr(i + 1)),
+    ...Array.from({ length: 70 }, (_, i) => openPr(i + 31, { draft: true })),
+    openPr(101),
+  ];
+  const pages = [];
+  const { github, gets } = makeSweepGithub(open, { reviews: [], listImpl: pagedList(open, pages) });
+  await decide({ github, context: makeSweepContext(), core });
+  assert.deepEqual(pages, [1]);
+  assert.equal(gets.includes(101), false);
+  assert.equal(core.warnings.length, 1);
+});
+
+// -- Status comment (comment-on-skip, APPROVE-037) ----------------------------
+
+const STATUS_ON = { AUTO_APPROVE_COMMENT_ON_SKIP: 'blocking' };
+
+// Adds the issue-comment endpoints to a fake, holding `existing` comments.
+function withIssueComments(github, existing = [], { createImpl } = {}) {
+  const comments = existing.map((c) => ({ ...c }));
+  const calls = { list: 0, create: [], update: [], delete: [] };
+  let nextId = 900;
+  github.rest.issues = {
+    listComments: async ({ issue_number }) => {
+      calls.list++;
+      return { data: comments.filter((c) => (c.issue ?? 42) === issue_number).map((c) => ({ ...c })) };
+    },
+    createComment: async (args) => {
+      calls.create.push(args);
+      if (createImpl) return createImpl(args);
+      comments.push({ id: nextId++, issue: args.issue_number, body: args.body, user: { login: 'axeptio-bot' } });
+      return { data: {} };
+    },
+    updateComment: async (args) => {
+      calls.update.push(args);
+      const c = comments.find((x) => x.id === args.comment_id);
+      if (c) c.body = args.body;
+      return { data: {} };
+    },
+    deleteComment: async (args) => {
+      calls.delete.push(args);
+      comments.splice(comments.findIndex((x) => x.id === args.comment_id), 1);
+      return { data: {} };
+    },
+  };
+  return { comments, calls };
+}
+
+async function runStatus(env, opts = {}, existing = [], issueOpts = {}) {
+  return withEnv(env, async () => {
+    const core = makeCore();
+    const lines = [];
+    core.info = (m) => lines.push(m);
+    const { github, calls } = makeApprovableGithub(opts);
+    const issues = withIssueComments(github, existing, issueOpts);
+    const result = await decide({ github, core, context: makeContext(opts.contextOpts) });
+    return { result, calls, core, issues, lines };
+  });
+}
+
+const BLOCKING_PROTECTED = { ...STATUS_ON, ...MANUAL };
+
+test('comment-on-skip: parsed case-insensitively, anything else means off with a warning', () => {
+  const warned = [];
+  const w = (m) => warned.push(m);
+  assert.equal(decide.getCommentOnSkip({}, w), 'off');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: ' ' }, w), 'off');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: ' Blocking ' }, w), 'blocking');
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: 'off' }, w), 'off');
+  assert.deepEqual(warned, []);
+  assert.equal(decide.getCommentOnSkip({ AUTO_APPROVE_COMMENT_ON_SKIP: 'always' }, w), 'off');
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /comment-on-skip 'always' is not one of off, blocking/);
+});
+
+test('codeSpan: the fence outgrows any backtick run, so nothing escapes the span', () => {
+  assert.equal(decide.codeSpan('plain'), '` plain `');
+  assert.equal(decide.codeSpan('a `b` c'), '`` a `b` c ``');
+  assert.equal(decide.codeSpan('x ``` y'), '```` x ``` y ````');
+  assert.equal(decide.codeSpan('line one\n\nline two'), '` line one line two `');
+  const long = decide.codeSpan('z'.repeat(800));
+  assert.ok(long.length < 520 && long.includes('…'), long.length);
+});
+
+test('status comment: off (the default) makes no comment call', async () => {
+  const { result, issues } = await runStatus(MANUAL, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(issues.calls.list, 0);
+  assert.equal(issues.calls.create.length, 0);
+});
+
+test('status comment: a blocking skip creates one comment, the reason in a code span', async () => {
+  const { result, issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.equal(issues.calls.create.length, 1);
+  const { body, issue_number } = issues.calls.create[0];
+  assert.equal(issue_number, 42);
+  assert.ok(body.startsWith(decide.STATUS_MARKER), body);
+  assert.ok(body.includes(`will not approve this PR:** \` ${MANUAL_REFUSAL} \``), body);
+  assert.match(body, /needs a person/);
+  assert.ok(lines.includes('pr-auto-approve: status comment created on #42'), lines.join('\n'));
+});
+
+test('status comment: the same reason again leaves the comment untouched', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] },
+    [{ id: 5, body, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.create.length, 0);
+  assert.equal(issues.calls.update.length, 0);
+  assert.ok(!lines.some((l) => /status comment/.test(l)), lines.join('\n'));
+});
+
+test('status comment: a skip that clears on its own updates an existing comment but creates none', async () => {
+  const running = [{ name: 'ci', status: 'in_progress', conclusion: null }];
+  const none = await runStatus(STATUS_ON, { checkRuns: running });
+  assert.match(none.result.reason, /check still running: ci/);
+  assert.equal(none.issues.calls.list, 1);
+  assert.equal(none.issues.calls.create.length, 0);
+
+  const old = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues } = await runStatus(STATUS_ON, { checkRuns: running }, [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.update.length, 1);
+  assert.equal(issues.calls.update[0].comment_id, 5);
+  assert.match(issues.calls.update[0].body, /has not approved this PR yet:\*\* ` check still running: ci `/);
+});
+
+test('status comment: an approval rewrites an existing comment and creates none', async () => {
+  const fresh = await runStatus(STATUS_ON);
+  assert.equal(fresh.result.decision, 'approved', fresh.result.reason);
+  assert.equal(fresh.issues.calls.create.length, 0);
+
+  const old = decide.statusCommentBody('blocking', 'skip', 'failing check: ci (failure)');
+  const { result, issues } = await runStatus(STATUS_ON, {}, [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.equal(result.decision, 'approved');
+  assert.equal(issues.calls.update.length, 1);
+  assert.match(issues.calls.update[0].body, /\*\*pr-auto-approve approved this PR:\*\* ` copilot-clean/);
+});
+
+test('status comment: a failing check and a Copilot CHANGES_REQUESTED are blocking', async () => {
+  const failing = await runStatus(STATUS_ON, { checkRuns: [{ name: 'ci', status: 'completed', conclusion: 'failure' }] });
+  assert.equal(failing.result.reason, 'failing check: ci (failure)');
+  assert.equal(failing.issues.calls.create.length, 1);
+
+  const changes = await runStatus(STATUS_ON, {
+    reviews: [{ id: 1, state: 'CHANGES_REQUESTED', commit_id: 'deadbeef', submitted_at: '2026-04-16T10:00:00Z',
+      user: { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' } }],
+  });
+  assert.equal(changes.result.reason, 'latest Copilot review requested changes');
+  assert.equal(changes.issues.calls.create.length, 1);
+});
+
+test('status comment: Copilot inline comments are not blocking (its review already says so)', async () => {
+  const { result, issues } = await runStatus(STATUS_ON, { reviewComments: { 1: [{ id: 1 }] } });
+  assert.match(result.reason, /latest Copilot review has 1 comments/);
+  assert.equal(issues.calls.create.length, 0);
+});
+
+test('status comment: only the bot\'s own comment with the marker counts', async () => {
+  const forged = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [
+    { id: 3, body: forged, user: { login: 'someone-else' } },
+    { id: 4, body: `quoting it: ${forged}`, user: { login: 'axeptio-bot' } },
+  ]);
+  assert.equal(issues.calls.update.length, 0);
+  assert.equal(issues.calls.delete.length, 0);
+  assert.equal(issues.calls.create.length, 1);
+});
+
+test('status comment: duplicates from overlapping runs collapse to the oldest', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL);
+  const { issues, lines } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [
+    { id: 8, body, user: { login: 'Axeptio-Bot' } },
+    { id: 6, body: decide.statusCommentBody('waiting', 'skip', 'no Copilot review yet'), user: { login: 'axeptio-bot' } },
+  ]);
+  assert.deepEqual(issues.calls.delete.map((d) => d.comment_id), [8]);
+  assert.deepEqual(issues.calls.update.map((u) => u.comment_id), [6]);
+  assert.deepEqual(issues.comments.map((c) => c.id), [6]);
+  assert.ok(lines.includes('pr-auto-approve: status comment updated on #42'), lines.join('\n'));
+});
+
+test('status comment: a failure only warns and never changes the decision', async () => {
+  const { result, core } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] }, [], {
+    createImpl: () => { throw Object.assign(new Error('Resource not accessible by personal access token'), { status: 403 }); },
+  });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, MANUAL_REFUSAL);
+  assert.ok(core.warnings.some((w) => /could not update the status comment on #42: 403 Resource not accessible/.test(w)),
+    core.warnings.join('\n'));
+});
+
+test('status comment: a PR the action does not manage gets no comment call', async () => {
+  for (const prOverrides of [
+    { head: { sha: 'deadbeef', repo: { full_name: 'someone-else/fork' } } },
+    { base: { ref: 'feature/x' } },
+    { user: { login: 'axeptio-bot' } },
+  ]) {
+    const { issues, result } = await runStatus(STATUS_ON, { contextOpts: { prOverrides, repo: 'prod-repo' } });
+    assert.equal(result.decision, 'skip', JSON.stringify(prOverrides));
+    assert.equal(issues.calls.list, 0, result.reason);
+  }
+});
+
+test('status comment: posted with the bot token, not the read token', async () => {
+  await withEnv(BLOCKING_PROTECTED, async () => {
+    const { github } = makeApprovableGithub({ changedFiles: ['rules/APPROVE.json'] });
+    const { github: botGithub } = makeApprovableGithub();
+    const read = withIssueComments(github);
+    const bot = withIssueComments(botGithub);
+    await decide({ github, botGithub, core: makeCore(), context: makeContext() });
+    assert.equal(read.calls.list + read.calls.create.length, 0);
+    assert.equal(bot.calls.create.length, 1);
+  });
+});
+
+test('status comment: an already-approved PR rewrites an existing comment as approved', async () => {
+  const old = decide.statusCommentBody('blocking', 'skip', 'failing check: ci (failure)');
+  const { result, issues } = await runStatus(STATUS_ON, { reviewDecision: 'APPROVED' },
+    [{ id: 5, body: old, user: { login: 'axeptio-bot' } }]);
+  assert.match(result.reason, /PR already approved/);
+  assert.equal(issues.calls.update.length, 1);
+  assert.match(issues.calls.update[0].body, /\*\*This PR is approved:\*\* ` PR already approved/);
+});
+
+test('status comment: GitHub\'s line endings and trailing newline do not count as a change', async () => {
+  const body = decide.statusCommentBody('blocking', 'skip', MANUAL_REFUSAL).replace(/\n/g, '\r\n').trim();
+  const { issues } = await runStatus(BLOCKING_PROTECTED, { changedFiles: ['rules/APPROVE.json'] },
+    [{ id: 5, body, user: { login: 'axeptio-bot' } }]);
+  assert.equal(issues.calls.update.length, 0);
+});
+
+test('status comment: a sweep comments on each PR it evaluates', async () => {
+  await withEnv(BLOCKING_PROTECTED, async () => {
+    const { github } = makeSweepGithub([openPr(42), openPr(43)], { changedFiles: ['rules/APPROVE.json'] });
+    const issues = withIssueComments(github);
+    const result = await decide({ github, context: makeSweepContext(), core: sweepCore() });
+    assert.equal(result.decision, 'skip');
+    assert.deepEqual(issues.calls.create.map((c) => c.issue_number), [42, 43]);
+  });
 });

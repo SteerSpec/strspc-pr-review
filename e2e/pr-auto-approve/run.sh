@@ -142,6 +142,37 @@ scenario_protected_path_manual() {
   expect_outcome "$PR_NUM"
 }
 
+# The bot's status comments on PR $1, oldest first, as "id updated_at body-head" lines.
+status_comments() {
+  gh api "repos/$REPO/issues/$1/comments?per_page=100" --jq \
+    "[.[] | select(.user.login == \"$APPROVER_LOGIN\" and (.body | startswith(\"<!-- pr-auto-approve:status -->\")))]
+     | sort_by(.id) | .[] | \"\\(.id) \\(.updated_at) \\(.body | split(\"\\n\")[1])\""
+}
+
+# A blocking skip leaves one comment, and a second run with the same reason
+# leaves it exactly as it was: no second comment, no edit.
+scenario_status_comment() {
+  local first="" deadline since now
+  open_pr status-comment "e2e: status comment" "" "rules/e2e-marker.json"
+  wait_for_ci "$PR_NUM"
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  expect_outcome "$PR_NUM"
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while (( $(date +%s) < deadline )); do
+    first=$(status_comments "$PR_NUM" | head -1) || first=""
+    [[ -n "$first" ]] && break
+    sleep "$POLL_INTERVAL"
+  done
+  [[ -n "$first" ]] || fail "$SCENARIO: no status comment from $APPROVER_LOGIN"
+  [[ "$first" == *"will not approve this PR:"*"protected path"* ]] || fail "$SCENARIO: unexpected comment: $first"
+  since=$(now_utc)
+  post_review "$PR_NUM" COMMENT "$(fixture approval-recommended)"
+  wait_decision "$PR_NUM" skip "$(scenario_field "$SCENARIO" reason)" "$since" \
+    || fail "$SCENARIO: the second review's run did not skip"
+  now=$(status_comments "$PR_NUM") || fail "$SCENARIO: could not list the comments"
+  [[ "$now" == "$first" ]] || fail "$SCENARIO: the comment changed or multiplied: was '$first', now '$now'"
+}
+
 # 'mai' passes the caller's contains() pre-filter for 'main', so the run reaches
 # the action, whose exact match must refuse it. No CI runs on 'mai', and none is
 # needed: the base gate comes first.
@@ -231,6 +262,26 @@ scenario_draft() {
   wait_for_ci "$PR_NUM"
   post_review "$PR_NUM" COMMENT "clean review on a draft"
   expect_outcome "$PR_NUM"
+}
+
+# Needs the `sweep` profile. A PR that no event re-evaluates: the run its review
+# started skipped it, and what makes it approvable, a variable, fires no event.
+# Only the sweep can approve it, and the decision must come from the dispatched
+# run. The profile's ROUNDS_BY_TYPE is reset by the next scenario's profile.
+scenario_sweep_approves() {
+  open_pr sweep "e2e: sweep-approves"
+  wait_for_ci "$PR_NUM"
+  post_review_with_comment "$PR_NUM" "round 1"
+  wait_decision "$PR_NUM" skip "^latest Copilot review has 1 comments" "$SCENARIO_SINCE" \
+    || fail "$SCENARIO: the review's run did not skip"
+  local since
+  since=$(now_utc)
+  gh variable set STRSPC_PR_AUTO_APPROVE_ROUNDS_BY_TYPE -R "$REPO" --body "default:1"
+  gh workflow run "$CALLER_WORKFLOW" -R "$REPO" --ref main >/dev/null
+  wait_caller_run main workflow_dispatch "$since" || fail "$SCENARIO: no dispatched run succeeded"
+  wait_decision "$PR_NUM" approved "$(scenario_field "$SCENARIO" reason)" "$since" \
+    || fail "$SCENARIO: the sweep did not approve"
+  expect_outcome "$PR_NUM" "$since"
 }
 
 # The next four need the `types` profile. They post NO Copilot review: type 0

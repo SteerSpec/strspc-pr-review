@@ -67,7 +67,8 @@ The rollout showed these differ per repo and are the usual cause of a caller tha
   the repo already uses (SteerSpec callers use `secrets.BOT_TOKEN`). A wrong name reaches the
   action as an empty token.
 - **Public vs private** — `wait-for-copilot-seconds` is free on public repos and billable on
-  private ones.
+  private ones. So is the sweep's `schedule:`, at about a minute per tick: keep it hourly, or delete
+  `schedule:` and keep `workflow_dispatch:` on a private repo that must save minutes.
 - **Does the repo have PR-time CI at all?** If not, the action can never approve; add a minimal
   check rather than reaching for `allow-no-checks`.
 

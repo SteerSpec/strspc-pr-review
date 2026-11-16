@@ -16,9 +16,10 @@ inputs:
   bot-github-token:
     required: true
     description: >-
-      PAT for bot-login, used to post the APPROVE review and, when a retitle
-      raises the required rounds, to dismiss that bot's own earlier approval
-      (if the PAT is refused, the dismissal is retried with github-token).
+      PAT for bot-login, used to post the APPROVE review, the status comment
+      of comment-on-skip, and, when a retitle raises the required rounds, to
+      dismiss that bot's own earlier approval (if the PAT is refused, the
+      dismissal is retried with github-token).
       It needs only `Pull requests: write` — NOT repo-wide scope. Everything
       else is read with github-token below, because listing check runs requires
       the `Checks` permission, which fine-grained PATs cannot be granted at all;
@@ -31,8 +32,8 @@ inputs:
       Token used for every READ (check runs, the PR, its reviews and their
       comments). Defaults to the workflow's GITHUB_TOKEN, which is what makes
       this work on private repositories. The action needs `checks: read`,
-      `pull-requests: write` and `contents: read` from it and nothing else; the
-      shipped template grants all three. `contents: read` is for the commit
+      `pull-requests: write`, `contents: read` and `actions: read` from it and
+      nothing else; the shipped template grants all four. `contents: read` is for the commit
       comparison that lists a PR's changed files when rounds-by-type relaxes
       its type or protected-paths is set (the list is pinned to the evaluated
       head SHA that way), and for the branch, commit and config lookups of promotion-branches and
@@ -171,6 +172,16 @@ inputs:
       When true, skip the "all checks must pass" gate when no external check
       runs exist for the head SHA (e.g., docs-only PRs that trigger no CI).
       Defaults to false (safe default: require at least one passing check).
+  companion-workflow:
+    required: false
+    default: '.github/workflows/pr-approval.yml'
+    description: >-
+      strspc-pr-approval's caller workflow file. An unfinished
+      strspc-pr-approval check is not waited for only when GitHub Actions ran
+      it from this file for pull_request_target, pull_request_review,
+      check_run or workflow_run; any other check of that name counts as CI.
+      Reading the run needs `actions: read`. Empty means the default; 'off'
+      turns the exemption off.
   wait-for-copilot-seconds:
     required: false
     default: '0'
@@ -197,6 +208,19 @@ inputs:
       fail to arrive (#198). So on private repos a run may bill minutes from
       the first completed workflow until CI finishes, unless a later run
       cancels it through the concurrency group first.
+  comment-on-skip:
+    required: false
+    default: 'off'
+    description: >-
+      'blocking' writes the reason into the PR conversation when the action
+      skips for something a person must act on: a protected path that waits
+      for a human, a failing check, a Copilot review that requested changes,
+      or a promotion or release PR whose proof failed. One comment per PR,
+      posted with bot-github-token (Pull requests: write is enough) and edited
+      in place when the reason changes, so later runs notify nobody. A skip that
+      clears on its own, and an approval, only update a comment that already
+      exists. 'off' (default) posts nothing; an unknown value means 'off'.
+      A failure to comment only logs a warning.
   test-copilot-logins:
     required: false
     default: ''
@@ -317,8 +341,10 @@ runs:
         AUTO_APPROVE_RELEASE_BRANCHES: ${{ inputs.release-branches }}
         AUTO_APPROVE_RELEASE_AUTHOR: ${{ inputs.release-author }}
         AUTO_APPROVE_ALLOW_NO_CHECKS: ${{ inputs.allow-no-checks }}
+        AUTO_APPROVE_COMPANION_WORKFLOW: ${{ inputs.companion-workflow }}
         AUTO_APPROVE_COPILOT_WAIT_SECONDS: ${{ inputs.wait-for-copilot-seconds }}
         AUTO_APPROVE_COPILOT_ERROR_RETRIES: ${{ inputs.copilot-error-retries }}
+        AUTO_APPROVE_COMMENT_ON_SKIP: ${{ inputs.comment-on-skip }}
         AUTO_APPROVE_SANDBOX_REPOS: ${{ inputs.sandbox-repos }}
         AUTO_APPROVE_COPILOT_TEST_LOGINS: ${{ inputs.test-copilot-logins }}
         ACTION_PATH: ${{ github.action_path }}
@@ -383,8 +409,12 @@ runs:
           --data "$payload" \
           https://slack.com/api/chat.postMessage
 
+    # Not for a sweep: it runs on a schedule, and a PR parked for a human would
+    # post the same skip every time.
     - name: Notify Slack (skipped)
-      if: steps.evaluate.outputs.decision == 'skip' && inputs.slack-bot-token != ''
+      if: >-
+        steps.evaluate.outputs.decision == 'skip' && inputs.slack-bot-token != '' &&
+        github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
       continue-on-error: true
       shell: bash
       env:

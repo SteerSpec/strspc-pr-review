@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.12.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.11.1...v1.12.0) (2026-11-16)
+
+
+### Features
+
+* explain a blocking skip in one sticky PR comment ([#206](https://github.com/SteerSpec/strspc-pr-review/issues/206)) ([4bdb59f](https://github.com/SteerSpec/strspc-pr-review/commit/4bdb59f2ff4a0c959089fdf9c8dbec6c55d3eedc))
+* ignore strspc-pr-approval's unfinished check from its own workflow file ([#208](https://github.com/SteerSpec/strspc-pr-review/issues/208)) ([3275a16](https://github.com/SteerSpec/strspc-pr-review/commit/3275a16c3f5f834c75412148746a032b2885323a))
+* sweep open PRs on a schedule when their re-trigger never arrived ([#205](https://github.com/SteerSpec/strspc-pr-review/issues/205)) ([73ee46b](https://github.com/SteerSpec/strspc-pr-review/commit/73ee46b3fca91361ec77a65d8213e13ec30306a8))
+
 ## [1.11.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.11.0...v1.11.1) (2026-11-09)
 
 

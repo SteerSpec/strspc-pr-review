@@ -6,9 +6,9 @@
     "description": "When the action may approve a pull request, and when it must refuse or take an approval back."
   },
   "rule_set": {
-    "version": "0.1.50",
-    "timestamp": "2026-11-26T08:43:24Z",
-    "hash": "blake3:420323effd399aca7f8b06c110d787e36fe610b3dc8211c3cedde00d25998e64"
+    "version": "0.1.51",
+    "timestamp": "2026-11-26T18:23:07Z",
+    "hash": "blake3:318cc9f30967122cc18146be65c10ce6b42c7d7300a47906b270a66142b273a8"
   },
   "rules": [
     {
@@ -346,9 +346,9 @@
     },
     {
       "id": "APPROVE-038",
-      "revision": 0,
+      "revision": 1,
       "state": "D",
-      "body": "The action MUST NOT wait on an unfinished run of its own job, or on an unfinished strspc-pr-approval run that GitHub Actions started from the configured companion workflow file for pull_request_target, pull_request_review, check_run or workflow_run, since both gate approval rather than test the code, while counting a finished run of either like any other check.",
+      "body": "The action MUST NOT wait on an unfinished run of its own job, or on an unfinished strspc-pr-approval run that GitHub Actions started from the configured companion workflow file for pull_request_target, pull_request_review, check_run or workflow_run, and MUST ignore any run of either job that GitHub Actions started from its own workflow file for a schedule or a dispatch of the default branch, since these gate approval rather than test the code, while counting any other finished run of either like any other check.",
       "added_by": "github:pleberre",
       "added_at": "2026-11-15",
       "supersedes": null

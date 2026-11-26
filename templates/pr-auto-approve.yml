@@ -110,7 +110,10 @@ jobs:
       # Reads the workflow run behind an unfinished strspc-pr-approval check, to
       # tell that job from CI of the same name (APPROVE-038).
       actions: read
-    # Serialize runs per PR to avoid race conditions.
+    # One group per PR, so a newer event run cancels an older one. That cancel is
+    # not atomic and a sweep has its own group, so two runs can still overlap on
+    # one PR; after approving, the action re-reads the PR and its checks and
+    # withdraws if the PR changed or a check failed (APPROVE-027, APPROVE-039).
     # For check_run events the PR number comes from check_run.pull_requests[0].number.
     # Sweeps share one group of their own and are never cancelled: a sweep stopped
     # halfway leaves the rest of its PRs for the next tick, and a sweep cannot

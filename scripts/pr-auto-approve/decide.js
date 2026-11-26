@@ -1727,17 +1727,19 @@ async function decideInner({
     core.info(`pr-auto-approve: not waiting: ${why}`);
   }
 
+  // When Copilot is not required, its own check run (pending while an automatic
+  // review is still running, or non-success) is not CI and must not hold the PR.
+  // Unfinished only: Copilot's check is a github-actions check like any CI job
+  // (verified: same app id), so the name cannot prove it is Copilot's, and a
+  // completed check with that name must keep counting.
+  const gatedRuns = (allRuns) => (copilotOptional
+    ? allRuns.filter((cr) => !(COPILOT_CHECK_NAMES.has(cr.name) && cr.status !== 'completed'))
+    : allRuns);
+
   // The CI gates, applied here and again after any review wait below: a
   // rerun or a late-registered check can change the picture while we poll.
   const checkGate = async (allRuns) => {
-    // When Copilot is not required, its own check run (pending while an automatic
-    // review is still running, or non-success) is not CI and must not hold the PR.
-    // Unfinished only: Copilot's check is a github-actions check like any CI job
-    // (verified: same app id), so the name cannot prove it is Copilot's, and a
-    // completed check with that name must keep counting.
-    const runs = copilotOptional
-      ? allRuns.filter((cr) => !(COPILOT_CHECK_NAMES.has(cr.name) && cr.status !== 'completed'))
-      : allRuns;
+    const runs = gatedRuns(allRuns);
     if (runs.length === 0) {
       if (!getAllowNoChecks()) {
         return setDecision('skip', 'no checks on head SHA yet');
@@ -2106,6 +2108,9 @@ async function decideInner({
   // can land between it and the review. Look again (same fields as above) and
   // take the approval back; if the look itself fails, withdraw as a precaution.
   let changedWhileApproving;
+  // A failed check is blocking like the gate's own failing-check skip; the other
+  // changes are left to the run that follows them.
+  let withdrawnComment;
   try {
     const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
     const same = after.head.sha === headSha &&
@@ -2120,6 +2125,23 @@ async function decideInner({
     }
   } catch (err) {
     changedWhileApproving = `could not re-read the PR after approving (${err.status || ''} ${err.message || err})`.trim();
+  }
+  // The checks too (APPROVE-039). Runs on one PR can overlap: a sweep keeps a
+  // concurrency group of its own, and cancel-in-progress is not atomic. Another
+  // run may have seen a check fail and withdrawn before this approval landed,
+  // so look once the approval is visible: a failure that run saw is visible now.
+  // A check that merely started is left to the run its completion starts, since
+  // the approval itself can start one (a pull_request_review workflow).
+  if (!changedWhileApproving) {
+    try {
+      const failedNow = gatedRuns(await fetchCheckRuns({ github, context, owner, repo, headSha })).find(isFailedCheck);
+      if (failedNow) {
+        changedWhileApproving = `check ${failedNow.name} failed (${failedNow.conclusion}) while approving`;
+        withdrawnComment = COMMENT.BLOCKING;
+      }
+    } catch (err) {
+      changedWhileApproving = `could not re-read the checks after approving (${err.status || ''} ${err.message || err})`.trim();
+    }
   }
   if (changedWhileApproving) {
     const describe = (err) => `${err.status || ''} ${err.message || err}`.trim();
@@ -2158,7 +2180,7 @@ async function decideInner({
       if (typeof core.setFailed === 'function') core.setFailed(failure);
       return setDecision('error', failure);
     }
-    return setDecision('skip', `${changedWhileApproving}; approval withdrawn`);
+    return setDecision('skip', `${changedWhileApproving}; approval withdrawn`, withdrawnComment);
   }
   return setDecision('approved', reason);
 }

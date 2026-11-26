@@ -5970,3 +5970,68 @@ test('status comment: a sweep comments on each PR it evaluates', async () => {
     assert.deepEqual(issues.calls.create.map((c) => c.issue_number), [42, 43]);
   });
 });
+
+// APPROVE-039: another run can see a check fail and withdraw before this run's
+// approval lands, so the checks are read again once the approval is posted.
+// checksAfter: the check runs the API returns once the approval is posted, or a
+// function that returns or throws them.
+const approvingCase = ({ checksAfter }) => {
+  const core = makeCore();
+  const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
+  const { github } = makeFakeGithub({
+    reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
+    getPrImpl: getPrWithTitle('docs: x'),
+  });
+  let approved = false;
+  const createReview = github.rest.pulls.createReview;
+  github.rest.pulls.createReview = async (a) => { approved = true; return createReview(a); };
+  github.rest.checks.listForRef = async () => {
+    const runs = !approved ? DEFAULT_CHECK_RUNS
+      : typeof checksAfter === 'function' ? checksAfter() : checksAfter;
+    return { data: { total_count: runs.length, check_runs: runs } };
+  };
+  const dismissed = [];
+  github.rest.pulls.dismissReview = async (a) => { dismissed.push(a); return { data: {} }; };
+  return { github, core, dismissed, context: makeContext({ prOverrides: { title: 'docs: x' } }) };
+};
+
+test('a check that fails while approving withdraws the approval', async () => {
+  const failed = [{ ...DEFAULT_CHECK_RUNS[0], conclusion: 'failure' }];
+  const { github, core, dismissed, context } = approvingCase({ checksAfter: failed });
+  const result = await decide({ github, core, context });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'check ci failed (failure) while approving; approval withdrawn');
+  assert.equal(dismissed[0].review_id, 999);
+  assert.equal(dismissed[0].message, 'Withdrawn: check ci failed (failure) while approving.');
+});
+
+test('a check that starts while approving leaves the approval standing', async () => {
+  const rerun = [{ ...DEFAULT_CHECK_RUNS[0], status: 'in_progress', conclusion: null }];
+  const { github, core, dismissed, context } = approvingCase({ checksAfter: rerun });
+  const result = await decide({ github, core, context });
+  assert.equal(result.decision, 'approved');
+  assert.equal(dismissed.length, 0);
+});
+
+test('checks that cannot be re-read after approving withdraw the approval', async () => {
+  let reads = 0;
+  const { github, core, dismissed, context } = approvingCase({
+    checksAfter: () => { reads += 1; throw Object.assign(new Error('boom'), { status: 502 }); },
+  });
+  const result = await decide({ github, core, context });
+  assert.equal(result.decision, 'skip');
+  assert.equal(result.reason, 'could not re-read the checks after approving (502 boom); approval withdrawn');
+  assert.equal(reads, 1);
+  assert.equal(dismissed[0].review_id, 999);
+});
+
+test('status comment: a check that fails while approving is blocking', async () => {
+  const failed = [{ ...DEFAULT_CHECK_RUNS[0], conclusion: 'failure' }];
+  await withEnv(STATUS_ON, async () => {
+    const { github, core, context } = approvingCase({ checksAfter: failed });
+    const issues = withIssueComments(github);
+    const result = await decide({ github, core, context });
+    assert.equal(result.reason, 'check ci failed (failure) while approving; approval withdrawn');
+    assert.equal(issues.calls.create.length, 1);
+  });
+});

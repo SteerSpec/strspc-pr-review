@@ -704,17 +704,45 @@ function getCompanionWorkflow(env = process.env) {
 // A run's path can carry the ref it ran at (`<file>@refs/heads/main`).
 const workflowFile = (path) => String(path || '').split('@')[0];
 
-async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflow }) {
-  if (!companionWorkflow) return false;
-  if (!cr.app || cr.app.slug !== 'github-actions') return false;
+// The GitHub Actions run behind a check, or null when it is not one or cannot
+// be read. Cached per run id: a run's jobs share it.
+function workflowRunOf({ github, owner, repo, cr, cache }) {
+  if (!cr.app || cr.app.slug !== 'github-actions') return null;
   const m = RUN_ID_RE.exec(cr.details_url || '');
-  if (!m) return false;
+  if (!m) return null;
   if (!cache.has(m[1])) {
     cache.set(m[1], github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(m[1]) })
-      .then(({ data }) => COMPANION_EVENTS.has(data.event) && workflowFile(data.path) === companionWorkflow,
-        () => false));
+      .then(({ data }) => data, () => null));
   }
   return cache.get(m[1]);
+}
+
+async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflow }) {
+  if (!companionWorkflow) return false;
+  const run = await workflowRunOf({ github, owner, repo, cr, cache });
+  return Boolean(run) && COMPANION_EVENTS.has(run.event) && workflowFile(run.path) === companionWorkflow;
+}
+
+// A sweep (APPROVE-036, and strspc-pr-approval's own) runs on the default
+// branch's tip, which is also the head of every promotion from it. Its check
+// there judged other PRs, not that code: unfinished, it holds the PR as
+// pending; red, it fails it until the next tick. So a run of this job or of
+// the companion's, from its own workflow file, started by a schedule or by a
+// dispatch of the default branch, is ignored whether or not it has finished
+// (APPROVE-038). A dispatch of another branch runs that branch's copy of the
+// file, so it still counts.
+async function isSweepRun({ github, owner, repo, cr, cache, workflow, defaultBranch }) {
+  if (!workflow) return false;
+  const run = await workflowRunOf({ github, owner, repo, cr, cache });
+  if (!run || workflowFile(run.path) !== workflow || !SWEEP_EVENTS.has(run.event)) return false;
+  return run.event === 'schedule' || (Boolean(defaultBranch) && run.head_branch === defaultBranch);
+}
+
+// This job's own workflow file, from GITHUB_WORKFLOW_REF
+// ("owner/repo/.github/workflows/file.yml@refs/heads/x"); '' when unknown.
+function getSelfWorkflow(env = process.env) {
+  const m = /^[^/]+\/[^/]+\/(.+?)(?:@.*)?$/.exec(String(env.GITHUB_WORKFLOW_REF || '').trim());
+  return m ? m[1] : '';
 }
 
 // Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
@@ -749,9 +777,16 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
   const selfJobNames = new Set(['auto-approve', context.job].filter((n) => n && !companionJobNames.has(n)));
   const runEvents = new Map();
   const companionWorkflow = getCompanionWorkflow();
+  const selfWorkflow = getSelfWorkflow();
+  const payload = context.payload || {};
+  const defaultBranch = (payload.repository && payload.repository.default_branch) ||
+    (payload.pull_request && payload.pull_request.base && payload.pull_request.base.repo &&
+      payload.pull_request.base.repo.default_branch) || '';
   const notSelf = [];
   for (const cr of validCheckRuns) {
     if (cr.details_url && selfRunRe.test(cr.details_url)) continue;
+    const sweepOf = selfJobNames.has(cr.name) ? selfWorkflow : (companionJobNames.has(cr.name) ? companionWorkflow : '');
+    if (sweepOf && await isSweepRun({ github, owner, repo, cr, cache: runEvents, workflow: sweepOf, defaultBranch })) continue;
     // Only an UNFINISHED sibling is ignored: a completed (say failing) check that
     // happens to share the name is still a real result and keeps counting.
     if (cr.status !== 'completed') {

@@ -179,7 +179,9 @@ inputs:
       strspc-pr-approval's caller workflow file. An unfinished
       strspc-pr-approval check is not waited for only when GitHub Actions ran
       it from this file for pull_request_target, pull_request_review,
-      check_run or workflow_run; any other check of that name counts as CI.
+      check_run or workflow_run, and a run of it from this file for a
+      schedule or a dispatch of the default branch (its sweep) is ignored,
+      finished or not; any other check of that name counts as CI.
       Reading the run needs `actions: read`. Empty means the default; 'off'
       turns the exemption off.
   wait-for-copilot-seconds:

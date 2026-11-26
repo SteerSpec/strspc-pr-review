@@ -595,6 +595,7 @@
     "APPROVE-026": "Needs GitHub to save an approval yet fail the call; unit tests cover the lookup.",
     "APPROVE-032": "Needs a rerun caught between being queued and starting; unit tests cover the ordering.",
     "APPROVE-033": "The sandbox reviewer is a user posting reviews, so no Copilot request is ever pending there; unit tests cover the GraphQL lookup with the shape seen live on #179.",
-    "APPROVE-038": "Needs both callers racing on one event with the strspc-pr-approval job caught mid-run; unit tests cover the filter."
+    "APPROVE-038": "Needs both callers racing on one event with the strspc-pr-approval job caught mid-run; unit tests cover the filter.",
+    "APPROVE-039": "Needs a check to fail in the moment between the check gate and the approval; unit tests cover the re-read."
   }
 }

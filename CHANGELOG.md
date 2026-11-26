@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/SteerSpec/strspc-pr-review/compare/v1.12.0...v1.12.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* re-read the checks after approving and withdraw on a failed one ([#213](https://github.com/SteerSpec/strspc-pr-review/issues/213)) ([fe85277](https://github.com/SteerSpec/strspc-pr-review/commit/fe852775982505ac8e9e1db067b4aa5f0f586c0b))
+
 ## [1.12.0](https://github.com/SteerSpec/strspc-pr-review/compare/v1.11.1...v1.12.0) (2026-11-16)
 
 

@@ -263,6 +263,13 @@ never cancels a PR's own run, which may be waiting for Copilot. If a sweep and a
 evaluate the same head at the same moment, the worst case is two bot approvals of that head. Each
 run checks first whether the bot has already approved it.
 
+A sweep runs on the default branch's tip, which is also the head of every promotion from it, so its
+`auto-approve` check lands there too, and so does strspc-pr-approval's sweep check. Neither judged
+that code, so a run of this job or of `strspc-pr-approval`, from its own workflow file, started by a
+schedule or by a dispatch of the default branch, is not a check to wait for or fail on, whether or not
+it has finished (APPROVE-038). This job's own file comes from `GITHUB_WORKFLOW_REF`, the companion's
+from `companion-workflow`.
+
 Cost: one short run per tick, about a minute billed on a private repo, or some 720 minutes a month at
 the template's hourly cron. Each open PR adds a dozen or so API calls. GitHub runs schedules only from
 the default branch's copy of the workflow, can start them late, and disables them in a public repo

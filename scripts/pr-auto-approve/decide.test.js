@@ -4346,12 +4346,12 @@ test("a sibling run's in-progress auto-approve check is not treated as CI", asyn
 // A strspc-pr-approval check as GitHub Actions posts it, from run 999, plus a
 // fake getWorkflowRun answering with `event` for that run (or failing).
 function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, status = 'in_progress',
-  path = '.github/workflows/pr-approval.yml' }) {
+  path = '.github/workflows/pr-approval.yml', name = 'strspc-pr-approval', conclusion = null, head_branch = 'develop' }) {
   const cp = { login: 'copilot-pull-request-reviewer[bot]', type: 'Bot' };
   const fake = makeFakeGithub({
     checkRuns: [
       ...DEFAULT_CHECK_RUNS,
-      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status, conclusion: null, app,
+      { ...DEFAULT_CHECK_RUNS[0], name, status, conclusion, app,
         started_at: '2026-04-15T11:00:00Z', details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
     ],
     reviews: [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: `2026-04-15T0${id}:00:00Z`, user: cp })),
@@ -4361,7 +4361,7 @@ function companionCase({ event, app = { id: 15368, slug: 'github-actions' }, sta
     getWorkflowRun: async ({ run_id }) => {
       fake.lookups.push(run_id);
       if (!event) throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 });
-      return { data: { id: run_id, event, path } };
+      return { data: { id: run_id, event, path, head_branch } };
     },
   };
   return fake;
@@ -4410,6 +4410,39 @@ test("APPROVE-038: a caller job named strspc-pr-approval does not skip the run l
       assert.equal(calls.createReview.length, 0, event);
     }
   }
+});
+
+test("APPROVE-038: a sweep run of strspc-pr-approval or of this job is ignored, finished or not", async () => {
+  // A sweep runs on the default branch's tip, the head of every promotion.
+  const withRepo = (ctx) => ({ ...ctx, payload: { ...ctx.payload, repository: { default_branch: 'develop' } } });
+  const decideCase = async (opts, env = {}) => withEnv(env, async () => {
+    const { github, calls } = companionCase(opts);
+    const result = await decide({ github, core: makeCore(), context: withRepo(makeContext()) });
+    return { decision: result.decision, reason: result.reason, approvals: calls.createReview.length };
+  });
+  const red = { status: 'completed', conclusion: 'failure' };
+  // The companion's: scheduled, or dispatched on the default branch.
+  for (const opts of [{ event: 'schedule' }, { event: 'schedule', ...red }, { event: 'workflow_dispatch', ...red }]) {
+    const r = await decideCase(opts);
+    assert.equal(r.decision, 'approved', JSON.stringify(opts));
+    assert.equal(r.approvals, 1);
+  }
+  // A dispatch of another branch ran that branch's copy: it still counts.
+  const branch = await decideCase({ event: 'workflow_dispatch', head_branch: 'feature/x', ...red });
+  assert.equal(branch.decision, 'skip');
+  assert.match(branch.reason, /strspc-pr-approval/);
+  // A finished event run of the companion still counts, as before.
+  const eventRun = await decideCase({ event: 'workflow_run', ...red });
+  assert.equal(eventRun.decision, 'skip');
+  assert.equal(eventRun.approvals, 0);
+  // This job's own sweep, identified by GITHUB_WORKFLOW_REF.
+  const own = { name: 'auto-approve', path: '.github/workflows/auto-approve.yml', event: 'schedule', ...red };
+  const ref = { GITHUB_WORKFLOW_REF: 'x/y/.github/workflows/auto-approve.yml@refs/heads/develop' };
+  assert.equal((await decideCase(own, ref)).decision, 'approved');
+  // Without it, its own file is unknown and the red check counts.
+  const unknown = await decideCase(own, { GITHUB_WORKFLOW_REF: '' });
+  assert.equal(unknown.decision, 'skip');
+  assert.equal(unknown.approvals, 0);
 });
 
 test("APPROVE-038: only a run of the companion-workflow file is the companion", async () => {

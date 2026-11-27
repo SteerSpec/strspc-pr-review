@@ -170,6 +170,8 @@ next sync.
 - **Rules live next to the code.** Each repo owns a realm under `rules/` that
   depends on `dev.steerspec.core`. Author rules through `strspc rule …` so the
   content hashes stay valid; never hand-edit rule JSON.
+  Each rule body holds one statement (RUL-004). Examples go in notes, not in the
+  rule body (NTE-020).
 - **Rule states.** Draft text may still change. Published text is final while
   the code may still violate it. Implemented is enforced in CI (`fail_on: [I]`);
   promote to Implemented only once the code complies.

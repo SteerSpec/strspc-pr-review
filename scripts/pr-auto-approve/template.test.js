@@ -154,3 +154,24 @@ test('comment-on-skip reaches the evaluate step', () => {
   const step = read('action.yml').split('- name: Evaluate and approve')[1].split('- name: ')[0];
   assert.match(step, /AUTO_APPROVE_COMMENT_ON_SKIP: \$\{\{ inputs\.comment-on-skip \}\}/);
 });
+
+// The fork guard is load-bearing under pull_request_target (see the template's
+// comments), so each branch of the job if: that admits a PR event carries one.
+// The if: is an OR of top-level branches written `) || (`; each guard is looked
+// for in the branch that admits its event, not anywhere in the condition.
+test('every PR branch of the template job if: has a fork guard', () => {
+  const src = read('templates/pr-auto-approve.yml');
+  const cond = src.split('\n    if: >-\n')[1].split('\n    steps:')[0];
+  const branches = cond.split(/\n {6}\) \|\|/);
+  const branchFor = (event) => {
+    const found = branches.filter((b) => b.includes(`github.event_name == '${event}'`));
+    assert.equal(found.length, 1, `exactly one branch admits ${event}`);
+    return found[0];
+  };
+  for (const event of ['pull_request_target', 'pull_request_review']) {
+    assert.match(branchFor(event), /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/, event);
+  }
+  assert.match(branchFor('workflow_run'), /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+  assert.match(branchFor('check_run'),
+    /github\.event\.check_run\.pull_requests\[0\]\.head\.repo\.id == github\.event\.check_run\.pull_requests\[0\]\.base\.repo\.id/);
+});

@@ -5543,6 +5543,24 @@ function sweepCore() {
   return core;
 }
 
+// The sweep gives each PR its own core (prototype: the step's), so the once-only
+// warning must not be keyed on that per-PR object.
+test('sweep: a refused run lookup warns once for the whole sweep', async () => {
+  const core = sweepCore();
+  const { github } = makeSweepGithub([openPr(42), openPr(43)], {
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'in_progress', conclusion: null,
+        app: { id: 15368, slug: 'github-actions' }, details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+  });
+  github.rest.actions = {
+    getWorkflowRun: async () => { throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 }); },
+  };
+  await decide({ github, context: makeSweepContext(), core });
+  assert.equal(core.warnings.filter((w) => /actions: read/.test(w)).length, 1, core.warnings.join('\n'));
+});
+
 for (const eventName of ['schedule', 'workflow_dispatch']) {
   test(`sweep (${eventName}): approves an open PR no event re-evaluated`, async () => {
     const core = sweepCore();

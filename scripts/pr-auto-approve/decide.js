@@ -723,6 +723,8 @@ function workflowRunOf({ github, owner, repo, cr, cache }) {
 // The check then counts as it did before APPROVE-038, so say why in the skip.
 const RUN_LOOKUP_REFUSED_HINT =
   ' — reading its workflow run was refused; grant `actions: read` to this job (APPROVE-038)';
+// Keyed on core.warning, not core: a sweep hands each PR its own core whose
+// prototype is the step's, so the function is the one thing they all share.
 const runLookupWarned = new WeakSet();
 
 async function runLookupRefused(cr, cache) {
@@ -808,8 +810,8 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha, core }) {
         await isCompanionRun({ github, owner, repo, cr, cache: runEvents, companionWorkflow })) continue;
     }
     if (await runLookupRefused(cr, runEvents)) {
-      if (core && !runLookupWarned.has(core)) {
-        runLookupWarned.add(core);
+      if (core && !runLookupWarned.has(core.warning)) {
+        runLookupWarned.add(core.warning);
         core.warning(`pr-auto-approve: could not read the workflow run behind check '${cr.name}' (403).` +
           ' Grant `actions: read` to this job: without it, sweep runs and strspc-pr-approval\'s' +
           ' unfinished check count as checks (APPROVE-038).');

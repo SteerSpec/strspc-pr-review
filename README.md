@@ -79,7 +79,7 @@ variable, see [Organization-wide configuration](docs/usage.md#organization-wide-
 | Find out why a PR wasn't approved | [Troubleshooting](docs/troubleshooting.md) |
 | Set up or debug with Claude Code | [Claude Code skills](docs/skills.md) |
 | Decide where not to use it | [Responsible use](docs/responsible-use.md) |
-| Understand branches, releases and the `@v1` tag | [Branching and releases](docs/releases.md) |
+| Understand branches, releases, the `@v1` tag and pinning a SHA | [Branching and releases](docs/releases.md) |
 | Run the tests or change the code | [Development](docs/development.md) |
 
 ## Governance

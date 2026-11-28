@@ -208,8 +208,14 @@ jobs:
         github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       )
     steps:
-      # @v1 tracks the latest v1.x release. Pin an exact @vX.Y.Z if you prefer
-      # to upgrade manually.
+      # @v1 tracks the latest v1.x release, and this step hands the action a
+      # bot token that can approve PRs. No tag in strspc-pr-review is immutable:
+      # @v1 moves on every release by design, and nothing stops @vX.Y.Z moving
+      # either, so a moved tag runs new code with that token here. To review
+      # each upgrade, pin a commit SHA with its version in a comment instead,
+      #   SteerSpec/strspc-pr-review@<40-character SHA> # vX.Y.Z
+      # and add a `github-actions` entry to .github/dependabot.yml so the pin is
+      # bumped by PR rather than left to age.
       - uses: SteerSpec/strspc-pr-review@v1
         with:
           # Required: GitHub login of the bot account that will approve PRs.

@@ -47,4 +47,20 @@ Title types set the version:
 | Rule-only change | `chore(rules):` | no release |
 
 `@v1` always points at the latest `v1.x` release, so pinning it receives patches and
-backward-compatible features automatically. Pin an exact `@vX.Y.Z` to upgrade manually.
+backward-compatible features automatically. The release workflow moves it with a forced
+update of the tag.
+
+## Pinning
+
+No tag in this repo is immutable. `@v1` moves by design, and `vX.Y.Z` tags and releases
+are not protected either, so an exact `@vX.Y.Z` is a convention rather than a guarantee.
+A caller hands the action a bot token that can approve PRs, so a moved tag runs new code
+with that token. To review every upgrade, pin a commit SHA with the version in a comment,
+and let Dependabot's `github-actions` ecosystem bump it:
+
+```yaml
+- uses: SteerSpec/strspc-pr-review@394e1d5fc6f4ab39e284ffcfd13bfa87b38057b0 # v1.12.2
+```
+
+Take the SHA from `git rev-list -n1 vX.Y.Z` or the release page. strspc-pr-approval
+pins this way.

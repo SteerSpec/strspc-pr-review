@@ -6081,6 +6081,20 @@ test('a check that fails while approving withdraws the approval', async () => {
   assert.equal(dismissed[0].message, 'Withdrawn: check ci failed (failure) while approving.');
 });
 
+test('a refused run lookup on a check that fails while approving names actions: read', async () => {
+  const failed = [...DEFAULT_CHECK_RUNS, { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval',
+    conclusion: 'failure', app: { id: 15368, slug: 'github-actions' },
+    details_url: 'https://github.com/x/y/actions/runs/999/job/1' }];
+  const { github, core, dismissed, context } = approvingCase({ checksAfter: failed });
+  github.rest.actions = {
+    getWorkflowRun: async () => { throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 }); },
+  };
+  const result = await decide({ github, core, context });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^check strspc-pr-approval failed \(failure\) while approving — .*actions: read.*; approval withdrawn$/);
+  assert.equal(dismissed.length, 1);
+});
+
 test('a check that starts while approving leaves the approval standing', async () => {
   const rerun = [{ ...DEFAULT_CHECK_RUNS[0], status: 'in_progress', conclusion: null }];
   const { github, core, dismissed, context } = approvingCase({ checksAfter: rerun });

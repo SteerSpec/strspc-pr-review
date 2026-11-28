@@ -2198,7 +2198,8 @@ async function decideInner({
     try {
       const failedNow = gatedRuns(await fetchCheckRuns({ github, context, owner, repo, headSha, core })).find(isFailedCheck);
       if (failedNow) {
-        changedWhileApproving = `check ${failedNow.name} failed (${failedNow.conclusion}) while approving`;
+        changedWhileApproving = `check ${failedNow.name} failed (${failedNow.conclusion}) while approving` +
+          (failedNow.runLookupRefused ? RUN_LOOKUP_REFUSED_HINT : '');
         withdrawnComment = COMMENT.BLOCKING;
       }
     } catch (err) {

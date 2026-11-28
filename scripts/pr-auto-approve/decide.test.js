@@ -4398,6 +4398,31 @@ test("APPROVE-038: an unproven strspc-pr-approval check stays pending (no action
   }
 });
 
+// strspc-pr-review#225: callers generated before v1.12 lack `actions: read`, so
+// the run lookup is refused. The check still counts (pending, or failing for a
+// red sweep run), but the skip says why, and the run warns once.
+test("APPROVE-038: a refused run lookup names actions: read, in the reason and one warning", async () => {
+  const withRepo = (ctx) => ({ ...ctx, payload: { ...ctx.payload, repository: { default_branch: 'develop' } } });
+  for (const opts of [{ event: null }, { event: null, status: 'completed', conclusion: 'failure' }]) {
+    const { github, calls } = companionCase(opts);
+    const core = makeCore();
+    const result = await decide({ github, core, context: withRepo(makeContext()) });
+    assert.equal(result.decision, 'skip', JSON.stringify(opts));
+    assert.match(result.reason, opts.status ? /failing check: strspc-pr-approval/ : /check still running: strspc-pr-approval/);
+    assert.match(result.reason, /actions: read/);
+    assert.equal(calls.createReview.length, 0);
+    assert.equal(core.warnings.filter((w) => /actions: read/.test(w)).length, 1);
+  }
+  // Any other lookup failure (a deleted run: 404) keeps the plain reason.
+  const { github } = companionCase({ event: 'pull_request_target' });
+  github.rest.actions.getWorkflowRun = async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); };
+  const core = makeCore();
+  const result = await decide({ github, core, context: makeContext() });
+  assert.equal(result.decision, 'skip');
+  assert.doesNotMatch(result.reason, /actions: read/);
+  assert.equal(core.warnings.filter((w) => /actions: read/.test(w)).length, 0);
+});
+
 test("APPROVE-038: a caller job named strspc-pr-approval does not skip the run lookup", async () => {
   for (const [event, decision] of [['pull_request', 'skip'], ['workflow_run', 'approved']]) {
     const { github, calls, lookups } = companionCase({ event });
@@ -5518,6 +5543,24 @@ function sweepCore() {
   return core;
 }
 
+// The sweep gives each PR its own core (prototype: the step's), so the once-only
+// warning must not be keyed on that per-PR object.
+test('sweep: a refused run lookup warns once for the whole sweep', async () => {
+  const core = sweepCore();
+  const { github } = makeSweepGithub([openPr(42), openPr(43)], {
+    checkRuns: [
+      ...DEFAULT_CHECK_RUNS,
+      { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval', status: 'in_progress', conclusion: null,
+        app: { id: 15368, slug: 'github-actions' }, details_url: 'https://github.com/x/y/actions/runs/999/job/1' },
+    ],
+  });
+  github.rest.actions = {
+    getWorkflowRun: async () => { throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 }); },
+  };
+  await decide({ github, context: makeSweepContext(), core });
+  assert.equal(core.warnings.filter((w) => /actions: read/.test(w)).length, 1, core.warnings.join('\n'));
+});
+
 for (const eventName of ['schedule', 'workflow_dispatch']) {
   test(`sweep (${eventName}): approves an open PR no event re-evaluated`, async () => {
     const core = sweepCore();
@@ -6036,6 +6079,20 @@ test('a check that fails while approving withdraws the approval', async () => {
   assert.equal(result.reason, 'check ci failed (failure) while approving; approval withdrawn');
   assert.equal(dismissed[0].review_id, 999);
   assert.equal(dismissed[0].message, 'Withdrawn: check ci failed (failure) while approving.');
+});
+
+test('a refused run lookup on a check that fails while approving names actions: read', async () => {
+  const failed = [...DEFAULT_CHECK_RUNS, { ...DEFAULT_CHECK_RUNS[0], name: 'strspc-pr-approval',
+    conclusion: 'failure', app: { id: 15368, slug: 'github-actions' },
+    details_url: 'https://github.com/x/y/actions/runs/999/job/1' }];
+  const { github, core, dismissed, context } = approvingCase({ checksAfter: failed });
+  github.rest.actions = {
+    getWorkflowRun: async () => { throw Object.assign(new Error('Resource not accessible by integration'), { status: 403 }); },
+  };
+  const result = await decide({ github, core, context });
+  assert.equal(result.decision, 'skip');
+  assert.match(result.reason, /^check strspc-pr-approval failed \(failure\) while approving — .*actions: read.*; approval withdrawn$/);
+  assert.equal(dismissed.length, 1);
 });
 
 test('a check that starts while approving leaves the approval standing', async () => {

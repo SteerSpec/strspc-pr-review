@@ -34,6 +34,8 @@ jobs:
       actions: read
     # concurrency and if: omitted here, keep them from the template
     steps:
+      # @v1 takes every v1.x release; to review each upgrade, pin a commit SHA
+      # instead (see Pinning in docs/releases.md)
       - uses: SteerSpec/strspc-pr-review@v1
         with:
           bot-login: ${{ vars.STRSPC_PR_AUTO_APPROVE_BOT_LOGIN || vars.PR_AUTO_APPROVE_BOT_LOGIN }}

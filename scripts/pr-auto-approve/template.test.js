@@ -154,3 +154,14 @@ test('comment-on-skip reaches the evaluate step', () => {
   const step = read('action.yml').split('- name: Evaluate and approve')[1].split('- name: ')[0];
   assert.match(step, /AUTO_APPROVE_COMMENT_ON_SKIP: \$\{\{ inputs\.comment-on-skip \}\}/);
 });
+
+// The fork guard is load-bearing under pull_request_target (see the template's
+// comments), so each branch of the job if: that admits a PR event carries one.
+test('every PR branch of the template job if: has a fork guard', () => {
+  const src = read('templates/pr-auto-approve.yml');
+  const cond = src.split('\n    if: >-\n')[1].split('\n    steps:')[0];
+  assert.match(cond, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  assert.match(cond, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+  assert.match(cond,
+    /github\.event\.check_run\.pull_requests\[0\]\.head\.repo\.id == github\.event\.check_run\.pull_requests\[0\]\.base\.repo\.id/);
+});

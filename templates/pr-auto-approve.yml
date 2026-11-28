@@ -209,10 +209,10 @@ jobs:
       )
     steps:
       # @v1 tracks the latest v1.x release, and this step hands the action a
-      # bot token that can approve PRs. No tag in strspc-pr-review is immutable:
-      # @v1 moves on every release by design, and nothing stops @vX.Y.Z moving
-      # either, so a moved tag runs new code with that token here. To review
-      # each upgrade, pin a commit SHA with its version in a comment instead,
+      # bot token that can approve PRs. @v1 moves on every release by design.
+      # vX.Y.Z tags are held by a tag ruleset (no update, no deletion), but a
+      # repo admin can lift a ruleset. To review each upgrade and depend on
+      # nothing that can move, pin a commit SHA with its version in a comment,
       #   SteerSpec/strspc-pr-review@<40-character SHA> # vX.Y.Z
       # and add a `github-actions` entry to .github/dependabot.yml so the pin is
       # bumped by PR rather than left to age.

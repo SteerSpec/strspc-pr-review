@@ -52,11 +52,16 @@ update of the tag.
 
 ## Pinning
 
-No tag in this repo is immutable. `@v1` moves by design, and `vX.Y.Z` tags and releases
-are not protected either, so an exact `@vX.Y.Z` is a convention rather than a guarantee.
-A caller hands the action a bot token that can approve PRs, so a moved tag runs new code
-with that token. To review every upgrade, pin a commit SHA with the version in a comment,
-and let Dependabot's `github-actions` ecosystem bump it:
+| Reference | Moves? |
+| --------- | ------ |
+| `@v1` | Yes, on every `v1.x` release, by design |
+| `@vX.Y.Z` | No: the `release-tags-immutable` tag ruleset blocks updating or deleting `v*.*.*` tags. A repo admin can still lift it, and GitHub's immutable-releases setting is off |
+| `@<commit SHA>` | Never |
+
+A caller hands the action a bot token that can approve PRs, so whatever the reference
+resolves to runs with that token. To review every upgrade and depend on nothing that can
+move, pin a commit SHA with the version in a comment, and let Dependabot's
+`github-actions` ecosystem bump it:
 
 ```yaml
 - uses: SteerSpec/strspc-pr-review@394e1d5fc6f4ab39e284ffcfd13bfa87b38057b0 # v1.12.2

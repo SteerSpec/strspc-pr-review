@@ -704,22 +704,35 @@ function getCompanionWorkflow(env = process.env) {
 // A run's path can carry the ref it ran at (`<file>@refs/heads/main`).
 const workflowFile = (path) => String(path || '').split('@')[0];
 
-// The GitHub Actions run behind a check, or null when it is not one or cannot
-// be read. Cached per run id: a run's jobs share it.
+// The lookup of the GitHub Actions run behind a check: { run } with run null
+// when it cannot be read, and refused set when the token may not read it. null
+// when the check is not an Actions one. Cached per run id: a run's jobs share it.
 function workflowRunOf({ github, owner, repo, cr, cache }) {
   if (!cr.app || cr.app.slug !== 'github-actions') return null;
   const m = RUN_ID_RE.exec(cr.details_url || '');
   if (!m) return null;
   if (!cache.has(m[1])) {
     cache.set(m[1], github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(m[1]) })
-      .then(({ data }) => data, () => null));
+      .then(({ data }) => ({ run: data }), (err) => ({ run: null, refused: Boolean(err) && err.status === 403 })));
   }
   return cache.get(m[1]);
 }
 
+// A 403 on the run lookup is a caller without `actions: read`: templates before
+// v1.12 lack it, and `@v1` brings them this code anyway (strspc-pr-review#225).
+// The check then counts as it did before APPROVE-038, so say why in the skip.
+const RUN_LOOKUP_REFUSED_HINT =
+  ' — reading its workflow run was refused; grant `actions: read` to this job (APPROVE-038)';
+const runLookupWarned = new WeakSet();
+
+async function runLookupRefused(cr, cache) {
+  const m = RUN_ID_RE.exec(cr.details_url || '');
+  return Boolean(m) && cache.has(m[1]) && Boolean((await cache.get(m[1])).refused);
+}
+
 async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflow }) {
   if (!companionWorkflow) return false;
-  const run = await workflowRunOf({ github, owner, repo, cr, cache });
+  const { run } = (await workflowRunOf({ github, owner, repo, cr, cache })) || {};
   return Boolean(run) && COMPANION_EVENTS.has(run.event) && workflowFile(run.path) === companionWorkflow;
 }
 
@@ -733,7 +746,7 @@ async function isCompanionRun({ github, owner, repo, cr, cache, companionWorkflo
 // file, so it still counts.
 async function isSweepRun({ github, owner, repo, cr, cache, workflow, defaultBranch }) {
   if (!workflow) return false;
-  const run = await workflowRunOf({ github, owner, repo, cr, cache });
+  const { run } = (await workflowRunOf({ github, owner, repo, cr, cache })) || {};
   if (!run || workflowFile(run.path) !== workflow || !SWEEP_EVENTS.has(run.event)) return false;
   return run.event === 'schedule' || (Boolean(defaultBranch) && run.head_branch === defaultBranch);
 }
@@ -748,7 +761,7 @@ function getSelfWorkflow(env = process.env) {
 // Check runs for a SHA: paginate, drop this workflow's own run, dedupe by
 // (name, app.id) keeping the latest attempt. Prevents the self-pending trap
 // (this job waiting on its own check) and rerun staleness.
-async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
+async function fetchCheckRuns({ github, context, owner, repo, headSha, core }) {
   // Direct call (not paginate): 100 per page covers all practical repos; loop pages if needed.
   const allCheckRuns = [];
   let page = 1;
@@ -794,7 +807,17 @@ async function fetchCheckRuns({ github, context, owner, repo, headSha }) {
       if (companionJobNames.has(cr.name) &&
         await isCompanionRun({ github, owner, repo, cr, cache: runEvents, companionWorkflow })) continue;
     }
-    notSelf.push(cr);
+    if (await runLookupRefused(cr, runEvents)) {
+      if (core && !runLookupWarned.has(core)) {
+        runLookupWarned.add(core);
+        core.warning(`pr-auto-approve: could not read the workflow run behind check '${cr.name}' (403).` +
+          ' Grant `actions: read` to this job: without it, sweep runs and strspc-pr-approval\'s' +
+          ' unfinished check count as checks (APPROVE-038).');
+      }
+      notSelf.push({ ...cr, runLookupRefused: true });
+    } else {
+      notSelf.push(cr);
+    }
   }
   // Dedupe by (name, app.id) keeping the most-recently-started run. A run with
   // no timestamp has not started yet, so it is the newest, not the oldest:
@@ -871,7 +894,7 @@ async function waitForCopilotCheck({
       return current;
     }
     await sleep(Math.min(getCopilotPollMs(), Math.max(0, deadline - Date.now())));
-    current = await fetchCheckRuns({ github, context, owner, repo, headSha });
+    current = await fetchCheckRuns({ github, context, owner, repo, headSha, core });
   }
 }
 
@@ -1731,7 +1754,7 @@ async function decideInner({
   }
 
   const headSha = pr.head.sha;
-  let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
+  let checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha, core });
 
   // Copilot finishing its review is the signal this gate needs, but Copilot
   // cannot deliver it. Its check run is created with GITHUB_TOKEN, and
@@ -1783,7 +1806,8 @@ async function decideInner({
     }
     const badCheck = runs.find(isFailedCheck);
     if (badCheck) {
-      const reason = `failing check: ${badCheck.name} (${badCheck.conclusion})`;
+      const reason = `failing check: ${badCheck.name} (${badCheck.conclusion})` +
+        (badCheck.runLookupRefused ? RUN_LOOKUP_REFUSED_HINT : '');
       // A check can fail on a head the bot already approved: a retitle reruns the
       // title check with the head unchanged, and so does a manual rerun. Branch
       // protection dismisses approvals only on a push, so withdraw ours here, or
@@ -1796,7 +1820,8 @@ async function decideInner({
     }
     const pending = runs.find((cr) => cr.status !== 'completed');
     if (pending) {
-      return setDecision('skip', `check still running: ${pending.name}`);
+      return setDecision('skip', `check still running: ${pending.name}` +
+        (pending.runLookupRefused ? RUN_LOOKUP_REFUSED_HINT : ''));
     }
     return null;
   };
@@ -1923,7 +1948,7 @@ async function decideInner({
     if (waited.polled) {
       // Minutes may have passed: a rerun on this head or a check registered
       // late must still block approval.
-      checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha });
+      checkRuns = await fetchCheckRuns({ github, context, owner, repo, headSha, core });
       const regated = await checkGate(checkRuns);
       if (regated) return regated;
     }
@@ -2169,7 +2194,7 @@ async function decideInner({
   // the approval itself can start one (a pull_request_review workflow).
   if (!changedWhileApproving) {
     try {
-      const failedNow = gatedRuns(await fetchCheckRuns({ github, context, owner, repo, headSha })).find(isFailedCheck);
+      const failedNow = gatedRuns(await fetchCheckRuns({ github, context, owner, repo, headSha, core })).find(isFailedCheck);
       if (failedNow) {
         changedWhileApproving = `check ${failedNow.name} failed (${failedNow.conclusion}) while approving`;
         withdrawnComment = COMMENT.BLOCKING;
